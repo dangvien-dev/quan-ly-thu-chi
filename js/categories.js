@@ -1,0 +1,7 @@
+renderCategories()
+
+handleCategorySubmit()
+
+deleteCategory()
+
+updateCategoriesDropdown()
