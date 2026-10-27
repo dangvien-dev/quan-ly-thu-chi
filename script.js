@@ -171,9 +171,16 @@ function handleFormSubmit(e) {
 
 function handleCategorySubmit(e) {
     e.preventDefault();
-    categories.push({ id: Date.now(), name: document.getElementById('catName').value, type: document.getElementById('catType').value, icon: 'fa-tag' });
+    const name = document.getElementById('catName').value;
+    const type = document.getElementById('catType').value;
+    
+    categories.push({ id: Date.now(), name, type, icon: 'fa-tag' });
     localStorage.setItem('fm_categories', JSON.stringify(categories));
-    renderCategories(); closeCategoryModal();
+    
+    renderCategories(); 
+    updateCategoriesDropdown(); // <--- Cập nhật ngay dropdown trong form nhập giao dịch
+    closeCategoryModal();
+    
     document.getElementById('catName').value = '';
 }
 
@@ -376,26 +383,35 @@ function setTxType(type) {
 function handleFormSubmit(e) {
     e.preventDefault();
     const type = currentType;
-    const date = document.getElementById('txDate').value;
+    const dateInput = document.getElementById('txDate').value;
     const source = document.getElementById('txSource').value;
     const targetSource = type === 'transfer' ? document.getElementById('txTargetSource').value : null;
-    const category = type === 'transfer' ? 'Chuyển tiền nội bộ' : document.getElementById('txCategory').value;
-    const amount = parseFloat(document.getElementById('txAmount').value);
-    const note = document.getElementById('txNote').value;
+    const category = type === 'transfer' ? 'Chuyển tiền nộiبو' : document.getElementById('txCategory').value;
+    const amount = parseFloat(document.getElementById('txAmount').value) || 0;
+    const note = document.getElementById('txNote').value || '';
 
-    if (editingId) {
-        transactions = transactions.map(t => t.id === editingId ? { ...t, type, date, source, targetSource, category, amount, note } : t);
-        editingId = null;
-        document.querySelector('#transactionModal .modal-header h3').innerText = 'Thêm Giao Dịch Mới';
+    if (!dateInput || amount <= 0) {
+        alert('Vui lòng nhập ngày và số tiền hợp lệ!');
+        return;
+    }
+
+    if (window.editingId) {
+        transactions = transactions.map(t => t.id === window.editingId ? { ...t, type, date: dateInput, source, targetSource, category, amount, note } : t);
+        window.editingId = null;
+        const headerTitle = document.querySelector('#transactionModal .modal-header h3');
+        if(headerTitle) headerTitle.innerText = 'Thêm Giao Dịch Mới';
     } else {
-        const newTx = { id: 'TX_' + Date.now(), date, type, source, targetSource, category, amount, note };
+        const newTx = { id: 'TX_' + Date.now(), date: dateInput, type, source, targetSource, category, amount, note };
         transactions.unshift(newTx);
     }
 
     saveDataLocally();
     renderAll();
     closeModal();
-    document.getElementById('transactionForm').reset();
-    document.getElementById('txDate').valueAsDate = new Date();
+    
+    const form = document.getElementById('transactionForm');
+    if(form) form.reset();
+    
+    document.getElementById('txDate').value = new Date().toISOString().split('T')[0];
     syncToGoogleSheet();
 }
