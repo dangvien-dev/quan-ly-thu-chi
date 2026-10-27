@@ -103,7 +103,11 @@
                 <h3 style="margin-bottom: 12px;">Đồng Bộ Google Sheets</h3>
                 <div class="form-group">
                     <label>Web App URL:</label>
-                    <input type="text" id="setting-script-url" class="form-control" value="https://script.google.com/macros/s/AKfycbwQEBQgol_KzwASdrXt0wD0_Nhq760npW1GpdqbynsM-whmV-ZqlVMbn4BvHTVk5Pk7Hg/exec">
+                    <input
+                        type="text"
+                        id="setting-script-url"
+                        class="form-control"
+                        placeholder="Dán URL Google Apps Script Web App">
                 </div>
                 <button class="btn" onclick="saveScriptUrl()"><i class="fa-solid fa-save"></i> Lưu Cấu Hình</button>
 
@@ -121,7 +125,7 @@
 <input
     type="file"
     accept=".json"
-    onchange="importBackup(this.files[0])">
+    onchange="this.files.length && importBackup(this.files[0])">
                 
             </div>
             <div class="card" style="border-color: var(--danger);">
@@ -143,13 +147,17 @@
                 onclick="switchTab('sources', event)"><i class="fa-solid fa-vault"></i><span>Nguồn</span></button>
         
         <button class="mobile-nav-item" 
-                onclick="switchTab('categories', event"><i class="fa-solid fa-tags"></i><span>Danh mục</span></button>
+                <i class="fa-solid fa-tags"></i><span>Danh mục</span></button>
         
         <button class="mobile-nav-item" 
                 onclick="switchTab('settings', event)"><i class="fa-solid fa-gear"></i><span>Cài đặt</span></button>
         
     </nav>
-    <button class="floating-add-btn" onclick="openModal()"><i class="fa-solid fa-plus"></i></button>
+    <button class="floating-add-btn"
+        title="Thêm giao dịch"
+        onclick="openModal()">
+        <i class="fa-solid fa-plus"></i>
+    </button>
 
     <!-- Modals -->
     <div id="transactionModal" class="modal">
@@ -169,13 +177,17 @@
                     </select>
                 </div>
                 <div class="form-group"><label>Danh Mục</label><select id="txCategory" class="form-control" required></select></div>
-                <div class="form-group"><label>Số Tiền (VNĐ)</label>
+                
+                <div class="form-group">
+                    <label>Số Tiền (VNĐ)</label>
                     <input type="number"
                            id="txAmount"
                            class="form-control"
                            min="1"
                            step="1000"
                            required>
+                </div>
+                
                 <div class="form-group"><label>Mô Tả</label><input type="text" id="txNote" class="form-control"></div>
                 <button type="submit" class="btn" style="width: 100%; justify-content: center;">Lưu Giao Dịch</button>
             </form>
