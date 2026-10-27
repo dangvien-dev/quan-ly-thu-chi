@@ -15,16 +15,12 @@ function exportBackup() {
         version: BACKUP_VERSION,
         exportedAt: new Date().toISOString(),
         data: {
-            transactions: JSON.parse(
-                localStorage.getItem(BACKUP_STORAGE_KEYS.transactions) || '[]',
-            ),
-            categories: JSON.parse(
-                localStorage.getItem(BACKUP_STORAGE_KEYS.categories) || JSON.stringify(categories),
-            ),
+            transactions,
+            categories,
             initialBalances: JSON.parse(
                 localStorage.getItem(BACKUP_STORAGE_KEYS.initialBalances) || '{}',
             ),
-            scriptUrl: localStorage.getItem(BACKUP_STORAGE_KEYS.scriptUrl) || '',
+            scriptUrl: webAppUrl,
         },
     };
 
