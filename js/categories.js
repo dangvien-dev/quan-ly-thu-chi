@@ -1,7 +1,7 @@
-renderCategories()
+renderCategories();
 
-handleCategorySubmit()
+handleCategorySubmit();
 
-deleteCategory()
+deleteCategory();
 
-updateCategoriesDropdown()
+updateCategoriesDropdown();
