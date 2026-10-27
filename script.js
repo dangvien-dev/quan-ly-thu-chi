@@ -53,11 +53,30 @@ function quickFill(note, amount, category) {
 }
 
 // --- ĐIỀU HƯỚNG TAB ---
-function switchTab(tabId) {
-    document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-' + tabId).classList.add('active');
-    document.querySelectorAll('aside .menu li').forEach(el => el.classList.remove('active'));
-    event && event.currentTarget && event.currentTarget.classList.add('active');
+function switchTab(tabId, e) {
+
+    document
+        .querySelectorAll('.view-section')
+        .forEach(el => el.classList.remove('active'));
+
+    const tab =
+        document.getElementById('tab-' + tabId);
+
+    if(tab){
+        tab.classList.add('active');
+    }
+
+    document
+        .querySelectorAll('aside .menu li')
+        .forEach(el => el.classList.remove('active'));
+
+    document
+        .querySelectorAll('.mobile-nav-item')
+        .forEach(el => el.classList.remove('active'));
+
+    if(e && e.currentTarget){
+        e.currentTarget.classList.add('active');
+    }
 }
 
 // --- LOẠI GIAO DỊCH & CHUYỂN TIỀN ---
