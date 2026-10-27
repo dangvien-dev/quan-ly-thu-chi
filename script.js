@@ -386,12 +386,31 @@ function resetAllData() {
 
 function syncToGoogleSheet() {
     if(!webAppUrl) return;
+    
+    // TRÁNH GHI ĐÈ DỮ LIỆU TRỐNG: Nếu mảng local trống nhưng có thể chưa tải về, không cho đẩy dữ liệu rỗng lên vô ý
+    if(!transactions || transactions.length === 0) {
+        console.log("Dữ liệu đang trống, bỏ qua đồng bộ lên để tránh xóa nhầm.");
+        return;
+    }
+
     const badge = document.getElementById('sync-status');
     if(badge) badge.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Đang đồng bộ...`;
-    fetch(`${webAppUrl}?action=save&data=${encodeURIComponent(JSON.stringify(transactions))}`)
-        .then(res => res.json())
-        .then(res => { if(badge) badge.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Đã lưu Google Drive`; })
-        .catch(err => { if(badge) badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Lỗi kết nối`; });
+    
+    fetch(webAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save', data: transactions })
+    })
+    .then(res => {
+        if(!res.ok) throw new Error('Server Error');
+        return res.json();
+    })
+    .then(res => { 
+        if(badge) badge.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Đã lưu Google Drive`; 
+    })
+    .catch(err => { 
+        if(badge) badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Lỗi kết nối`; 
+    });
 }
 
 function syncFromGoogleSheet() {
