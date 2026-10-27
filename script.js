@@ -49,15 +49,30 @@ function quickFill(note, amount, category) {
     setTxType('expense');
     document.getElementById('txAmount').value = amount;
     document.getElementById('txNote').value = note;
-    document.getElementById('txCategory').value = category;
+    setTimeout(() => {
+    const cat = document.getElementById('txCategory');
+
+    if(cat){
+        cat.value = category;
+    }
+}, 10);
 }
 
 // --- ĐIỀU HƯỚNG TAB ---
-function switchTab(tabId) {
-    document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-' + tabId).classList.add('active');
-    document.querySelectorAll('aside .menu li').forEach(el => el.classList.remove('active'));
-    event && event.currentTarget && event.currentTarget.classList.add('active');
+function switchTab(tabId, e) {
+
+    document.querySelectorAll('.view-section')
+        .forEach(el => el.classList.remove('active'));
+
+    document.getElementById('tab-' + tabId)
+        .classList.add('active');
+
+    document.querySelectorAll('aside .menu li')
+        .forEach(el => el.classList.remove('active'));
+
+    if (e?.currentTarget) {
+        e.currentTarget.classList.add('active');
+    }
 }
 
 // --- LOẠI GIAO DỊCH & CHUYỂN TIỀN ---
@@ -92,7 +107,12 @@ function setTxType(type) {
     targetGroup.style.display = (type === 'transfer') ? 'block' : 'none';
 
     // Ẩn/hiện danh mục
-    const catGroup = document.getElementById('txCategory').closest('.form-group');
+    const catGroup = document.getElementById('txCategconst txCategory = document.getElementById('txCategory');
+
+const catGroup =
+    txCategory
+        ? txCategory.closest('.form-group')
+        : null;ory').closest('.form-group');
     if(catGroup) catGroup.style.display = (type === 'transfer') ? 'none' : 'block';
 }
 
@@ -123,11 +143,29 @@ function handleFormSubmit(e) {
     const category = type === 'transfer' ? 'Chuyển tiền nội bộ' : document.getElementById('txCategory').value;
     const amount = parseFloat(document.getElementById('txAmount').value) || 0;
     const note = document.getElementById('txNote').value || '';
+    const amount = Math.round(
+        parseFloat(
+        document.getElementById('txAmount').value
+        ) || 0
+    );
+
 
     if (!dateInput || amount <= 0) {
         alert('Vui lòng nhập ngày và số tiền hợp lệ!');
         return;
     }
+    if(!source){
+    alert('Vui lòng chọn nguồn tiền');
+    return;
+}
+
+    if (
+    type === 'transfer' &&
+    source === targetSource
+){
+    alert('Nguồn gửi và nguồn nhận phải khác nhau!');
+    return;
+}
 
     if (editingId) {
         transactions = transactions.map(t => t.id === editingId ? { ...t, type, date: dateInput, source, targetSource, category, amount, note } : t);
@@ -145,6 +183,7 @@ function handleFormSubmit(e) {
     
     const form = document.getElementById('transactionForm');
     if(form) form.reset();
+    setTxType('expense');
     document.getElementById('txDate').value = new Date().toISOString().split('T')[0];
     syncToGoogleSheet();
 }
@@ -177,6 +216,18 @@ function handleCategorySubmit(e) {
     e.preventDefault();
     const name = document.getElementById('catName').value;
     const type = document.getElementById('catType').value;
+    const exists = categories.some(
+    c => c.name.trim().toLowerCase() === name.trim().toLowerCase()
+);
+
+if(exists){
+    alert('Danh mục đã tồn tại!');
+    return;
+}
+    if(!name.trim()){
+    alert('Vui lòng nhập tên danh mục');
+    return;
+}
 
     categories.push({ id: Date.now(), name, type, icon: 'fa-tag' });
     localStorage.setItem('fm_categories', JSON.stringify(categories));
@@ -196,9 +247,27 @@ function deleteTransaction(id) {
 }
 
 function deleteCategory(id) {
+
+    const category = categories.find(c => c.id === id);
+
+    const used = transactions.some(
+        t => t.category === category?.name
+    );
+
+    if (used) {
+        alert('Danh mục đang được sử dụng, không thể xóa!');
+        return;
+    }
+
     categories = categories.filter(c => c.id !== id);
-    localStorage.setItem('fm_categories', JSON.stringify(categories));
+
+    localStorage.setItem(
+        'fm_categories',
+        JSON.stringify(categories)
+    );
+
     renderCategories();
+    updateCategoriesDropdown();
 }
 
 function saveDataLocally() { localStorage.setItem('fm_transactions', JSON.stringify(transactions)); }
@@ -208,7 +277,8 @@ function renderAll() { renderTransactions(); renderOverview(); renderSources(); 
 
 function renderTransactions() {
     const tbody = document.getElementById('transaction-table-body');
-    const filter = document.getElementById('filter-type').value;
+    const filterEl = document.getElementById('filter-type');
+    const filter = filterEl ? filterEl.value : 'ALL';
     if(!tbody) return;
     tbody.innerHTML = '';
     
@@ -217,6 +287,7 @@ function renderTransactions() {
         tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--text-muted);">Chưa có giao dịch</td></tr>`;
         return;
     }
+
     
     filtered.forEach(t => {
         let typeLabel = 'Chi';
@@ -369,8 +440,25 @@ function syncToGoogleSheet() {
     if(!webAppUrl) return;
     const badge = document.getElementById('sync-status');
     if(badge) badge.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Đang đồng bộ...`;
-    fetch(`${webAppUrl}?action=save&data=${encodeURIComponent(JSON.stringify(transactions))}`)
-        .then(res => res.json())
+    fetch(webAppUrl,{
+    method:'POST',
+    headers:{
+        'Content-Type':'application/json'
+    },
+    body:JSON.stringify({
+        action:'save',
+        data:transactions
+    })
+})
+        .then(res => {
+
+    if(!res.ok){
+        throw new Error('Server Error');
+    }
+
+    return res.json();
+
+})
         .then(res => { if(badge) badge.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Đã lưu Google Drive`; })
         .catch(err => { if(badge) badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Lỗi kết nối`; });
 }
@@ -380,7 +468,15 @@ function syncFromGoogleSheet() {
     const badge = document.getElementById('sync-status');
     if(badge) badge.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Đang tải...`;
     fetch(webAppUrl)
-        .then(res => res.json())
+        .then(res => {
+
+    if(!res.ok){
+        throw new Error('Server Error');
+    }
+
+    return res.json();
+
+})
         .then(data => {
             if(Array.isArray(data) && data.length > 0) {
                 transactions = data;
@@ -390,4 +486,68 @@ function syncFromGoogleSheet() {
             if(badge) badge.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Đã lưu Google Drive`;
         })
         .catch(err => { if(badge) badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Dùng bản offline`; });
+}
+
+function exportBackup() {
+
+    const blob = new Blob(
+        [JSON.stringify(transactions, null, 2)],
+        { type: 'application/json' }
+    );
+
+    const a = document.createElement('a');
+
+    a.href = URL.creatconst url = URL.createObjectURL(blob);
+
+a.href = url;
+
+a.click();
+
+URL.revokeObjectURL(url);
+    eObjectURL(blob);
+
+    a.download =
+        'backup-thu-chi-' +
+        new Date().toISOString().split('T')[0] +
+        '.json';
+
+    a.click();
+}
+
+function importBackup(file){
+
+    const reader = new FileReader();
+
+    reader.onload = function(e){
+
+        try{
+
+            const data =
+                JSON.parse(e.target.result);
+
+            if(Array.isArray(data)){
+
+                transactions = data;
+
+                saveDataLocally();
+
+                renderAll();
+
+                alert(
+                    'Khôi phục dữ liệu thành công'
+                );
+
+            }
+
+        }catch{
+
+            alert(
+                'File không hợp lệ'
+            );
+
+        }
+
+    };
+
+    reader.readAsText(file);
 }
