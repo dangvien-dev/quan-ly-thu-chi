@@ -4,386 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinManager - Quản Lý Dòng Tiền Cá Nhân</title>
+    <!-- Thư viện ngoài -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        :root {
-            --primary: #4f46e5;
-            --primary-hover: #4338ca;
-            --bg-body: #f8fafc;
-            --bg-card: #ffffff;
-            --text-main: #1e293b;
-            --text-muted: #64748b;
-            --border: #e2e8f0;
-            --success: #10b981;
-            --danger: #ef4444;
-            --warning: #f59e0b;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        body {
-            background-color: var(--bg-body);
-            color: var(--text-main);
-            display: flex;
-            min-height: 100vh;
-        }
-
-        /* Sidebar Desktop */
-        aside {
-            width: 260px;
-            background-color: #0f172a;
-            color: #f8fafc;
-            display: flex;
-            flex-direction: column;
-            position: fixed;
-            height: 100vh;
-            z-index: 100;
-            transition: all 0.3s;
-        }
-
-        .brand {
-            padding: 24px 20px;
-            font-size: 20px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            border-bottom: 1px solid #1e293b;
-            color: #ffffff;
-        }
-
-        .brand i {
-            color: var(--primary);
-            font-size: 24px;
-        }
-
-        .menu {
-            list-style: none;
-            padding: 20px 10px;
-            flex: 1;
-            overflow-y: auto;
-        }
-
-        .menu li {
-            padding: 12px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            margin-bottom: 6px;
-            color: #94a3b8;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-
-        .menu li:hover, .menu li.active {
-            background-color: var(--primary);
-            color: #ffffff;
-        }
-
-        .menu li i {
-            font-size: 18px;
-            width: 20px;
-            text-align: center;
-        }
-
-        /* Main Content */
-        main {
-            margin-left: 260px;
-            flex: 1;
-            padding: 30px;
-            max-width: calc(100vw - 260px);
-            padding-bottom: 90px;
-        }
-
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-        }
-
-        .header-title h1 {
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--text-main);
-        }
-
-        .header-title p {
-            font-size: 14px;
-            color: var(--text-muted);
-        }
-
-        .btn {
-            background-color: var(--primary);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            transition: background 0.2s;
-        }
-
-        .btn:hover {
-            background-color: var(--primary-hover);
-        }
-
-        .btn-success { background-color: var(--success); }
-        .btn-success:hover { background-color: #059669; }
-        .btn-danger { background-color: var(--danger); }
-        .btn-danger:hover { background-color: #dc2626; }
-        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-main); }
-        .btn-outline:hover { background: var(--border); }
-
-        /* Views / Sections */
-        .view-section {
-            display: none;
-        }
-        .view-section.active {
-            display: block;
-            animation: fadeIn 0.3s ease-in-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(5px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* Cards & Grid */
-        .grid-cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .card {
-            background: var(--bg-card);
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            border: 1px solid var(--border);
-        }
-
-        .card-title {
-            font-size: 13px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .card-value {
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--text-main);
-        }
-
-        .card-value.income { color: var(--success); }
-        .card-value.expense { color: var(--danger); }
-
-        /* Tables & Lists */
-        .table-container {
-            background: var(--bg-card);
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            margin-bottom: 30px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-            font-size: 14px;
-        }
-
-        th, td {
-            padding: 14px 20px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        th {
-            background-color: #f8fafc;
-            font-weight: 600;
-            color: var(--text-muted);
-        }
-
-        tr:last-child td {
-            border-bottom: none;
-        }
-
-        /* Forms & Modals */
-        .modal {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s;
-        }
-
-        .modal.open {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        .modal-content {
-            background: var(--bg-card);
-            width: 100%;
-            max-width: 500px;
-            border-radius: 16px;
-            padding: 30px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .modal-header h3 { font-size: 18px; font-weight: 700; }
-        .close-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); }
-
-        .form-group {
-            margin-bottom: 16px;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 13px;
-            font-weight: 600;
-            margin-bottom: 6px;
-            color: var(--text-main);
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 10px 14px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            font-size: 14px;
-            outline: none;
-            transition: border 0.2s;
-        }
-
-        .form-control:focus {
-            border-color: var(--primary);
-        }
-
-        .type-selector {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 16px;
-        }
-
-        .type-btn {
-            flex: 1;
-            padding: 10px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: transparent;
-            font-weight: 600;
-            cursor: pointer;
-            text-align: center;
-        }
-
-        .type-btn.active.expense { background: var(--danger); color: white; border-color: var(--danger); }
-        .type-btn.active.income { background: var(--success); color: white; border-color: var(--success); }
-
-        /* Mobile Bottom Nav */
-        .mobile-nav {
-            display: none;
-            position: fixed;
-            bottom: 0; left: 0; width: 100%;
-            background: #ffffff;
-            border-top: 1px solid var(--border);
-            justify-content: space-around;
-            padding: 10px 0;
-            z-index: 99;
-        }
-
-        .mobile-nav-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            color: var(--text-muted);
-            font-size: 11px;
-            gap: 4px;
-            cursor: pointer;
-            border: none;
-            background: none;
-        }
-
-        .mobile-nav-item.active { color: var(--primary); }
-        .mobile-nav-item i { font-size: 18px; }
-
-        .floating-add-btn {
-            display: none;
-            position: fixed;
-            bottom: 75px; right: 20px;
-            width: 56px; height: 56px;
-            background: var(--primary);
-            color: white;
-            border-radius: 50%;
-            justify-content: center;
-            align-items: center;
-            font-size: 24px;
-            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
-            cursor: pointer;
-            z-index: 100;
-            border: none;
-        }
-
-        /* Sync Status Badge */
-        .sync-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            padding: 4px 10px;
-            border-radius: 20px;
-            background: #e0f2fe;
-            color: #0369a1;
-            font-weight: 600;
-        }
-
-        @media (max-width: 768px) {
-            aside { display: none; }
-            main { margin-left: 0; max-width: 100%; padding: 15px; padding-bottom: 90px; }
-            .mobile-nav { display: flex; }
-            .floating-add-btn { display: flex; }
-        }
-    </style>
+    <!-- Liên kết file CSS riêng -->
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
     <!-- Sidebar Desktop -->
     <aside>
-        <div class="brand">
-            <i class="fa-solid fa-wallet"></i>
-            <span>FinManager</span>
-        </div>
+        <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
         <ul class="menu">
             <li class="active" onclick="switchTab('overview')"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
             <li onclick="switchTab('transactions')"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
@@ -394,12 +25,12 @@
         </ul>
     </aside>
 
-    <!-- Main App Container -->
+    <!-- Main Content -->
     <main>
         <header>
             <div class="header-title">
                 <h1 id="page-title">Tổng Quan Dòng Tiền</h1>
-                <p id="current-date-label">Hôm nay</p>
+                <p id="current-date-label">Theo dõi tài chính cá nhân</p>
             </div>
             <div style="display: flex; gap: 12px; align-items: center;">
                 <div id="sync-status" class="sync-badge"><i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng</div>
@@ -410,37 +41,14 @@
         <!-- TAB 1: TỔNG QUAN -->
         <section id="tab-overview" class="view-section active">
             <div class="grid-cards">
-                <div class="card">
-                    <div class="card-title">Tổng Số Dư Khả Dụng</div>
-                    <div class="card-value" id="lbl-total-balance">0 đ</div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Tổng Thu Tháng Này</div>
-                    <div class="card-value income" id="lbl-total-income">0 đ</div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Tổng Chi Tháng Này</div>
-                    <div class="card-value expense" id="lbl-total-expense">0 đ</div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Dư Nợ Tín Dụng / SPay</div>
-                    <div class="card-value expense" id="lbl-total-debt">0 đ</div>
-                </div>
+                <div class="card"><div class="card-title">Tổng Số Dư Khả Dụng</div><div class="card-value" id="lbl-total-balance">0 đ</div></div>
+                <div class="card"><div class="card-title">Tổng Thu Tháng Này</div><div class="card-value income" id="lbl-total-income">0 đ</div></div>
+                <div class="card"><div class="card-title">Tổng Chi Tháng Này</div><div class="card-value expense" id="lbl-total-expense">0 đ</div></div>
+                <div class="card"><div class="card-title">Dư Nợ Tín Dụng / SPay</div><div class="card-value expense" id="lbl-total-debt">0 đ</div></div>
             </div>
-
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px;">
-                <div class="card">
-                    <h3 style="font-size: 16px; margin-bottom: 15px;">Tỷ Trọng Chi Tiêu Theo Danh Mục</h3>
-                    <div style="position: relative; height: 240px;">
-                        <canvas id="expenseCategoryChart"></canvas>
-                    </div>
-                </div>
-                <div class="card">
-                    <h3 style="font-size: 16px; margin-bottom: 15px;">Biểu Đồ Thu / Chi Tháng</h3>
-                    <div style="position: relative; height: 240px;">
-                        <canvas id="monthlyChart"></canvas>
-                    </div>
-                </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Tỷ Trọng Chi Tiêu</h3><div style="height: 240px;"><canvas id="expenseCategoryChart"></canvas></div></div>
+                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Biểu Đồ Thu / Chi</h3><div style="height: 240px;"><canvas id="monthlyChart"></canvas></div></div>
             </div>
         </section>
 
@@ -448,30 +56,16 @@
         <section id="tab-transactions" class="view-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h3>Lịch Sử Giao Dịch</h3>
-                <div style="display: flex; gap: 10px;">
-                    <select id="filter-type" class="form-control" style="width: 140px;" onchange="renderTransactions()">
-                        <option value="ALL">Tất cả loại</option>
-                        <option value="income">Thu nhập</option>
-                        <option value="expense">Chi tiêu</option>
-                    </select>
-                </div>
+                <select id="filter-type" class="form-control" style="width: 140px;" onchange="renderTransactions()">
+                    <option value="ALL">Tất cả loại</option>
+                    <option value="income">Thu nhập</option>
+                    <option value="expense">Chi tiêu</option>
+                </select>
             </div>
             <div class="table-container">
                 <table>
-                    <thead>
-                        <tr>
-                            <th>Ngày</th>
-                            <th>Nguồn Tiền</th>
-                            <th>Danh Mục</th>
-                            <th>Loại</th>
-                            <th>Số Tiền</th>
-                            <th>Mô Tả</th>
-                            <th style="text-align: right;">Thao Tác</th>
-                        </tr>
-                    </thead>
-                    <tbody id="transaction-table-body">
-                        <!-- Dữ liệu render bằng JS -->
-                    </tbody>
+                    <thead><tr><th>Ngày</th><th>Nguồn Tiền</th><th>Danh Mục</th><th>Loại</th><th>Số Tiền</th><th>Mô Tả</th><th style="text-align: right;">Thao Tác</th></tr></thead>
+                    <tbody id="transaction-table-body"></tbody>
                 </table>
             </div>
         </section>
@@ -479,10 +73,7 @@
         <!-- TAB 3: NGUỒN TIỀN -->
         <section id="tab-sources" class="view-section">
             <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
-            <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 14px;">Số dư các nguồn được tính toán tự động dựa trên các giao dịch thu chi.</p>
-            <div class="grid-cards" id="sources-grid">
-                <!-- Render bằng JS -->
-            </div>
+            <div class="grid-cards" id="sources-grid"></div>
         </section>
 
         <!-- TAB 4: DANH MỤC -->
@@ -493,45 +84,30 @@
             </div>
             <div class="table-container">
                 <table>
-                    <thead>
-                        <tr>
-                            <th>Tên Danh Mục</th>
-                            <th>Loại</th>
-                            <th>Biểu Tượng</th>
-                            <th style="text-align: right;">Thao Tác</th>
-                        </tr>
-                    </thead>
-                    <tbody id="category-table-body">
-                        <!-- Render bằng JS -->
-                    </tbody>
+                    <thead><tr><th>Tên Danh Mục</th><th>Loại</th><th>Biểu Tượng</th><th style="text-align: right;">Thao Tác</th></tr></thead>
+                    <tbody id="category-table-body"></tbody>
                 </table>
             </div>
         </section>
 
-        <!-- TAB 5: VAY NỢ & CTY -->
+        <!-- TAB 5: VAY NỢ -->
         <section id="tab-debts" class="view-section">
             <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
-            <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 14px;">Theo dõi các khoản vay mượn cá nhân và công nợ công ty.</p>
-            <div class="card">
-                <p style="color: var(--text-muted);">Tính năng đang được tối ưu hóa hiển thị đầy đủ tại phiên bản này.</p>
-            </div>
+            <div class="card"><p style="color: var(--text-muted);">Tính năng đang phát triển.</p></div>
         </section>
 
         <!-- TAB 6: CÀI ĐẶT -->
         <section id="tab-settings" class="view-section">
             <div class="card" style="margin-bottom: 20px;">
-                <h3 style="margin-bottom: 12px;">Đồng Bộ Google Sheets (Tự Động)</h3>
-                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Dữ liệu sẽ tự động lưu và đồng bộ với file Google Sheets của bạn qua Web App URL.</p>
+                <h3 style="margin-bottom: 12px;">Đồng Bộ Google Sheets</h3>
                 <div class="form-group">
-                    <label>Google Apps Script Web App URL:</label>
+                    <label>Web App URL:</label>
                     <input type="text" id="setting-script-url" class="form-control" value="https://script.google.com/macros/s/AKfycbwQEBQgol_KzwASdrXt0wD0_Nhq760npW1GpdqbynsM-whmV-ZqlVMbn4BvHTVk5Pk7Hg/exec">
                 </div>
-                <button class="btn" onclick="saveScriptUrl()"><i class="fa-solid fa-save"></i> Lưu & Đồng Bộ Ngay</button>
+                <button class="btn" onclick="saveScriptUrl()"><i class="fa-solid fa-save"></i> Lưu Cấu Hình</button>
             </div>
-
             <div class="card" style="border-color: var(--danger);">
-                <h3 style="color: var(--danger); margin-bottom: 12px;">Vùng Nguy Hiểm / Xóa Dữ Liệu</h3>
-                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 15px;">Thao tác xóa toàn bộ giao dịch hoặc khôi phục cài đặt gốc.</p>
+                <h3 style="color: var(--danger); margin-bottom: 12px;">Vùng Nguy Hiểm</h3>
                 <button class="btn btn-danger" onclick="resetAllData()"><i class="fa-solid fa-trash"></i> Xóa Toàn Bộ Dữ Liệu</button>
             </div>
         </section>
@@ -545,390 +121,44 @@
         <button class="mobile-nav-item" onclick="switchTab('categories')"><i class="fa-solid fa-tags"></i><span>Danh mục</span></button>
         <button class="mobile-nav-item" onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i><span>Cài đặt</span></button>
     </nav>
-
     <button class="floating-add-btn" onclick="openModal()"><i class="fa-solid fa-plus"></i></button>
 
-    <!-- Modal Nhập Giao Dịch -->
+    <!-- Modals -->
     <div id="transactionModal" class="modal">
         <div class="modal-content">
-            <div class="modal-header">
-                <h3>Thêm Giao Dịch Mới</h3>
-                <button class="close-btn" onclick="closeModal()">&times;</button>
-            </div>
+            <div class="modal-header"><h3>Thêm Giao Dịch</h3><button class="close-btn" onclick="closeModal()">&times;</button></div>
             <form id="transactionForm" onsubmit="handleFormSubmit(event)">
                 <div class="type-selector">
                     <button type="button" class="type-btn expense active" id="btnTypeExpense" onclick="setTxType('expense')">Chi Tiêu (-)</button>
                     <button type="button" class="type-btn income" id="btnTypeIncome" onclick="setTxType('income')">Thu Nhập (+)</button>
                 </div>
-                <div class="form-group">
-                    <label>Ngày Giao Dịch</label>
-                    <input type="date" id="txDate" class="form-control" required>
-                </div>
-                <div class="form-group">
-                    <label>Nguồn Tiền / Tài Khoản</label>
+                <div class="form-group"><label>Ngày</label><input type="date" id="txDate" class="form-control" required></div>
+                <div class="form-group"><label>Nguồn Tiền</label>
                     <select id="txSource" class="form-control" required>
-                        <option value="Tiền Mặt">Tiền Mặt</option>
-                        <option value="Thẻ Ngân Hàng">Thẻ Ngân Hàng</option>
-                        <option value="Thẻ Tín Dụng">Thẻ Tín Dụng</option>
-                        <option value="Spaylater">Spaylater</option>
-                        <option value="Nợ Công Ty">Nợ Công Ty</option>
+                        <option value="Tiền Mặt">Tiền Mặt</option><option value="Thẻ Ngân Hàng">Thẻ Ngân Hàng</option>
+                        <option value="Thẻ Tín Dụng">Thẻ Tín Dụng</option><option value="Spaylater">Spaylater</option><option value="Nợ Công Ty">Nợ Công Ty</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Danh Mục</label>
-                    <select id="txCategory" class="form-control" required>
-                        <!-- Render bằng JS -->
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Số Tiền (VNĐ)</label>
-                    <input type="number" id="txAmount" class="form-control" placeholder="VD: 50000" required>
-                </div>
-                <div class="form-group">
-                    <label>Mô Tả / Ghi Chú</label>
-                    <input type="text" id="txNote" class="form-control" placeholder="VD: Mua vật tư, ăn uống...">
-                </div>
+                <div class="form-group"><label>Danh Mục</label><select id="txCategory" class="form-control" required></select></div>
+                <div class="form-group"><label>Số Tiền (VNĐ)</label><input type="number" id="txAmount" class="form-control" required></div>
+                <div class="form-group"><label>Mô Tả</label><input type="text" id="txNote" class="form-control"></div>
                 <button type="submit" class="btn" style="width: 100%; justify-content: center;">Lưu Giao Dịch</button>
             </form>
         </div>
     </div>
 
-    <!-- Modal Thêm Danh Mục -->
     <div id="categoryModal" class="modal">
         <div class="modal-content">
-            <div class="modal-header">
-                <h3>Thêm Danh Mục Mới</h3>
-                <button class="close-btn" onclick="closeCategoryModal()">&times;</button>
-            </div>
+            <div class="modal-header"><h3>Thêm Danh Mục</h3><button class="close-btn" onclick="closeCategoryModal()">&times;</button></div>
             <form onsubmit="handleCategorySubmit(event)">
-                <div class="form-group">
-                    <label>Tên Danh Mục</label>
-                    <input type="text" id="catName" class="form-control" placeholder="VD: Điện nước, Xăng xe..." required>
-                </div>
-                <div class="form-group">
-                    <label>Loại</label>
-                    <select id="catType" class="form-control">
-                        <option value="expense">Chi Tiêu</option>
-                        <option value="income">Thu Nhập</option>
-                    </select>
-                </div>
-                <button type="submit" class="btn" style="width: 100%; justify-content: center;">Thêm Danh Mục</button>
+                <div class="form-group"><label>Tên</label><input type="text" id="catName" class="form-control" required></div>
+                <div class="form-group"><label>Loại</label><select id="catType" class="form-control"><option value="expense">Chi Tiêu</option><option value="income">Thu Nhập</option></select></div>
+                <button type="submit" class="btn" style="width: 100%; justify-content: center;">Thêm</button>
             </form>
         </div>
     </div>
 
-    <script>
-        // Data Store
-        let currentType = 'expense';
-        let transactions = JSON.parse(localStorage.getItem('fm_transactions')) || [];
-        let categories = JSON.parse(localStorage.getItem('fm_categories')) || [
-            { id: 1, name: 'Ăn uống', type: 'expense', icon: 'fa-utensils' },
-            { id: 2, name: 'Mua sắm', type: 'expense', icon: 'fa-cart-shopping' },
-            { id: 3, name: 'Đi lại', type: 'expense', icon: 'fa-gas-pump' },
-            { id: 4, name: 'Hóa đơn & Tiện ích', type: 'expense', icon: 'fa-bolt' },
-            { id: 5, name: 'Lương / Thưởng', type: 'income', icon: 'fa-money-bill-wave' },
-            { id: 6, name: 'Thu nhập khác', type: 'income', icon: 'fa-circle-plus' }
-        ];
-        let sources = ['Tiền Mặt', 'Thẻ Ngân Hàng', 'Thẻ Tín Dụng', 'Spaylater', 'Nợ Công Ty'];
-        
-        let webAppUrl = localStorage.getItem('fm_script_url') || document.getElementById('setting-script-url').value;
-        document.getElementById('setting-script-url').value = webAppUrl;
-
-        let expenseChart = null;
-        let monthlyChart = null;
-
-        // Init App
-        window.onload = function() {
-            document.getElementById('txDate').valueAsDate = new Date();
-            updateCategoriesDropdown();
-            renderAll();
-            syncFromGoogleSheet();
-        };
-
-        function switchTab(tabId) {
-            document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-            document.getElementById('tab-' + tabId).classList.add('active');
-            
-            document.querySelectorAll('aside .menu li').forEach(el => el.classList.remove('active'));
-            event && event.currentTarget && event.currentTarget.classList.add('active');
-
-            const titles = {
-                'overview': ['Tổng Quan Dòng Tiền', 'Theo dõi tài chính cá nhân'],
-                'transactions': ['Sổ Giao Dịch', 'Danh sách chi tiết các khoản thu chi'],
-                'sources': ['Quản Lý Nguồn Tiền', 'Số dư các tài khoản & ví'],
-                'categories': ['Quản Lý Danh Mục', 'Phân loại thu nhập và chi tiêu'],
-                'debts': ['Quản Lý Vay Nợ', 'Theo dõi công nợ & vay mượn'],
-                'settings': ['Cài Đặt & Đồng Bộ', 'Cấu hình kết nối Google Drive']
-            };
-            document.getElementById('page-title').innerText = titles[tabId][0];
-            document.getElementById('current-date-label').innerText = titles[tabId][1];
-        }
-
-        function setTxType(type) {
-            currentType = type;
-            document.getElementById('btnTypeExpense').classList.toggle('active', type === 'expense');
-            document.getElementById('btnTypeIncome').classList.toggle('active', type === 'income');
-            updateCategoriesDropdown();
-        }
-
-        function updateCategoriesDropdown() {
-            const select = document.getElementById('txCategory');
-            select.innerHTML = '';
-            const filtered = categories.filter(c => c.type === currentType);
-            filtered.forEach(c => {
-                const opt = document.createElement('option');
-                opt.value = c.name;
-                opt.textContent = c.name;
-                select.appendChild(opt);
-            });
-        }
-
-        function openModal() {
-            document.getElementById('transactionModal').classList.add('open');
-        }
-        function closeModal() {
-            document.getElementById('transactionModal').classList.remove('open');
-        }
-        function openCategoryModal() {
-            document.getElementById('categoryModal').classList.add('open');
-        }
-        function closeCategoryModal() {
-            document.getElementById('categoryModal').classList.remove('open');
-        }
-
-        function handleFormSubmit(e) {
-            e.preventDefault();
-            const newTx = {
-                id: 'TX_' + Date.now(),
-                date: document.getElementById('txDate').value,
-                type: currentType,
-                source: document.getElementById('txSource').value,
-                category: document.getElementById('txCategory').value,
-                amount: parseFloat(document.getElementById('txAmount').value),
-                note: document.getElementById('txNote').value
-            };
-
-            transactions.unshift(newTx);
-            saveDataLocally();
-            renderAll();
-            closeModal();
-            document.getElementById('transactionForm').reset();
-            document.getElementById('txDate').valueAsDate = new Date();
-            syncToGoogleSheet();
-        }
-
-        function handleCategorySubmit(e) {
-            e.preventDefault();
-            const name = document.getElementById('catName').value;
-            const type = document.getElementById('catType').value;
-            categories.push({ id: Date.now(), name, type, icon: 'fa-tag' });
-            localStorage.setItem('fm_categories', JSON.stringify(categories));
-            renderCategories();
-            closeCategoryModal();
-            document.getElementById('catName').value = '';
-        }
-
-        function deleteTransaction(id) {
-            if(confirm('Bạn có chắc muốn xóa giao dịch này?')) {
-                transactions = transactions.filter(t => t.id !== id);
-                saveDataLocally();
-                renderAll();
-                syncToGoogleSheet();
-            }
-        }
-
-        function deleteCategory(id) {
-            categories = categories.filter(c => c.id !== id);
-            localStorage.setItem('fm_categories', JSON.stringify(categories));
-            renderCategories();
-        }
-
-        function saveDataLocally() {
-            localStorage.setItem('fm_transactions', JSON.stringify(transactions));
-        }
-
-        function renderAll() {
-            renderTransactions();
-            renderOverview();
-            renderSources();
-            renderCategories();
-        }
-
-        function renderTransactions() {
-            const tbody = document.getElementById('transaction-table-body');
-            const filter = document.getElementById('filter-type').value;
-            tbody.innerHTML = '';
-
-            const filtered = transactions.filter(t => filter === 'ALL' || t.type === filter);
-
-            if(filtered.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--text-muted);">Chưa có giao dịch nào</td></tr>`;
-                return;
-            }
-
-            filtered.forEach(t => {
-                const tr = document.createElement('tr');
-                const isInc = t.type === 'income';
-                tr.innerHTML = `
-                    <td>${t.date}</td>
-                    <td><span style="font-weight:600;">${t.source}</span></td>
-                    <td>${t.category}</td>
-                    <td><span style="color: ${isInc ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${isInc ? 'Thu' : 'Chi'}</span></td>
-                    <td style="font-weight: 700; color: ${isInc ? 'var(--success)' : 'var(--danger)'};">${isInc ? '+' : '-'}${t.amount.toLocaleString()} đ</td>
-                    <td>${t.note || ''}</td>
-                    <td style="text-align: right;"><button class="btn btn-outline" style="padding: 4px 8px; font-size: 12px;" onclick="deleteTransaction('${t.id}')"><i class="fa-solid fa-trash"></i></button></td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        function renderOverview() {
-            let totalIncome = 0;
-            let totalExpense = 0;
-
-            transactions.forEach(t => {
-                if(t.type === 'income') totalIncome += t.amount;
-                else totalExpense += t.amount;
-            });
-
-            document.getElementById('lbl-total-income').innerText = totalIncome.toLocaleString() + ' đ';
-            document.getElementById('lbl-total-expense').innerText = totalExpense.toLocaleString() + ' đ';
-            document.getElementById('lbl-total-balance').innerText = (totalIncome - totalExpense).toLocaleString() + ' đ';
-            document.getElementById('lbl-total-debt').innerText = '0 đ';
-
-            // Render Charts
-            renderCharts();
-        }
-
-        function renderSources() {
-            const grid = document.getElementById('sources-grid');
-            grid.innerHTML = '';
-            sources.forEach(src => {
-                let balance = 0;
-                transactions.forEach(t => {
-                    if(t.source === src) {
-                        if(t.type === 'income') balance += t.amount;
-                        else balance -= t.amount;
-                    }
-                });
-
-                const div = document.createElement('div');
-                div.className = 'card';
-                div.innerHTML = `
-                    <div class="card-title">${src}</div>
-                    <div class="card-value" style="color: ${balance >= 0 ? 'var(--text-main)' : 'var(--danger)'};">${balance.toLocaleString()} đ</div>
-                `;
-                grid.appendChild(div);
-            });
-        }
-
-        function renderCategories() {
-            const tbody = document.getElementById('category-table-body');
-            tbody.innerHTML = '';
-            categories.forEach(c => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><i class="fa-solid ${c.icon || 'fa-tag'}" style="margin-right: 8px; color: var(--primary);"></i> ${c.name}</td>
-                    <td>${c.type === 'income' ? 'Thu Nhập' : 'Chi Tiêu'}</td>
-                    <td>${c.icon || 'fa-tag'}</td>
-                    <td style="text-align: right;"><button class="btn btn-outline" style="padding: 4px 8px; font-size: 12px;" onclick="deleteCategory(${c.id})"><i class="fa-solid fa-trash"></i></button></td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        function renderCharts() {
-            // Expense by category chart
-            const catMap = {};
-            transactions.filter(t => t.type === 'expense').forEach(t => {
-                catMap[t.category] = (catMap[t.category] || 0) + t.amount;
-            });
-
-            const ctxExp = document.getElementById('expenseCategoryChart').getContext('2d');
-            if(expenseChart) expenseChart.destroy();
-            expenseChart = new Chart(ctxExp, {
-                type: 'doughnut',
-                data: {
-                    labels: Object.keys(catMap),
-                    datasets: [{ data: Object.values(catMap), backgroundColor: ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'] }]
-                },
-                options: { responsive: true, maintainAspectRatio: false }
-            });
-
-            // Monthly chart
-            const ctxMonth = document.getElementById('monthlyChart').getContext('2d');
-            if(monthlyChart) monthlyChart.destroy();
-            monthlyChart = new Chart(ctxMonth, {
-                type: 'bar',
-                data: {
-                    labels: ['Tổng Thu', 'Tổng Chi'],
-                    datasets: [{
-                        label: 'VNĐ',
-                        data: [
-                            transactions.filter(t=>t.type==='income').reduce((a,b)=>a+b.amount,0),
-                            transactions.filter(t=>t.type==='expense').reduce((a,b)=>a+b.amount,0)
-                        ],
-                        backgroundColor: ['#10b981', '#ef4444']
-                    }]
-                },
-                options: { responsive: true, maintainAspectRatio: false }
-            });
-        }
-
-        function saveScriptUrl() {
-            webAppUrl = document.getElementById('setting-script-url').value;
-            localStorage.setItem('fm_script_url', webAppUrl);
-            alert('Đã lưu cấu hình Script URL thành công!');
-            syncToGoogleSheet();
-        }
-
-        function resetAllData() {
-            if(confirm('CẢNH BÁO: Xóa toàn bộ dữ liệu giao dịch?')) {
-                transactions = [];
-                saveDataLocally();
-                renderAll();
-                syncToGoogleSheet();
-            }
-        }
-
-        // Google Sheets Sync via GET action=save (Chống lỗi CORS)
-        function syncToGoogleSheet() {
-            if(!webAppUrl) return;
-            const badge = document.getElementById('sync-status');
-            badge.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Đang đồng bộ...`;
-            
-            const dataStr = encodeURIComponent(JSON.stringify(transactions));
-            const url = `${webAppUrl}?action=save&data=${dataStr}`;
-
-            fetch(url)
-                .then(res => res.json())
-                .then(res => {
-                    badge.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Đã lưu Google Drive`;
-                })
-                .catch(err => {
-                    badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Lỗi kết nối`;
-                });
-        }
-
-        function syncFromGoogleSheet() {
-            if(!webAppUrl) return;
-            const badge = document.getElementById('sync-status');
-            badge.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Đang tải dữ liệu...`;
-
-            fetch(webAppUrl)
-                .then(res => res.json())
-                .then(data => {
-                    if(Array.isArray(data) && data.length > 0) {
-                        transactions = data;
-                        saveDataLocally();
-                        renderAll();
-                    }
-                    badge.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Đã lưu Google Drive`;
-                })
-                .catch(err => {
-                    badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Dùng bản offline`;
-                });
-        }
-    </script>
+    <!-- Liên kết file JavaScript riêng -->
+    <script src="script.js"></script>
 </body>
 </html>
