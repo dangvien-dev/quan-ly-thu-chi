@@ -16,12 +16,12 @@
     <aside>
         <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
         <ul class="menu">
-            <li class="active" onclick="switchTab('overview', event)"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
-            <li onclick="switchTab('transactions', event)"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
-            <li onclick="switchTab('sources', event)"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
-            <li onclick="switchTab('categories', event)"><i class="fa-solid fa-tags"></i> Danh Mục</li>
-            <li onclick="switchTab('debts', event)"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
-            <li onclick="switchTab('settings', event)"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
+            <li class="active" onclick="switchTab('overview', this)"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
+            <li onclick="switchTab('transactions', this)"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
+            <li onclick="switchTab('sources', this)"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
+            <li onclick="switchTab('categories', this)"><i class="fa-solid fa-tags"></i> Danh Mục</li>
+            <li onclick="switchTab('debts', this)"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
+            <li onclick="switchTab('settings', this)"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
         </ul>
     </aside>
 
@@ -137,23 +137,23 @@
 
     <!-- Mobile Navigation -->
     <nav class="mobile-nav">
-        <button class="mobile-nav-item active" onclick="switchTab('overview', event)">
+        <button class="mobile-nav-item active" onclick="switchTab('overview', this)">
             <i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('transactions', event)">
+        <button class="mobile-nav-item" onclick="switchTab('transactions', this)">
             <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('sources', event)">
+        <button class="mobile-nav-item" onclick="switchTab('sources', this)">
             <i class="fa-solid fa-vault"></i><span>Nguồn</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('categories', event)">
+        <button class="mobile-nav-item" onclick="switchTab('categories', this)">
             <i class="fa-solid fa-tags"></i><span>Danh mục</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('settings', event)">
+        <button class="mobile-nav-item" onclick="switchTab('settings', this)">
             <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
         </button>
     </nav>
