@@ -311,3 +311,33 @@ function syncFromGoogleSheet() {
         })
         .catch(err => badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Dùng bản offline`);
 }
+
+// Thêm 1 hàm kiểm tra nếu chọn loại chuyển tiền thì hiện ô "Nguồn nhận"
+function setTxType(type) {
+    currentType = type;
+    document.getElementById('btnTypeExpense').classList.toggle('active', type === 'expense');
+    document.getElementById('btnTypeIncome').classList.toggle('active', type === 'income');
+    
+    // Nếu có nút chuyển tiền
+    const btnTransfer = document.getElementById('btnTypeTransfer');
+    if(btnTransfer) btnTransfer.classList.toggle('active', type === 'transfer');
+
+    updateCategoriesDropdown();
+    
+    // Ẩn hiện ô chọn nguồn nhận
+    let targetGroup = document.getElementById('targetSourceGroup');
+    if(!targetGroup) {
+        targetGroup = document.createElement('div');
+        targetGroup.id = 'targetSourceGroup';
+        targetGroup.className = 'form-group';
+        targetGroup.style.display = 'none';
+        targetGroup.innerHTML = `
+            <label>Chuyển Đến Nguồn (Nhận)</label>
+            <select id="txTargetSource" class="form-control">
+                ${sources.map(s => `<option value="${s}">${s}</option>`).join('')}
+            </select>
+        `;
+        document.getElementById('txSource').closest('.form-group').after(targetGroup);
+    }
+    targetGroup.style.display = (type === 'transfer') ? 'block' : 'none';
+}
