@@ -15,7 +15,8 @@ document.getElementById('setting-script-url').value = webAppUrl;
 let expenseChart = null, monthlyChart = null;
 
 window.onload = function() {
-    document.getElementById('txDate').valueAsDate = new Date();
+    const today = new Date().toISOString().split('T')[0];
+document.getElementById('txDate').value = today;
     updateCategoriesDropdown();
     renderAll();
     syncFromGoogleSheet();
