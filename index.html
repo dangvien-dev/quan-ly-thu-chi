@@ -128,10 +128,11 @@
         <div class="modal-content">
             <div class="modal-header"><h3>Thêm Giao Dịch</h3><button class="close-btn" onclick="closeModal()">&times;</button></div>
             <form id="transactionForm" onsubmit="handleFormSubmit(event)">
-                <div class="type-selector">
-                    <button type="button" class="type-btn expense active" id="btnTypeExpense" onclick="setTxType('expense')">Chi Tiêu (-)</button>
-                    <button type="button" class="type-btn income" id="btnTypeIncome" onclick="setTxType('income')">Thu Nhập (+)</button>
-                </div>
+               <div class="type-selector">
+    <button type="button" class="type-btn expense active" id="btnTypeExpense" onclick="setTxType('expense')">Chi Tiêu (-)</button>
+    <button type="button" class="type-btn income" id="btnTypeIncome" onclick="setTxType('income')">Thu Nhập (+)</button>
+    <button type="button" class="type-btn" id="btnTypeTransfer" onclick="setTxType('transfer')" style="border-color:var(--warning); color:var(--warning);">Chuyển Tiền</button>
+</div>
                 <div class="form-group"><label>Ngày</label><input type="date" id="txDate" class="form-control" required></div>
                 <div class="form-group"><label>Nguồn Tiền</label>
                     <select id="txSource" class="form-control" required>
