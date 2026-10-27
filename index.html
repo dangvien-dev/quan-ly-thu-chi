@@ -16,12 +16,12 @@
     <aside>
         <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
         <ul class="menu">
-            <li class="active" onclick="switchTab('overview')"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
-            <li onclick="switchTab('transactions')"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
-            <li onclick="switchTab('sources')"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
-            <li onclick="switchTab('categories')"><i class="fa-solid fa-tags"></i> Danh Mục</li>
-            <li onclick="switchTab('debts')"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
-            <li onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
+            <li class="active" onclick="switchTab('overview', event)"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
+            <li onclick="switchTab('transactions', event)"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
+            <li onclick="switchTab('sources', event)"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
+            <li onclick="switchTab('categories', event)"><i class="fa-solid fa-tags"></i> Danh Mục</li>
+            <li onclick="switchTab('debts', event)"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
+            <li onclick="switchTab('settings', event)"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
         </ul>
     </aside>
 
@@ -60,6 +60,7 @@
                     <option value="ALL">Tất cả loại</option>
                     <option value="income">Thu nhập</option>
                     <option value="expense">Chi tiêu</option>
+                    <option value="transfer">Chuyển tiền</option>
                 </select>
             </div>
             <div class="table-container">
@@ -105,6 +106,23 @@
                     <input type="text" id="setting-script-url" class="form-control" value="https://script.google.com/macros/s/AKfycbwQEBQgol_KzwASdrXt0wD0_Nhq760npW1GpdqbynsM-whmV-ZqlVMbn4BvHTVk5Pk7Hg/exec">
                 </div>
                 <button class="btn" onclick="saveScriptUrl()"><i class="fa-solid fa-save"></i> Lưu Cấu Hình</button>
+
+                <hr style="margin:20px 0">
+
+<h3>Sao lưu & Khôi phục dữ liệu</h3>
+
+<button class="btn" onclick="exportBackup()">
+    <i class="fa-solid fa-download"></i>
+    Sao lưu dữ liệu
+</button>
+
+<br><br>
+
+<input
+    type="file"
+    accept=".json"
+    onchange="importBackup(this.files[0])">
+                
             </div>
             <div class="card" style="border-color: var(--danger);">
                 <h3 style="color: var(--danger); margin-bottom: 12px;">Vùng Nguy Hiểm</h3>
@@ -115,11 +133,21 @@
 
     <!-- Mobile Navigation -->
     <nav class="mobile-nav">
-        <button class="mobile-nav-item active" onclick="switchTab('overview')"><i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span></button>
-        <button class="mobile-nav-item" onclick="switchTab('transactions')"><i class="fa-solid fa-list-ul"></i><span>Sổ GD</span></button>
-        <button class="mobile-nav-item" onclick="switchTab('sources')"><i class="fa-solid fa-vault"></i><span>Nguồn</span></button>
-        <button class="mobile-nav-item" onclick="switchTab('categories')"><i class="fa-solid fa-tags"></i><span>Danh mục</span></button>
-        <button class="mobile-nav-item" onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i><span>Cài đặt</span></button>
+        <button class="mobile-nav-item active" 
+                onclick="switchTab('overview', event)"><i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span></button>
+        
+        <button class="mobile-nav-item" 
+                onclick="switchTab('transactions', event)"><i class="fa-solid fa-list-ul"></i><span>Sổ GD</span></button>
+        
+        <button class="mobile-nav-item" 
+                onclick="switchTab('sources', event)"><i class="fa-solid fa-vault"></i><span>Nguồn</span></button>
+        
+        <button class="mobile-nav-item" 
+                onclick="switchTab('categories', event"><i class="fa-solid fa-tags"></i><span>Danh mục</span></button>
+        
+        <button class="mobile-nav-item" 
+                onclick="switchTab('settings', event)"><i class="fa-solid fa-gear"></i><span>Cài đặt</span></button>
+        
     </nav>
     <button class="floating-add-btn" onclick="openModal()"><i class="fa-solid fa-plus"></i></button>
 
@@ -141,7 +169,13 @@
                     </select>
                 </div>
                 <div class="form-group"><label>Danh Mục</label><select id="txCategory" class="form-control" required></select></div>
-                <div class="form-group"><label>Số Tiền (VNĐ)</label><input type="number" id="txAmount" class="form-control" required></div>
+                <div class="form-group"><label>Số Tiền (VNĐ)</label>
+                    <input type="number"
+                           id="txAmount"
+                           class="form-control"
+                           min="1"
+                           step="1000"
+                           required>
                 <div class="form-group"><label>Mô Tả</label><input type="text" id="txNote" class="form-control"></div>
                 <button type="submit" class="btn" style="width: 100%; justify-content: center;">Lưu Giao Dịch</button>
             </form>
