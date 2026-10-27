@@ -418,3 +418,31 @@ function editTransaction(id) {
 
     openModal();
 }
+function renderOverview() {
+
+    let totInc = 0;
+    let totExp = 0;
+
+    transactions.forEach(t => {
+
+        if(t.type === 'income'){
+            totInc += t.amount;
+        }
+        else if(t.type === 'expense'){
+            totExp += t.amount;
+        }
+    });
+
+    document.getElementById('lbl-total-income')
+        .innerText = totInc.toLocaleString() + ' đ';
+
+    document.getElementById('lbl-total-expense')
+        .innerText = totExp.toLocaleString() + ' đ';
+
+    document.getElementById('lbl-total-balance')
+        .innerText =
+        (totInc - totExp).toLocaleString() + ' đ';
+
+    renderCharts();
+}
+
