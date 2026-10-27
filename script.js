@@ -186,12 +186,23 @@ function renderTransactions() {
         return;
     }
     filtered.forEach(t => {
-        const isInc = t.type === 'income';
+        let typeLabel = 'Chi';
+        let colorStyle = 'var(--danger)';
+        let sign = '-';
+        if(t.type === 'income') { typeLabel = 'Thu'; colorStyle = 'var(--success)'; sign = '+'; }
+        else if(t.type === 'transfer') { typeLabel = 'Chuyển'; colorStyle = 'var(--warning)'; sign = '⟷'; }
+
+        // Cắt bỏ chuỗi T...Z để ngày hiển thị sạch đẹp dạng YYYY-MM-DD
+        let cleanDate = t.date ? t.date.split('T')[0] : '';
+        let sourceDisplay = t.type === 'transfer' ? `${t.source} ➔ ${t.targetSource}` : t.source;
+
         tbody.innerHTML += `<tr>
-            <td>${t.date}</td><td><b>${t.source}</b></td><td>${t.category}</td>
-            <td><span style="color:${isInc?'var(--success)':'var(--danger)'}; font-weight:600;">${isInc?'Thu':'Chi'}</span></td>
-            <td style="font-weight:700; color:${isInc?'var(--success)':'var(--danger)'};">${isInc?'+':'-'}${t.amount.toLocaleString()} đ</td>
-           <td>${t.date ? t.date.split('T')[0] : ''}</td>
+            <td>${cleanDate}</td>
+            <td><b>${sourceDisplay}</b></td>
+            <td>${t.category || (t.type === 'transfer' ? 'Chuyển khoản nội bộ' : '')}</td>
+            <td><span style="color:${colorStyle}; font-weight:600;">${typeLabel}</span></td>
+            <td style="font-weight:700; color:${colorStyle};">${sign}${t.amount.toLocaleString()} đ</td>
+            <td>${t.note || ''}</td>
             <td style="text-align:right; white-space:nowrap;">
                 <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" onclick="editTransaction('${t.id}')"><i class="fa-solid fa-pen"></i></button>
                 <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" onclick="deleteTransaction('${t.id}')"><i class="fa-solid fa-trash"></i></button>
@@ -317,14 +328,12 @@ function setTxType(type) {
     currentType = type;
     document.getElementById('btnTypeExpense').classList.toggle('active', type === 'expense');
     document.getElementById('btnTypeIncome').classList.toggle('active', type === 'income');
-    
-    // Nếu có nút chuyển tiền
-    const btnTransfer = document.getElementById('btnTypeTransfer');
-    if(btnTransfer) btnTransfer.classList.toggle('active', type === 'transfer');
+    const btnTr = document.getElementById('btnTypeTransfer');
+    if(btnTr) btnTr.classList.toggle('active', type === 'transfer');
 
     updateCategoriesDropdown();
     
-    // Ẩn hiện ô chọn nguồn nhận
+    // Tạo hoặc hiện ô chọn nguồn nhận khi là Chuyển tiền
     let targetGroup = document.getElementById('targetSourceGroup');
     if(!targetGroup) {
         targetGroup = document.createElement('div');
@@ -340,4 +349,35 @@ function setTxType(type) {
         document.getElementById('txSource').closest('.form-group').after(targetGroup);
     }
     targetGroup.style.display = (type === 'transfer') ? 'block' : 'none';
+    
+    // Ẩn bớt danh mục khi chuyển tiền vì không cần thiết
+    const catGroup = document.getElementById('txCategory').closest('.form-group');
+    if(catGroup) catGroup.style.display = (type === 'transfer') ? 'none' : 'block';
+}
+
+function handleFormSubmit(e) {
+    e.preventDefault();
+    const type = currentType;
+    const date = document.getElementById('txDate').value;
+    const source = document.getElementById('txSource').value;
+    const targetSource = type === 'transfer' ? document.getElementById('txTargetSource').value : null;
+    const category = type === 'transfer' ? 'Chuyển tiền nội bộ' : document.getElementById('txCategory').value;
+    const amount = parseFloat(document.getElementById('txAmount').value);
+    const note = document.getElementById('txNote').value;
+
+    if (editingId) {
+        transactions = transactions.map(t => t.id === editingId ? { ...t, type, date, source, targetSource, category, amount, note } : t);
+        editingId = null;
+        document.querySelector('#transactionModal .modal-header h3').innerText = 'Thêm Giao Dịch Mới';
+    } else {
+        const newTx = { id: 'TX_' + Date.now(), date, type, source, targetSource, category, amount, note };
+        transactions.unshift(newTx);
+    }
+
+    saveDataLocally();
+    renderAll();
+    closeModal();
+    document.getElementById('transactionForm').reset();
+    document.getElementById('txDate').valueAsDate = new Date();
+    syncToGoogleSheet();
 }
