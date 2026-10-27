@@ -137,22 +137,27 @@
 
     <!-- Mobile Navigation -->
     <nav class="mobile-nav">
-        <button class="mobile-nav-item active" 
-                onclick="switchTab('overview', event)"><i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span></button>
+        <button class="mobile-nav-item active" onclick="switchTab('overview', event)">
+            <i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span>
+        </button>
         
-        <button class="mobile-nav-item" 
-                onclick="switchTab('transactions', event)"><i class="fa-solid fa-list-ul"></i><span>Sổ GD</span></button>
+        <button class="mobile-nav-item" onclick="switchTab('transactions', event)">
+            <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
+        </button>
         
-        <button class="mobile-nav-item" 
-                onclick="switchTab('sources', event)"><i class="fa-solid fa-vault"></i><span>Nguồn</span></button>
+        <button class="mobile-nav-item" onclick="switchTab('sources', event)">
+            <i class="fa-solid fa-vault"></i><span>Nguồn</span>
+        </button>
         
-        <button class="mobile-nav-item" 
-                <i class="fa-solid fa-tags"></i><span>Danh mục</span></button>
+        <button class="mobile-nav-item" onclick="switchTab('categories', event)">
+            <i class="fa-solid fa-tags"></i><span>Danh mục</span>
+        </button>
         
-        <button class="mobile-nav-item" 
-                onclick="switchTab('settings', event)"><i class="fa-solid fa-gear"></i><span>Cài đặt</span></button>
-        
+        <button class="mobile-nav-item" onclick="switchTab('settings', event)">
+            <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
+        </button>
     </nav>
+    
     <button class="floating-add-btn"
         title="Thêm giao dịch"
         onclick="openModal()">
