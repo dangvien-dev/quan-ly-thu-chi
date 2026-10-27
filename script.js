@@ -328,6 +328,30 @@ function renderOverview() {
     if(incEl) incEl.innerText = totInc.toLocaleString() + ' đ';
     if(expEl) expEl.innerText = totExp.toLocaleString() + ' đ';
     if(balEl) balEl.innerText = (totInc - totExp).toLocaleString() + ' đ';
+
+    let totalDebt = 0;
+
+transactions.forEach(t => {
+
+    if(
+        t.type === 'expense' &&
+        (
+            t.source === 'Thẻ Tín Dụng' ||
+            t.source === 'Spaylater'
+        )
+    ){
+        totalDebt += t.amount;
+    }
+
+});
+
+const debtEl =
+    document.getElementById('lbl-total-debt');
+
+if(debtEl){
+    debtEl.innerText =
+        totalDebt.toLocaleString() + ' đ';
+}
     
     renderCharts();
 }
