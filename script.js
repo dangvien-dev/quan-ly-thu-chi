@@ -191,7 +191,7 @@ function renderTransactions() {
             <td>${t.date}</td><td><b>${t.source}</b></td><td>${t.category}</td>
             <td><span style="color:${isInc?'var(--success)':'var(--danger)'}; font-weight:600;">${isInc?'Thu':'Chi'}</span></td>
             <td style="font-weight:700; color:${isInc?'var(--success)':'var(--danger)'};">${isInc?'+':'-'}${t.amount.toLocaleString()} đ</td>
-            <td>${t.note || ''}</td>
+           <td>${t.date ? t.date.split('T')[0] : ''}</td>
             <td style="text-align:right; white-space:nowrap;">
                 <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" onclick="editTransaction('${t.id}')"><i class="fa-solid fa-pen"></i></button>
                 <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" onclick="deleteTransaction('${t.id}')"><i class="fa-solid fa-trash"></i></button>
