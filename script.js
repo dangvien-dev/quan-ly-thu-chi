@@ -78,32 +78,49 @@ function editTransaction(id) {
 // Cập nhật lại hàm handleFormSubmit để hỗ trợ cả Thêm mới và Sửa
 function handleFormSubmit(e) {
     e.preventDefault();
-    const type = currentType;
-    const date = document.getElementById('txDate').value;
-    const source = document.getElementById('txSource').value;
-    const category = document.getElementById('txCategory').value;
-    const amount = parseFloat(document.getElementById('txAmount').value);
-    const note = document.getElementById('txNote').value;
+    try {
+        const type = currentType;
+        const dateInput = document.getElementById('txDate').value;
+        const source = document.getElementById('txSource').value;
+        const targetSource = type === 'transfer' ? document.getElementById('txTargetSource').value : null;
+        const category = type === 'transfer' ? 'Chuyển tiền nội bộ' : document.getElementById('txCategory').value;
+        const amount = parseFloat(document.getElementById('txAmount').value) || 0;
+        const note = document.getElementById('txNote').value || '';
 
-    if (editingId) {
-        // Chế độ Sửa
-        transactions = transactions.map(t => t.id === editingId ? { ...t, type, date, source, category, amount, note } : t);
-        editingId = null;
-        document.querySelector('#transactionModal .modal-header h3').innerText = 'Thêm Giao Dịch Mới';
-    } else {
-        // Chế độ Thêm mới
-        const newTx = { id: 'TX_' + Date.now(), date, type, source, category, amount, note };
-        transactions.unshift(newTx);
+        if (!dateInput || amount <= 0) {
+            alert('Vui lòng nhập ngày và số tiền hợp lệ!');
+            return;
+        }
+
+        if (window.editingId) {
+            // Cập nhật giao dịch cũ
+            transactions = transactions.map(t => t.id === window.editingId ? { ...t, type, date: dateInput, source, targetSource, category, amount, note } : t);
+            window.editingId = null;
+            const headerTitle = document.querySelector('#transactionModal .modal-header h3');
+            if(headerTitle) headerTitle.innerText = 'Thêm Giao Dịch Mới';
+        } else {
+            // Thêm giao dịch mới
+            const newTx = { id: 'TX_' + Date.now(), date: dateInput, type, source, targetSource, category, amount, note };
+            transactions.unshift(newTx);
+        }
+
+        saveDataLocally();
+        renderAll();
+        closeModal();
+        
+        const form = document.getElementById('transactionForm');
+        if(form) form.reset();
+        
+        // Gán lại ngày hôm nay chuẩn định dạng
+        document.getElementById('txDate').value = new Date().toISOString().split('T')[0];
+        
+        // Đồng bộ lên Google Sheets
+        syncToGoogleSheet();
+    } catch (err) {
+        console.error("Lỗi khi lưu giao dịch: ", err);
+        alert("Có lỗi xảy ra, vui lòng kiểm tra lại console!");
     }
-
-    saveDataLocally();
-    renderAll();
-    closeModal();
-    document.getElementById('transactionForm').reset();
-    document.getElementById('txDate').valueAsDate = new Date();
-    syncToGoogleSheet();
 }
-};
 
 function switchTab(tabId) {
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
