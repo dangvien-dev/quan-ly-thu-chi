@@ -212,13 +212,44 @@ function renderOverview() {
 function renderSources() {
     const grid = document.getElementById('sources-grid');
     grid.innerHTML = '';
+    
+    // Lấy số dư ban đầu từ localStorage (nếu có)
+    let initialBalances = JSON.parse(localStorage.getItem('fm_initial_balances')) || {};
+
     sources.forEach(src => {
-        let bal = 0;
-        transactions.forEach(t => { if(t.source === src) t.type === 'income' ? bal += t.amount : bal -= t.amount; });
-        grid.innerHTML += `<div class="card"><div class="card-title">${src}</div><div class="card-value" style="color:${bal>=0?'var(--text-main)':'var(--danger)'};">${bal.toLocaleString()} đ</div></div>`;
+        let bal = initialBalances[src] || 0;
+        transactions.forEach(t => {
+            if(t.type === 'income' && t.source === src) bal += t.amount;
+            else if(t.type === 'expense' && t.source === src) bal -= t.amount;
+            else if(t.type === 'transfer') {
+                if(t.source === src) bal -= t.amount; // Nguồn gửi bị trừ
+                if(t.targetSource === src) bal += t.amount; // Nguồn nhận được cộng
+            }
+        });
+
+        const div = document.createElement('div');
+        div.className = 'card';
+        div.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div class="card-title">${src}</div>
+                <button class="btn btn-outline" style="padding:2px 6px; font-size:11px;" onclick="editInitialBalance('${src}')"><i class="fa-solid fa-pen"></i> Sửa số dư</button>
+            </div>
+            <div class="card-value" style="color:${bal>=0?'var(--text-main)':'var(--danger)'}; margin-top:8px;">${bal.toLocaleString()} đ</div>
+        `;
+        grid.appendChild(div);
     });
 }
 
+function editInitialBalance(sourceName) {
+    let initialBalances = JSON.parse(localStorage.getItem('fm_initial_balances')) || {};
+    let currentVal = initialBalances[sourceName] || 0;
+    let newVal = prompt(`Nhập số dư ban đầu cho [${sourceName}]:`, currentVal);
+    if(newVal !== null && !isNaN(newVal)) {
+        initialBalances[sourceName] = parseFloat(newVal);
+        localStorage.setItem('fm_initial_balances', JSON.stringify(initialBalances));
+        renderAll();
+    }
+}
 function renderCategories() {
     const tbody = document.getElementById('category-table-body');
     tbody.innerHTML = '';
