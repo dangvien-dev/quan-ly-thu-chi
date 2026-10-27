@@ -19,6 +19,89 @@ window.onload = function() {
     updateCategoriesDropdown();
     renderAll();
     syncFromGoogleSheet();
+
+    // --- BỔ SUNG: MẪU CHI THƯỜNG XUYÊN (QUICK CHIPS) ---
+// Thêm đoạn này vào hàm window.onload hoặc gọi khởi tạo
+function renderQuickChips() {
+    const formContainer = document.querySelector('#transactionForm');
+    if(!document.getElementById('quick-chips-container') && formContainer) {
+        const div = document.createElement('div');
+        div.id = 'quick-chips-container';
+        div.className = 'quick-chips';
+        div.innerHTML = `
+            <span style="font-size:12px; font-weight:600; width:100%; color:var(--text-muted); margin-bottom:2px;">Chọn nhanh chi thường xuyên:</span>
+            <div class="chip" onclick="quickFill('Cafe sáng', 20000, 'Ăn uống')">☕ Cafe sáng (20k)</div>
+            <div class="chip" onclick="quickFill('Cơm trưa', 45000, 'Ăn uống')">🍛 Cơm trưa (45k)</div>
+            <div class="chip" onclick="quickFill('Gửi xe', 5000, 'Đi lại')">🅿️ Gửi xe (5k)</div>
+            <div class="chip" onclick="quickFill('Xăng xe', 50000, 'Đi lại')">⛽ Xăng xe (50k)</div>
+        `;
+        formContainer.insertBefore(div, formContainer.firstChild);
+    }
+}
+
+function quickFill(note, amount, category) {
+    setTxType('expense');
+    document.getElementById('txAmount').value = amount;
+    document.getElementById('txNote').value = note;
+    document.getElementById('txCategory').value = category;
+}
+
+// Gọi renderQuickChips trong window.onload
+const oldOnload = window.onload;
+window.onload = function() {
+    if(oldOnload) oldOnload();
+    renderQuickChips();
+};
+
+
+// --- BỔ SUNG: TÍNH NĂNG SỬA GIAO DỊCH (EDIT TRANSACTION) ---
+let editingId = null;
+
+function editTransaction(id) {
+    const t = transactions.find(item => item.id === id);
+    if(!t) return;
+    
+    editingId = id;
+    setTxType(t.type);
+    document.getElementById('txDate').value = t.date;
+    document.getElementById('txSource').value = t.source;
+    document.getElementById('txCategory').value = t.category;
+    document.getElementById('txAmount').value = t.amount;
+    document.getElementById('txNote').value = t.note || '';
+    
+    // Đổi tiêu đề modal thành Cập nhật
+    document.querySelector('#transactionModal .modal-header h3').innerText = 'Cập Nhật Giao Dịch';
+    openModal();
+}
+
+// Cập nhật lại hàm handleFormSubmit để hỗ trợ cả Thêm mới và Sửa
+function handleFormSubmit(e) {
+    e.preventDefault();
+    const type = currentType;
+    const date = document.getElementById('txDate').value;
+    const source = document.getElementById('txSource').value;
+    const category = document.getElementById('txCategory').value;
+    const amount = parseFloat(document.getElementById('txAmount').value);
+    const note = document.getElementById('txNote').value;
+
+    if (editingId) {
+        // Chế độ Sửa
+        transactions = transactions.map(t => t.id === editingId ? { ...t, type, date, source, category, amount, note } : t);
+        editingId = null;
+        document.querySelector('#transactionModal .modal-header h3').innerText = 'Thêm Giao Dịch Mới';
+    } else {
+        // Chế độ Thêm mới
+        const newTx = { id: 'TX_' + Date.now(), date, type, source, category, amount, note };
+        transactions.unshift(newTx);
+    }
+
+    saveDataLocally();
+    renderAll();
+    closeModal();
+    document.getElementById('transactionForm').reset();
+    document.getElementById('txDate').valueAsDate = new Date();
+    syncToGoogleSheet();
+}
 };
 
 function switchTab(tabId) {
