@@ -29,28 +29,21 @@ function quickFill(note, amount, category) {
 }
 
 // --- TAB NAVIGATION ---
-function switchTab(tabId, e) {
-    document.querySelectorAll('.view-section').forEach((el) => {
-        el.classList.remove('active');
-    });
-
+function switchTab(tabId, triggerElement) {
     const tab = document.getElementById('tab-' + tabId);
 
-    if (tab) {
-        tab.classList.add('active');
+    if (!tab) {
+        console.warn('Không tìm thấy tab:', tabId);
+        return;
     }
 
-    document.querySelectorAll('aside .menu li').forEach((el) => {
-        el.classList.remove('active');
+    document.querySelectorAll('.view-section').forEach((section) => {
+        section.classList.toggle('active', section === tab);
     });
 
-    document.querySelectorAll('.mobile-nav-item').forEach((el) => {
-        el.classList.remove('active');
+    document.querySelectorAll('aside .menu li, .mobile-nav-item').forEach((item) => {
+        item.classList.toggle('active', item === triggerElement);
     });
-
-    if (e && e.currentTarget) {
-        e.currentTarget.classList.add('active');
-    }
 }
 
 // --- TRANSACTION TYPE AND TRANSFERS ---
