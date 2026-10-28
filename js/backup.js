@@ -17,18 +17,11 @@ function exportBackup() {
         },
     };
 
-    const blob = new Blob([JSON.stringify(backup, null, 2)], {
-        type: 'application/json;charset=utf-8',
-    });
-    const downloadUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-
-    link.href = downloadUrl;
-    link.download = `finmanager-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(downloadUrl);
+    downloadTextFile(
+        `finmanager-backup-${toLocalDateString()}.json`,
+        JSON.stringify(backup, null, 2),
+        'application/json;charset=utf-8',
+    );
 }
 
 async function importBackup(file) {

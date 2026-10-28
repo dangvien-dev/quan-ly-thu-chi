@@ -101,29 +101,73 @@
 
             <!-- TAB 2: SỔ GIAO DỊCH -->
             <section id="tab-transactions" class="view-section">
-                <div
-                    style="
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 20px;
-                    "
-                >
+                <div class="section-head">
                     <h3>Lịch Sử Giao Dịch</h3>
-                    <select
-                        id="filter-type"
-                        class="form-control"
-                        style="width: 140px"
-                        onchange="renderTransactions()"
-                    >
-                        <option value="ALL">Tất cả loại</option>
-                        <option value="income">Thu nhập</option>
-                        <option value="expense">Chi tiêu</option>
-                        <option value="transfer">Chuyển tiền</option>
-                    </select>
+                    <button class="btn btn-outline" onclick="exportTransactionsCsv()">
+                        <i class="fa-solid fa-file-csv"></i> Xuất CSV
+                    </button>
                 </div>
+                <div class="filter-bar" role="search">
+                    <div class="filter-item">
+                        <label for="filter-month">Tháng</label>
+                        <div class="month-nav">
+                            <button
+                                type="button"
+                                class="btn btn-outline btn-small"
+                                onclick="shiftFilterMonth(-1)"
+                                aria-label="Tháng trước"
+                            >
+                                <i class="fa-solid fa-chevron-left"></i>
+                            </button>
+                            <input type="month" id="filter-month" class="form-control" />
+                            <button
+                                type="button"
+                                class="btn btn-outline btn-small"
+                                onclick="shiftFilterMonth(1)"
+                                aria-label="Tháng sau"
+                            >
+                                <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="filter-item">
+                        <label for="filter-type">Loại</label>
+                        <select id="filter-type" class="form-control">
+                            <option value="ALL">Tất cả loại</option>
+                            <option value="income">Thu nhập</option>
+                            <option value="expense">Chi tiêu</option>
+                            <option value="transfer">Chuyển tiền</option>
+                        </select>
+                    </div>
+                    <div class="filter-item">
+                        <label for="filter-category">Danh mục</label>
+                        <select id="filter-category" class="form-control"></select>
+                    </div>
+                    <div class="filter-item">
+                        <label for="filter-source">Nguồn tiền</label>
+                        <select id="filter-source" class="form-control"></select>
+                    </div>
+                    <div class="filter-item grow">
+                        <label for="filter-search">Tìm kiếm</label>
+                        <input
+                            type="search"
+                            id="filter-search"
+                            class="form-control"
+                            placeholder="Ghi chú, danh mục, số tiền..."
+                            autocomplete="off"
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        class="btn btn-outline"
+                        onclick="resetTransactionFilters()"
+                    >
+                        Xóa lọc
+                    </button>
+                </div>
+                <div id="transaction-summary" class="filter-summary" aria-live="polite"></div>
                 <div class="table-container">
-                    <table>
+                    <table class="responsive-table">
                         <thead>
                             <tr>
                                 <th>Ngày</th>
@@ -137,6 +181,17 @@
                         </thead>
                         <tbody id="transaction-table-body"></tbody>
                     </table>
+                </div>
+                <div class="load-more">
+                    <button
+                        type="button"
+                        id="load-more-btn"
+                        class="btn btn-outline"
+                        onclick="showMoreTransactions()"
+                        hidden
+                    >
+                        Xem thêm
+                    </button>
                 </div>
             </section>
 

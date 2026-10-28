@@ -30,7 +30,7 @@ Không cần build. Chạy thử: `npm run serve` rồi mở http://127.0.0.1:41
 npm install
 npx playwright install chromium
 npm test            # e2e trên Chromium, tự khởi động tests/serve.js
-npm run test:gas    # logic Code.gs trên mock Sheet
+npm run test:unit   # hàm thuần + script Apps Script trên Sheet giả
 npm run format:check
 ```
 

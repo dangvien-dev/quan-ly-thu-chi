@@ -140,7 +140,6 @@ function parseSheetResponse(response) {
 }
 
 // --- LEGACY PROTOCOL ---
-const TRANSFER_CATEGORY = 'Chuyển tiền nội bộ';
 const LEGACY_GET_SAVE_MAX_URL = 6000;
 
 /** The legacy sheet has no targetSource column: carry it in the category ("... → Nguồn nhận"). */

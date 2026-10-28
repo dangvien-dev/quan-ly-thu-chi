@@ -577,3 +577,53 @@ canvas {
     gap: 6px;
     margin-top: 12px;
 }
+
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    margin-bottom: 12px;
+}
+
+.filter-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 130px;
+}
+
+.filter-item.grow {
+    flex: 1 1 200px;
+}
+
+.filter-item label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.month-nav {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.month-nav .form-control {
+    min-width: 0;
+}
+
+.filter-summary {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+
+.filter-summary b {
+    color: var(--text-main);
+}
+
+.load-more {
+    text-align: center;
+    margin-bottom: 30px;
+}

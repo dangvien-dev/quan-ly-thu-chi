@@ -77,6 +77,7 @@ function initializeApp() {
         .map(([kind, { label }]) => `<option value="${kind}">${label}</option>`)
         .join('');
 
+    initTransactionFilters();
     initModalShortcuts();
     window.addEventListener('online', resumeSync);
 

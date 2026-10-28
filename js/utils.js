@@ -1,6 +1,8 @@
 // Pure helpers shared by the other modules: HTML escaping, formatting, dates, and normalization.
 
 const TRANSACTION_TYPES = ['income', 'expense', 'transfer'];
+// Category recorded on every transfer (a transfer has no category of its own).
+const TRANSFER_CATEGORY = 'Chuyển tiền nội bộ';
 
 /**
  * Escape text before it is interpolated into innerHTML.
@@ -231,4 +233,96 @@ function daysUntil(date, from = new Date()) {
 
 function describeDaysUntil(days) {
     return days === 0 ? 'hôm nay' : `còn ${days} ngày`;
+}
+
+// --- FILTERING, SEARCH AND CSV EXPORT ---
+
+/** Lower-case text without diacritics, so "ca phe" finds "Cà phê" and "d" finds "đ". */
+function normalizeSearchText(value) {
+    return String(value ?? '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function transactionSearchText(transaction) {
+    return normalizeSearchText(
+        [
+            transaction.note,
+            transaction.category,
+            transaction.source,
+            transaction.targetSource,
+            transaction.date,
+            transaction.amount,
+            formatMoney(transaction.amount),
+        ].join(' '),
+    );
+}
+
+/**
+ * filters: { month: 'YYYY-MM', type, category, source, search }; empty or 'ALL' means no filter.
+ * source matches either side of a transfer; every word of search must match.
+ */
+function filterTransactions(list, filters = {}) {
+    const words = normalizeSearchText(filters.search).split(' ').filter(Boolean);
+    const active = (value) => value && value !== 'ALL';
+
+    return list.filter((transaction) => {
+        if (filters.month && !transaction.date.startsWith(filters.month)) return false;
+        if (active(filters.type) && transaction.type !== filters.type) return false;
+        if (active(filters.category) && transaction.category !== filters.category) return false;
+
+        if (
+            active(filters.source) &&
+            transaction.source !== filters.source &&
+            transaction.targetSource !== filters.source
+        ) {
+            return false;
+        }
+
+        if (words.length) {
+            const haystack = transactionSearchText(transaction);
+
+            return words.every((word) => haystack.includes(word));
+        }
+
+        return true;
+    });
+}
+
+const CSV_HEADER = ['Ngày', 'Loại', 'Nguồn tiền', 'Nguồn nhận', 'Danh mục', 'Số tiền', 'Ghi chú'];
+const CSV_TYPE_LABELS = { income: 'Thu', expense: 'Chi', transfer: 'Chuyển' };
+
+/**
+ * One CSV field. Text starting with = + - @ is prefixed with an apostrophe so a spreadsheet
+ * cannot run it as a formula (CSV injection).
+ */
+function csvCell(value, { isText = true } = {}) {
+    let text = String(value ?? '');
+
+    if (isText && /^[=+\-@\t\r]/.test(text)) {
+        text = `'${text}`;
+    }
+
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** UTF-8 CSV with a BOM, which Excel needs to show Vietnamese text correctly. */
+function buildTransactionsCsv(list) {
+    const lines = [CSV_HEADER.map((name) => csvCell(name))].concat(
+        list.map((transaction) => [
+            csvCell(transaction.date),
+            csvCell(CSV_TYPE_LABELS[transaction.type]),
+            csvCell(transaction.source),
+            csvCell(transaction.targetSource),
+            csvCell(transaction.category),
+            csvCell(transaction.amount, { isText: false }),
+            csvCell(transaction.note),
+        ]),
+    );
+
+    return '\uFEFF' + lines.map((line) => line.join(',')).join('\r\n') + '\r\n';
 }

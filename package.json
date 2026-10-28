@@ -6,9 +6,9 @@
     "scripts": {
         "serve": "node tests/serve.js",
         "test": "playwright test",
-        "test:gas": "node --test \"tests/gas/*.test.js\"",
         "format": "prettier --write .",
-        "format:check": "prettier --check ."
+        "format:check": "prettier --check .",
+        "test:unit": "node --test \"tests/gas/*.test.js\" \"tests/unit/*.test.js\""
     },
     "devDependencies": {
         "@playwright/test": "1.63.0",

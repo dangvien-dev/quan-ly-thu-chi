@@ -65,7 +65,7 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 ```bash
 npm install && npx playwright install chromium   # lần đầu
 npm test               # Playwright e2e (tự chạy tests/serve.js ở cổng 4173)
-npm run test:gas       # Code.gs trên mock Sheet
+npm run test:unit      # node:test: Code.gs trên Sheet giả (tests/gas) + hàm thuần của js/utils.js (tests/unit)
 npm run format:check   # Prettier (npm run format để sửa)
 ```
 
@@ -84,7 +84,7 @@ npm run format:check   # Prettier (npm run format để sửa)
 - [x] Vendor Chart.js + Font Awesome, PWA (`manifest.json`, `sw.js`, icon)
 - [x] Test e2e + CI trong repo
 - [x] Quản lý nguồn tiền (thêm/sửa/lưu trữ/xóa, loại, hạn mức, ngày sao kê; nguồn lạ từ Sheet tự thêm)
-- [ ] Lọc/tìm kiếm/phân trang/xuất CSV
+- [x] Lọc/tìm kiếm/phân trang/xuất CSV (lọc thuần ở `filterTransactions` trong `js/utils.js`, có unit test)
 - [ ] Ngân sách theo danh mục
 - [ ] Giao dịch định kỳ
 - [ ] Sổ vay nợ (tab "Vay Nợ & Cty")
