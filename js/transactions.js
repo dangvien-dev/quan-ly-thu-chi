@@ -151,10 +151,10 @@ function renderTransactionRow(transaction) {
             <td data-label="Số tiền" style="font-weight:700; color:${colorStyle};">${sign}${formatMoney(transaction.amount)}</td>
             <td data-label="Mô tả">${escapeHtml(transaction.note)}</td>
             <td class="row-actions" style="text-align:right; white-space:nowrap;">
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" data-action="edit" data-id="${id}" title="Sửa">
+                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" data-action="edit" data-id="${id}" title="Sửa" aria-label="Sửa giao dịch ${escapeHtml(transaction.date)} ${formatMoney(transaction.amount)}">
                     <i class="fa-solid fa-pen"></i>
                 </button>
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" data-action="delete" data-id="${id}" title="Xóa">
+                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" data-action="delete" data-id="${id}" title="Xóa" aria-label="Xóa giao dịch ${escapeHtml(transaction.date)} ${formatMoney(transaction.amount)}">
                     <i class="fa-solid fa-trash"></i>
                 </button>
             </td>

@@ -22,10 +22,10 @@ function renderQuickChips() {
             <span style="font-size:12px; font-weight:600; width:100%; color:var(--text-muted); margin-bottom:4px;">
                 Chọn nhanh chi thường xuyên:
             </span>
-            <div class="chip" onclick="quickFill('Cafe sáng', 20000, 'Ăn uống')">☕ Cafe sáng (20k)</div>
-            <div class="chip" onclick="quickFill('Cơm trưa', 45000, 'Ăn uống')">🍛 Cơm trưa (45k)</div>
-            <div class="chip" onclick="quickFill('Gửi xe', 5000, 'Đi lại')">🅿️ Gửi xe (5k)</div>
-            <div class="chip" onclick="quickFill('Xăng xe', 50000, 'Đi lại')">⛽ Xăng xe (50k)</div>
+            <button type="button" class="chip" onclick="quickFill('Cafe sáng', 20000, 'Ăn uống')">☕ Cafe sáng (20k)</button>
+            <button type="button" class="chip" onclick="quickFill('Cơm trưa', 45000, 'Ăn uống')">🍛 Cơm trưa (45k)</button>
+            <button type="button" class="chip" onclick="quickFill('Gửi xe', 5000, 'Đi lại')">🅿️ Gửi xe (5k)</button>
+            <button type="button" class="chip" onclick="quickFill('Xăng xe', 50000, 'Đi lại')">⛽ Xăng xe (50k)</button>
         `;
         formContainer.insertBefore(div, formContainer.firstChild);
     }
@@ -52,7 +52,15 @@ function switchTab(tabId) {
     });
 
     document.querySelectorAll('aside .menu li, .mobile-nav-item').forEach((item) => {
-        item.classList.toggle('active', item.dataset.tab === tabId);
+        const active = item.dataset.tab === tabId;
+        const control = item.matches('button') ? item : item.querySelector('button');
+
+        item.classList.toggle('active', active);
+
+        if (control) {
+            if (active) control.setAttribute('aria-current', 'page');
+            else control.removeAttribute('aria-current');
+        }
     });
 
     const pageTitle = document.getElementById('page-title');
@@ -224,13 +232,45 @@ function closeCategoryModal() {
     document.getElementById('catName').value = '';
 }
 
+const FOCUSABLE_SELECTOR =
+    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Keep Tab inside the open dialog (and bring focus in if it is outside). */
+function trapDialogFocus(event) {
+    const dialog = document.querySelector('.modal.open');
+
+    if (!dialog) return;
+
+    const items = Array.from(dialog.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
+        (element) => element.getClientRects().length > 0,
+    );
+
+    if (items.length === 0) return;
+
+    const first = items[0];
+    const last = items[items.length - 1];
+
+    if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+}
+
 function initModalShortcuts() {
     document.addEventListener('keydown', (event) => {
-        if (event.key !== 'Escape') return;
+        if (event.key === 'Tab') {
+            trapDialogFocus(event);
+        } else if (event.key === 'Escape') {
+            const closeButton = document.querySelector('.modal.open .close-btn');
 
-        const closeButton = document.querySelector('.modal.open .close-btn');
-
-        if (closeButton) closeButton.click();
+            if (closeButton) closeButton.click();
+        }
     });
 }
 

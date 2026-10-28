@@ -55,6 +55,7 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 - Ngày luôn là chuỗi `YYYY-MM-DD` theo giờ địa phương. Không dùng `toISOString().split('T')[0]` cho ngày hiển thị/nhập (UTC lệch ngày).
 - Mỗi view render độc lập trong `renderAll()` (một view lỗi không được chặn view khác). Chart.js/CDN có thể không tải được.
 - Tiền là số nguyên VND; hiển thị bằng `formatMoney`.
+- Trợ năng (có test axe `tests/e2e/a11y.spec.js`, WCAG 2 A/AA): bảng dùng `class="responsive-table"` và `data-label` ở mỗi `td` (thành thẻ ở ≤768px); nút chỉ có icon phải có `aria-label`; hộp thoại mở/đóng bằng `openDialog/closeDialog` (đưa focus vào, trả focus, Esc, giữ Tab trong hộp thoại) và có `role="dialog" aria-modal aria-labelledby`; mọi ô nhập có `<label for>`. Giữ `--success/--danger/--warning` ở sắc đậm (đã chọn để đạt tương phản 4,5:1; màu biểu đồ ở `js/charts.js` là hex riêng).
 
 ## Quyết định thiết kế đã chốt (đừng đảo ngược khi chưa hỏi)
 
@@ -96,4 +97,4 @@ npm run format:check   # Prettier (npm run format để sửa)
 - [x] Giao dịch định kỳ (meta `recurring`; logic ngày đến hạn là hàm thuần trong `js/utils.js`, có unit test)
 - [x] Sổ vay nợ (tab "Vay Nợ & Cty"; meta `debts`)
 - [x] Đồng bộ v2: từng dòng + `updatedAt` + token + meta (cần chủ repo deploy `Code.gs`; chưa chạy trên Google thật)
-- [ ] Mobile (bảng → thẻ) + truy cập bằng bàn phím/ARIA
+- [x] Mobile (bảng → thẻ, thanh điều hướng dưới cuộn ngang) + bàn phím/ARIA (skip link, focus trap, `aria-current`, axe sạch trên mọi tab/hộp thoại)

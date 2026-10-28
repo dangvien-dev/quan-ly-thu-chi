@@ -15,43 +15,65 @@
         <link rel="stylesheet" href="css/style.css" />
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Bỏ qua điều hướng</a>
         <!-- Sidebar Desktop -->
         <aside>
             <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
-            <ul class="menu">
-                <li class="active" data-tab="overview" onclick="switchTab('overview')">
-                    <i class="fa-solid fa-chart-pie"></i> Tổng Quan
-                </li>
-                <li data-tab="transactions" onclick="switchTab('transactions')">
-                    <i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch
-                </li>
-                <li data-tab="sources" onclick="switchTab('sources')">
-                    <i class="fa-solid fa-vault"></i> Nguồn Tiền
-                </li>
-                <li data-tab="categories" onclick="switchTab('categories')">
-                    <i class="fa-solid fa-tags"></i> Danh Mục
-                </li>
-                <li data-tab="recurring" onclick="switchTab('recurring')">
-                    <i class="fa-solid fa-repeat"></i> Định Kỳ
-                </li>
-                <li data-tab="debts" onclick="switchTab('debts')">
-                    <i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty
-                </li>
-                <li data-tab="settings" onclick="switchTab('settings')">
-                    <i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu
-                </li>
-            </ul>
+            <nav aria-label="Điều hướng chính">
+                <ul class="menu">
+                    <li class="active" data-tab="overview">
+                        <button
+                            type="button"
+                            class="menu-link"
+                            aria-current="page"
+                            onclick="switchTab('overview')"
+                        >
+                            <i class="fa-solid fa-chart-pie"></i> Tổng Quan
+                        </button>
+                    </li>
+                    <li data-tab="transactions">
+                        <button type="button" class="menu-link" onclick="switchTab('transactions')">
+                            <i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch
+                        </button>
+                    </li>
+                    <li data-tab="sources">
+                        <button type="button" class="menu-link" onclick="switchTab('sources')">
+                            <i class="fa-solid fa-vault"></i> Nguồn Tiền
+                        </button>
+                    </li>
+                    <li data-tab="categories">
+                        <button type="button" class="menu-link" onclick="switchTab('categories')">
+                            <i class="fa-solid fa-tags"></i> Danh Mục
+                        </button>
+                    </li>
+                    <li data-tab="recurring">
+                        <button type="button" class="menu-link" onclick="switchTab('recurring')">
+                            <i class="fa-solid fa-repeat"></i> Định Kỳ
+                        </button>
+                    </li>
+                    <li data-tab="debts">
+                        <button type="button" class="menu-link" onclick="switchTab('debts')">
+                            <i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty
+                        </button>
+                    </li>
+                    <li data-tab="settings">
+                        <button type="button" class="menu-link" onclick="switchTab('settings')">
+                            <i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu
+                        </button>
+                    </li>
+                </ul>
+            </nav>
         </aside>
 
         <!-- Main Content -->
-        <main>
+        <main id="main-content" tabindex="-1">
             <header>
                 <div class="header-title">
                     <h1 id="page-title">Tổng Quan Dòng Tiền</h1>
                     <p id="current-date-label">Theo dõi tài chính cá nhân</p>
                 </div>
                 <div style="display: flex; gap: 12px; align-items: center">
-                    <div id="sync-status" class="sync-badge">
+                    <div id="sync-status" class="sync-badge" role="status" aria-live="polite">
                         <i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng
                     </div>
                     <button class="btn" onclick="openModal()">
@@ -91,13 +113,25 @@
                         <h3 style="font-size: 16px; margin-bottom: 15px">
                             Tỷ Trọng Chi Tiêu Tháng Này
                         </h3>
-                        <div style="height: 240px"><canvas id="expenseCategoryChart"></canvas></div>
+                        <div style="height: 240px">
+                            <canvas
+                                id="expenseCategoryChart"
+                                role="img"
+                                aria-label="Biểu đồ tròn tỷ trọng chi tiêu tháng này"
+                            ></canvas>
+                        </div>
                     </div>
                     <div class="card">
                         <h3 style="font-size: 16px; margin-bottom: 15px">
                             Thu / Chi 6 Tháng Gần Đây
                         </h3>
-                        <div style="height: 240px"><canvas id="monthlyChart"></canvas></div>
+                        <div style="height: 240px">
+                            <canvas
+                                id="monthlyChart"
+                                role="img"
+                                aria-label="Biểu đồ cột thu chi 6 tháng gần đây"
+                            ></canvas>
+                        </div>
                     </div>
                 </div>
                 <div class="card" id="budget-section" style="margin-top: 20px" hidden>
@@ -177,13 +211,13 @@
                     <table class="responsive-table">
                         <thead>
                             <tr>
-                                <th>Ngày</th>
-                                <th>Nguồn Tiền</th>
-                                <th>Danh Mục</th>
-                                <th>Loại</th>
-                                <th>Số Tiền</th>
-                                <th>Mô Tả</th>
-                                <th style="text-align: right">Thao Tác</th>
+                                <th scope="col">Ngày</th>
+                                <th scope="col">Nguồn Tiền</th>
+                                <th scope="col">Danh Mục</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Số Tiền</th>
+                                <th scope="col">Mô Tả</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
                             </tr>
                         </thead>
                         <tbody id="transaction-table-body"></tbody>
@@ -236,11 +270,11 @@
                     <table class="responsive-table">
                         <thead>
                             <tr>
-                                <th>Tên Danh Mục</th>
-                                <th>Loại</th>
-                                <th>Biểu Tượng</th>
-                                <th>Ngân Sách Tháng</th>
-                                <th style="text-align: right">Thao Tác</th>
+                                <th scope="col">Tên Danh Mục</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Biểu Tượng</th>
+                                <th scope="col">Ngân Sách Tháng</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
                             </tr>
                         </thead>
                         <tbody id="category-table-body"></tbody>
@@ -263,14 +297,14 @@
                     <table class="responsive-table">
                         <thead>
                             <tr>
-                                <th>Tên</th>
-                                <th>Loại</th>
-                                <th>Nguồn Tiền</th>
-                                <th>Số Tiền</th>
-                                <th>Lịch</th>
-                                <th>Hiệu Lực</th>
-                                <th>Trạng Thái</th>
-                                <th style="text-align: right">Thao Tác</th>
+                                <th scope="col">Tên</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Nguồn Tiền</th>
+                                <th scope="col">Số Tiền</th>
+                                <th scope="col">Lịch</th>
+                                <th scope="col">Hiệu Lực</th>
+                                <th scope="col">Trạng Thái</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
                             </tr>
                         </thead>
                         <tbody id="recurring-table-body"></tbody>
@@ -312,14 +346,14 @@
                     <table class="responsive-table">
                         <thead>
                             <tr>
-                                <th>Đối Tác</th>
-                                <th>Loại</th>
-                                <th>Số Tiền Gốc</th>
-                                <th>Đã Thanh Toán</th>
-                                <th>Còn Lại</th>
-                                <th>Hạn</th>
-                                <th>Trạng Thái</th>
-                                <th style="text-align: right">Thao Tác</th>
+                                <th scope="col">Đối Tác</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Số Tiền Gốc</th>
+                                <th scope="col">Đã Thanh Toán</th>
+                                <th scope="col">Còn Lại</th>
+                                <th scope="col">Hạn</th>
+                                <th scope="col">Trạng Thái</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
                             </tr>
                         </thead>
                         <tbody id="debt-table-body"></tbody>
@@ -369,6 +403,7 @@
                     <input
                         type="file"
                         accept=".json"
+                        aria-label="Chọn file sao lưu JSON để khôi phục"
                         onchange="
                             if (this.files.length) {
                                 importBackup(this.files[0]);
@@ -387,9 +422,10 @@
         </main>
 
         <!-- Mobile Navigation -->
-        <nav class="mobile-nav">
+        <nav class="mobile-nav" aria-label="Điều hướng nhanh">
             <button
                 class="mobile-nav-item active"
+                aria-current="page"
                 data-tab="overview"
                 onclick="switchTab('overview')"
             >
@@ -425,16 +461,29 @@
             </button>
         </nav>
 
-        <button class="floating-add-btn" title="Thêm giao dịch" onclick="openModal()">
+        <button
+            class="floating-add-btn"
+            title="Thêm giao dịch"
+            aria-label="Thêm giao dịch"
+            onclick="openModal()"
+        >
             <i class="fa-solid fa-plus"></i>
         </button>
 
         <!-- Modals -->
-        <div id="transactionModal" class="modal">
+        <div
+            id="transactionModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="transactionModalTitle"
+        >
             <div class="modal-content">
                 <div class="modal-header">
-                    <h3>Thêm Giao Dịch</h3>
-                    <button class="close-btn" onclick="closeModal()">&times;</button>
+                    <h3 id="transactionModalTitle">Thêm Giao Dịch</h3>
+                    <button class="close-btn" onclick="closeModal()" aria-label="Đóng">
+                        &times;
+                    </button>
                 </div>
                 <form id="transactionForm" onsubmit="handleFormSubmit(event)">
                     <div class="type-selector">
@@ -465,7 +514,7 @@
                         </button>
                     </div>
                     <div class="form-group">
-                        <label>Ngày</label
+                        <label for="txDate">Ngày</label
                         ><input type="date" id="txDate" class="form-control" required />
                     </div>
                     <div class="form-group">
@@ -473,12 +522,12 @@
                         <select id="txSource" class="form-control" required></select>
                     </div>
                     <div class="form-group">
-                        <label>Danh Mục</label
+                        <label for="txCategory">Danh Mục</label
                         ><select id="txCategory" class="form-control" required></select>
                     </div>
 
                     <div class="form-group">
-                        <label>Số Tiền (VNĐ)</label>
+                        <label for="txAmount">Số Tiền (VNĐ)</label>
                         <input
                             type="number"
                             id="txAmount"
@@ -491,7 +540,8 @@
                     </div>
 
                     <div class="form-group">
-                        <label>Mô Tả</label><input type="text" id="txNote" class="form-control" />
+                        <label for="txNote">Mô Tả</label
+                        ><input type="text" id="txNote" class="form-control" />
                     </div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">
                         Lưu Giao Dịch
@@ -500,19 +550,27 @@
             </div>
         </div>
 
-        <div id="categoryModal" class="modal">
+        <div
+            id="categoryModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="categoryModalTitle"
+        >
             <div class="modal-content">
                 <div class="modal-header">
-                    <h3>Thêm Danh Mục</h3>
-                    <button class="close-btn" onclick="closeCategoryModal()">&times;</button>
+                    <h3 id="categoryModalTitle">Thêm Danh Mục</h3>
+                    <button class="close-btn" onclick="closeCategoryModal()" aria-label="Đóng">
+                        &times;
+                    </button>
                 </div>
                 <form onsubmit="handleCategorySubmit(event)">
                     <div class="form-group">
-                        <label>Tên</label
+                        <label for="catName">Tên</label
                         ><input type="text" id="catName" class="form-control" required />
                     </div>
                     <div class="form-group">
-                        <label>Loại</label
+                        <label for="catType">Loại</label
                         ><select id="catType" class="form-control">
                             <option value="expense">Chi Tiêu</option>
                             <option value="income">Thu Nhập</option>
