@@ -76,6 +76,11 @@ const META_DEFS = {
         fallback: () => ({}),
         normalize: normalizeBudgets,
     },
+    recurring: {
+        storage: 'fm_recurring',
+        fallback: () => [],
+        normalize: normalizeRecurringRules,
+    },
 };
 const META_UPDATED_KEY = 'fm_meta_updated';
 
@@ -92,6 +97,7 @@ let categories = loadMeta('categories');
 let sources = loadMeta('sources');
 let initialBalances = loadMeta('initialBalances');
 let budgets = loadMeta('budgets');
+let recurring = loadMeta('recurring');
 let webAppUrl = readStoredText('fm_script_url');
 let expenseChart = null;
 let monthlyChart = null;
@@ -102,6 +108,7 @@ const META_ACCESSORS = {
     sources: { get: () => sources, set: (value) => (sources = value) },
     initialBalances: { get: () => initialBalances, set: (value) => (initialBalances = value) },
     budgets: { get: () => budgets, set: (value) => (budgets = value) },
+    recurring: { get: () => recurring, set: (value) => (recurring = value) },
 };
 
 function readMetaUpdated() {

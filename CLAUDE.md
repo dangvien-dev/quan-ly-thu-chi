@@ -16,7 +16,7 @@ File này được Claude Code tự đọc ở đầu mỗi phiên. Giữ nó ng
 ## Cấu trúc
 
 `index.html` nạp các script theo thứ tự (hàm/biến là global, không dùng module):
-`utils → data → ui → categories → budgets → transactions → sources → charts → sync → backup → app → pwa`.
+`utils → data → ui → categories → budgets → recurring → transactions → sources → charts → sync → backup → app → pwa`.
 Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file nội bộ `index.html` nạp phải có trong `APP_SHELL` của `sw.js` (có test kiểm tra).
 
 | File                                  | Vai trò                                                                        |
@@ -39,7 +39,7 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 ## Mô hình dữ liệu (localStorage)
 
 - `fm_transactions`: `{id, date YYYY-MM-DD, type income|expense|transfer, source, targetSource, category, amount, note, updatedAt}`. Id `TX_<ms>`.
-- Dữ liệu "meta" khai báo trong `META_DEFS` (`js/data.js`), lưu bằng `saveMeta(key)` (ghi `localStorage`, đóng dấu `fm_meta_updated[key]`, gọi `queueMeta`): `categories` (`fm_categories`), `sources` (`fm_sources`), `initialBalances` (`fm_initial_balances`), `budgets` (`fm_budgets`); sẽ thêm `recurring`, `debts`. Mỗi loại có hàm `normalize*` thuần trong `js/utils.js` (trả `null` nếu dữ liệu không dùng được).
+- Dữ liệu "meta" khai báo trong `META_DEFS` (`js/data.js`), lưu bằng `saveMeta(key)` (ghi `localStorage`, đóng dấu `fm_meta_updated[key]`, gọi `queueMeta`): `categories` (`fm_categories`), `sources` (`fm_sources`), `initialBalances` (`fm_initial_balances`), `budgets` (`fm_budgets`), `recurring` (`fm_recurring`); sẽ thêm `debts`. Mỗi loại có hàm `normalize*` thuần trong `js/utils.js` (trả `null` nếu dữ liệu không dùng được).
 - Đồng bộ: `fm_script_url`, `fm_sync_dirty`, `fm_sync_baseline`, `fm_deleted_ids`. Sau thay đổi cục bộ luôn gọi `queueUpsert/queueDelete/saveMeta` rồi `syncToGoogleSheet()`.
 
 ## Quy ước
@@ -86,7 +86,7 @@ npm run format:check   # Prettier (npm run format để sửa)
 - [x] Quản lý nguồn tiền (thêm/sửa/lưu trữ/xóa, loại, hạn mức, ngày sao kê; nguồn lạ từ Sheet tự thêm)
 - [x] Lọc/tìm kiếm/phân trang/xuất CSV (lọc thuần ở `filterTransactions` trong `js/utils.js`, có unit test)
 - [x] Ngân sách theo danh mục (meta `budgets` = `{tênDanhMục: hạnMức}`; toast qua `showToast` trong `js/ui.js`)
-- [ ] Giao dịch định kỳ
+- [x] Giao dịch định kỳ (meta `recurring`; logic ngày đến hạn là hàm thuần trong `js/utils.js`, có unit test)
 - [ ] Sổ vay nợ (tab "Vay Nợ & Cty")
 - [ ] Đồng bộ từng dòng (upsert/delete + `updatedAt`) + token + đồng bộ danh mục/số dư/... (v2)
 - [ ] Mobile (bảng → thẻ) + truy cập bằng bàn phím/ARIA

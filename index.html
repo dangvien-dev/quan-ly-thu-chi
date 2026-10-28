@@ -31,6 +31,9 @@
                 <li data-tab="categories" onclick="switchTab('categories')">
                     <i class="fa-solid fa-tags"></i> Danh Mục
                 </li>
+                <li data-tab="recurring" onclick="switchTab('recurring')">
+                    <i class="fa-solid fa-repeat"></i> Định Kỳ
+                </li>
                 <li data-tab="debts" onclick="switchTab('debts')">
                     <i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty
                 </li>
@@ -245,6 +248,36 @@
                 </div>
             </section>
 
+            <!-- TAB: GIAO DỊCH ĐỊNH KỲ -->
+            <section id="tab-recurring" class="view-section">
+                <div class="section-head">
+                    <h3>Giao Dịch Định Kỳ</h3>
+                    <button class="btn" onclick="openRecurringModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Định Kỳ
+                    </button>
+                </div>
+                <p class="hint">
+                    Khi đến hạn, ứng dụng tự tạo giao dịch mỗi lần bạn mở hoặc quay lại ứng dụng.
+                </p>
+                <div class="table-container">
+                    <table class="responsive-table">
+                        <thead>
+                            <tr>
+                                <th>Tên</th>
+                                <th>Loại</th>
+                                <th>Nguồn Tiền</th>
+                                <th>Số Tiền</th>
+                                <th>Lịch</th>
+                                <th>Hiệu Lực</th>
+                                <th>Trạng Thái</th>
+                                <th style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recurring-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+
             <!-- TAB 5: VAY NỢ -->
             <section id="tab-debts" class="view-section">
                 <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
@@ -325,6 +358,14 @@
 
             <button class="mobile-nav-item" data-tab="categories" onclick="switchTab('categories')">
                 <i class="fa-solid fa-tags"></i><span>Danh mục</span>
+            </button>
+
+            <button class="mobile-nav-item" data-tab="recurring" onclick="switchTab('recurring')">
+                <i class="fa-solid fa-repeat"></i><span>Định kỳ</span>
+            </button>
+
+            <button class="mobile-nav-item" data-tab="debts" onclick="switchTab('debts')">
+                <i class="fa-solid fa-hand-holding-dollar"></i><span>Vay nợ</span>
             </button>
 
             <button class="mobile-nav-item" data-tab="settings" onclick="switchTab('settings')">
@@ -513,12 +554,131 @@
             </div>
         </div>
 
+        <div
+            id="recurringModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recurringModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="recurringModalTitle">Thêm Giao Dịch Định Kỳ</h3>
+                    <button class="close-btn" onclick="closeRecurringModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="recurringForm" onsubmit="handleRecurringSubmit(event)">
+                    <div class="form-group">
+                        <label for="rcName">Tên</label>
+                        <input
+                            type="text"
+                            id="rcName"
+                            class="form-control"
+                            placeholder="Ví dụ: Tiền điện, Lương, Gói internet"
+                            required
+                        />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rcType">Loại</label>
+                            <select id="rcType" class="form-control">
+                                <option value="expense">Chi tiêu</option>
+                                <option value="income">Thu nhập</option>
+                                <option value="transfer">Chuyển tiền</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="rcAmount">Số tiền (VNĐ)</label>
+                            <input
+                                type="number"
+                                id="rcAmount"
+                                class="form-control"
+                                min="1"
+                                step="1"
+                                inputmode="numeric"
+                                required
+                            />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="rcSource">Nguồn tiền</label>
+                        <select id="rcSource" class="form-control" required></select>
+                    </div>
+                    <div class="form-group" id="rcTargetGroup" hidden>
+                        <label for="rcTarget">Chuyển đến nguồn (nhận)</label>
+                        <select id="rcTarget" class="form-control"></select>
+                    </div>
+                    <div class="form-group" id="rcCategoryGroup">
+                        <label for="rcCategory">Danh mục</label>
+                        <select id="rcCategory" class="form-control" required></select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rcFrequency">Lặp lại</label>
+                            <select id="rcFrequency" class="form-control">
+                                <option value="monthly">Hằng tháng</option>
+                                <option value="weekly">Hằng tuần</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="rcMonthDayGroup">
+                            <label for="rcMonthDay">Ngày trong tháng</label>
+                            <input
+                                type="number"
+                                id="rcMonthDay"
+                                class="form-control"
+                                min="1"
+                                max="31"
+                                inputmode="numeric"
+                                value="1"
+                            />
+                        </div>
+                        <div class="form-group" id="rcWeekDayGroup" hidden>
+                            <label for="rcWeekDay">Thứ</label>
+                            <select id="rcWeekDay" class="form-control">
+                                <option value="1">Thứ hai</option>
+                                <option value="2">Thứ ba</option>
+                                <option value="3">Thứ tư</option>
+                                <option value="4">Thứ năm</option>
+                                <option value="5">Thứ sáu</option>
+                                <option value="6">Thứ bảy</option>
+                                <option value="0">Chủ nhật</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rcStart">Bắt đầu</label>
+                            <input type="date" id="rcStart" class="form-control" required />
+                        </div>
+                        <div class="form-group">
+                            <label for="rcEnd">Kết thúc (tùy chọn)</label>
+                            <input type="date" id="rcEnd" class="form-control" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="rcNote">Ghi chú (mặc định lấy theo tên)</label>
+                        <input type="text" id="rcNote" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label class="check-label">
+                            <input type="checkbox" id="rcActive" checked /> Đang chạy
+                        </label>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
         <!-- Liên kết file JavaScript riêng -->
         <script src="js/utils.js"></script>
         <script src="js/data.js"></script>
         <script src="js/ui.js"></script>
         <script src="js/categories.js"></script>
         <script src="js/budgets.js"></script>
+        <script src="js/recurring.js"></script>
         <script src="js/transactions.js"></script>
         <script src="js/sources.js"></script>
         <script src="js/charts.js"></script>

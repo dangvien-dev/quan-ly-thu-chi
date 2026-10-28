@@ -236,3 +236,110 @@ test.describe('ngân sách', () => {
         );
     });
 });
+
+test.describe('giao dịch định kỳ', () => {
+    const rule = (overrides) => ({
+        id: 'RC_1730000000000',
+        name: 'Tiền nhà',
+        type: 'expense',
+        source: 'Tiền Mặt',
+        category: 'Hóa đơn & Tiện ích',
+        amount: 3000000,
+        frequency: 'monthly',
+        day: 5,
+        startDate: '2026-08-05',
+        endDate: '',
+        active: true,
+        lastGenerated: '',
+        ...overrides,
+    });
+    const due = (overrides, today) =>
+        plain(
+            run(
+                `recurringDueDates(normalizeRecurringRule(${JSON.stringify(rule(overrides))}), "${today}")`,
+            ),
+        );
+    const next = (overrides, today) =>
+        run(
+            `nextRecurringDate(normalizeRecurringRule(${JSON.stringify(rule(overrides))}), "${today}")`,
+        );
+
+    test('hằng tháng: đủ các kỳ từ ngày bắt đầu đến hôm nay, không tính ngày chưa tới', () => {
+        assert.deepEqual(due({}, '2026-10-28'), ['2026-08-05', '2026-09-05', '2026-10-05']);
+        assert.deepEqual(due({}, '2026-10-04'), ['2026-08-05', '2026-09-05']);
+        assert.deepEqual(due({ startDate: '2026-11-01' }, '2026-10-28'), []);
+    });
+
+    test('hằng tháng: ngày 31 lùi về ngày cuối của tháng ngắn', () => {
+        assert.deepEqual(due({ day: 31, startDate: '2026-01-31' }, '2026-04-30'), [
+            '2026-01-31',
+            '2026-02-28',
+            '2026-03-31',
+            '2026-04-30',
+        ]);
+    });
+
+    test('hằng tuần: đúng thứ trong tuần', () => {
+        // 2026-10-01 is a Thursday; day 1 = Monday.
+        assert.deepEqual(
+            due({ frequency: 'weekly', day: 1, startDate: '2026-10-01' }, '2026-10-28'),
+            ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26'],
+        );
+        assert.deepEqual(
+            due({ frequency: 'weekly', day: 0, startDate: '2026-10-01' }, '2026-10-12'),
+            ['2026-10-04', '2026-10-11'],
+        );
+    });
+
+    test('bỏ qua các kỳ đã tạo, dừng ở ngày kết thúc, không chạy khi tạm dừng', () => {
+        assert.deepEqual(due({ lastGenerated: '2026-09-05' }, '2026-10-28'), ['2026-10-05']);
+        assert.deepEqual(due({ lastGenerated: '2026-10-05' }, '2026-10-28'), []);
+        assert.deepEqual(due({ endDate: '2026-09-30' }, '2026-10-28'), [
+            '2026-08-05',
+            '2026-09-05',
+        ]);
+        assert.deepEqual(due({ active: false }, '2026-10-28'), []);
+    });
+
+    test('giới hạn số giao dịch tạo mỗi lần', () => {
+        const dates = plain(
+            run(
+                `recurringDueDates(normalizeRecurringRule(${JSON.stringify(rule({ frequency: 'weekly', day: 1, startDate: '2010-01-01' }))}), "2026-10-28", 50)`,
+            ),
+        );
+
+        assert.equal(dates.length, 50);
+        assert.equal(dates[0], '2010-01-04');
+    });
+
+    test('nextRecurringDate: kỳ kế tiếp sau hôm nay, bỏ qua khi đã kết thúc hoặc tạm dừng', () => {
+        assert.equal(next({}, '2026-10-28'), '2026-11-05');
+        assert.equal(next({}, '2026-10-05'), '2026-11-05');
+        assert.equal(next({ startDate: '2026-12-10' }, '2026-10-28'), '2027-01-05');
+        assert.equal(next({ endDate: '2026-10-31' }, '2026-10-28'), '');
+        assert.equal(next({ active: false }, '2026-10-28'), '');
+    });
+
+    test('id giao dịch sinh ra là xác định', () => {
+        const id = run(`recurringTransactionId(${JSON.stringify(rule({}))}, "2026-10-05")`);
+
+        assert.equal(id, 'TX_R1730000000000_20261005');
+    });
+
+    test('normalizeRecurringRule từ chối dữ liệu hỏng và chuẩn hoá chuyển tiền', () => {
+        const normalize = (value) => plain(run(`normalizeRecurringRule(${JSON.stringify(value)})`));
+
+        assert.equal(normalize(rule({ amount: 0 })), null);
+        assert.equal(normalize(rule({ type: 'x' })), null);
+        assert.equal(normalize(rule({ startDate: 'xx' })), null);
+        assert.equal(normalize(rule({ id: '' })), null);
+        assert.equal(normalize(rule({ day: 99 })).day, 1);
+
+        const transfer = normalize(
+            rule({ type: 'transfer', targetSource: 'Momo', category: 'bỏ qua' }),
+        );
+
+        assert.equal(transfer.category, 'Chuyển tiền nội bộ');
+        assert.equal(transfer.targetSource, 'Momo');
+    });
+});

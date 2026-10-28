@@ -368,3 +368,148 @@ function computeBudgetStatus(list, budgetMap, monthKey) {
         }))
         .sort((a, b) => b.ratio - a.ratio);
 }
+
+// --- RECURRING TRANSACTIONS ---
+
+const MAX_RECURRING_PER_RUN = 400;
+const WEEKDAY_LABELS = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
+
+function parseLocalDate(dateKey) {
+    const [year, month, day] = dateKey.split('-').map(Number);
+
+    return new Date(year, month - 1, day);
+}
+
+function addDays(date, days) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+function daysInMonth(date) {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+/**
+ * A recurring rule: { id, name, type, source, targetSource, category, amount, note,
+ * frequency: 'monthly' | 'weekly', day (1-31 of the month, or 0-6 with 0 = Sunday),
+ * startDate, endDate ('' = none), active, lastGenerated ('' = nothing yet), updatedAt }.
+ * Returns null when the rule cannot be used.
+ */
+function normalizeRecurringRule(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const id = String(raw.id ?? '').trim();
+    const type = String(raw.type ?? '');
+    const amount = parseAmount(raw.amount);
+    const startDate = normalizeDate(raw.startDate);
+
+    if (!id || !TRANSACTION_TYPES.includes(type) || !(amount > 0) || !startDate) return null;
+
+    const frequency = raw.frequency === 'weekly' ? 'weekly' : 'monthly';
+    const day = Math.round(Number(raw.day));
+
+    return {
+        id,
+        name: String(raw.name ?? '').trim(),
+        type,
+        source: String(raw.source ?? ''),
+        targetSource: type === 'transfer' && raw.targetSource ? String(raw.targetSource) : null,
+        category: type === 'transfer' ? TRANSFER_CATEGORY : String(raw.category ?? ''),
+        amount,
+        note: String(raw.note ?? ''),
+        frequency,
+        day:
+            frequency === 'weekly'
+                ? Number.isFinite(day) && day >= 0 && day <= 6
+                    ? day
+                    : 1
+                : Number.isFinite(day) && day >= 1 && day <= 31
+                  ? day
+                  : 1,
+        startDate,
+        endDate: normalizeDate(raw.endDate),
+        active: raw.active !== false,
+        lastGenerated: normalizeDate(raw.lastGenerated),
+        updatedAt: String(raw.updatedAt ?? ''),
+    };
+}
+
+function normalizeRecurringRules(list) {
+    if (!Array.isArray(list)) return null;
+
+    const seen = new Set();
+    const result = [];
+
+    list.forEach((raw) => {
+        const rule = normalizeRecurringRule(raw);
+
+        if (rule && !seen.has(rule.id)) {
+            seen.add(rule.id);
+            result.push(rule);
+        }
+    });
+
+    return result;
+}
+
+/** Does the rule fall on this date? A monthly day past the end of a short month means its last day. */
+function recurringMatches(rule, date) {
+    return rule.frequency === 'weekly'
+        ? date.getDay() === rule.day
+        : date.getDate() === Math.min(rule.day, daysInMonth(date));
+}
+
+/** Dates (YYYY-MM-DD) on which an active rule is due, after lastGenerated, up to today. */
+function recurringDueDates(rule, todayKey, limit = MAX_RECURRING_PER_RUN) {
+    if (!rule.active) return [];
+
+    const lastDay = rule.endDate && rule.endDate < todayKey ? rule.endDate : todayKey;
+    let cursor = parseLocalDate(rule.startDate);
+
+    if (rule.lastGenerated) {
+        const afterLast = addDays(parseLocalDate(rule.lastGenerated), 1);
+
+        if (afterLast > cursor) cursor = afterLast;
+    }
+
+    const dates = [];
+
+    for (
+        ;
+        toLocalDateString(cursor) <= lastDay && dates.length < limit;
+        cursor = addDays(cursor, 1)
+    ) {
+        if (recurringMatches(rule, cursor)) dates.push(toLocalDateString(cursor));
+    }
+
+    return dates;
+}
+
+/** The first date after today on which the rule will run, or '' if it has ended or is paused. */
+function nextRecurringDate(rule, todayKey) {
+    if (!rule.active) return '';
+
+    let cursor = addDays(parseLocalDate(todayKey), 1);
+
+    if (parseLocalDate(rule.startDate) > cursor) cursor = parseLocalDate(rule.startDate);
+
+    for (let step = 0; step < 400; step++, cursor = addDays(cursor, 1)) {
+        const key = toLocalDateString(cursor);
+
+        if (rule.endDate && key > rule.endDate) return '';
+
+        if (recurringMatches(rule, cursor)) return key;
+    }
+
+    return '';
+}
+
+/** Same id on every device, so two devices generating the same occurrence merge into one. */
+function recurringTransactionId(rule, dateKey) {
+    return `TX_R${rule.id.replace(/\D/g, '')}_${dateKey.replace(/-/g, '')}`;
+}
+
+function describeRecurringSchedule(rule) {
+    return rule.frequency === 'weekly'
+        ? `Hằng tuần, ${WEEKDAY_LABELS[rule.day]}`
+        : `Hằng tháng, ngày ${rule.day}`;
+}

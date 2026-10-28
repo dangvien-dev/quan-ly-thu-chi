@@ -25,6 +25,7 @@ const APP_SHELL = [
     'js/ui.js',
     'js/categories.js',
     'js/budgets.js',
+    'js/recurring.js',
     'js/transactions.js',
     'js/sources.js',
     'js/charts.js',

@@ -5,6 +5,7 @@ const TAB_TITLES = {
     transactions: 'Sổ Giao Dịch',
     sources: 'Nguồn Tiền & Tài Khoản',
     categories: 'Danh Mục Thu / Chi',
+    recurring: 'Giao Dịch Định Kỳ',
     debts: 'Vay Nợ & Công Ty',
     settings: 'Cài Đặt & Dữ Liệu',
 };
