@@ -1,25 +1,36 @@
 // Google Apps Script URL configuration and Google Sheets synchronization.
 //
-// Protocols. The app never writes to a server before it has read from it and recognised it:
+// Two protocols are supported. The app never writes to a server before it has read from it and
+// recognised its protocol (GET ?v=2: a JSON array means legacy, {version: 2} means v2):
+//
 //  - legacy: the script the owner originally deployed (see tests/gas/fixtures/user-script.gs).
 //    GET returns the list of transactions; a save is POST {"transactions": [...]}, or
 //    GET ?action=save&data=... as a fallback. Its body format is strict: any other body makes the
 //    script clear the whole sheet and then fail, so the shape must never change here.
-//    The legacy sheet has 7 columns, so a transfer's destination travels inside the category.
+//    The legacy sheet has 7 columns, so a transfer's destination travels inside the category, and
+//    only transactions are synchronized (the whole list is rewritten).
 //
-// The whole transaction list is read from / written to the Sheet. To keep data safe:
-//  - The Sheet is only overwritten after it has been read successfully in this session.
-//  - Local changes the Sheet has not confirmed stay flagged (fm_sync_dirty) across reloads, so
-//    they are merged into the Sheet's content on the next load instead of being discarded.
+//  - v2: apps-script/Code.gs. Rows are sent one by one (upserts/deletes with updatedAt, the
+//    newest wins) together with the "meta" values (categories, sources, budgets, ...), and every
+//    reply is the full server state, which is merged back. An optional token protects the URL.
+//
+// To keep data safe in both:
+//  - The Sheet is only written after it has been read successfully in this session.
+//  - Local changes the Sheet has not confirmed stay recorded across reloads (fm_sync_dirty and the
+//    pending lists below) and are merged with, not replaced by, the Sheet's content.
 //  - Transactions deleted locally are remembered (fm_deleted_ids) so a merge does not bring them
 //    back from the Sheet.
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
-const SYNC_DELETED_KEY = 'fm_deleted_ids';
+const SYNC_DELETED_KEY = 'fm_deleted_ids'; // ids deleted here, not yet deleted on the server
+const SYNC_UPSERTS_KEY = 'fm_pending_upserts'; // ids created or edited here (v2)
+const SYNC_META_KEY = 'fm_pending_meta'; // meta kinds changed here (v2)
+const GET_FALLBACK_MAX_URL = 6000;
+const TRANSFER_CATEGORY_PREFIX = `${TRANSFER_CATEGORY} → `;
 
 let remoteReady = false;
-let syncProtocol = ''; // set by the first successful read: 'legacy'
+let syncProtocol = ''; // set by the first successful read: 'legacy' | 'v2'
 let pushInFlight = false;
 let pushQueued = false;
 let localChangeCount = 0;
@@ -32,6 +43,7 @@ const SYNC_BADGES = {
     offline:
         '<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Dùng bản offline',
     error: '<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Lỗi kết nối',
+    locked: '<i class="fa-solid fa-lock" style="color:var(--danger)"></i> Sai mã bảo vệ',
 };
 
 function setSyncBadge(state, detail = '') {
@@ -41,6 +53,17 @@ function setSyncBadge(state, detail = '') {
         badge.innerHTML = SYNC_BADGES[state];
         badge.title = detail;
     }
+}
+
+/** The badge state for a failed request: a wrong token is not a connection problem. */
+function failureBadge(error, fallback) {
+    return error && error.message === 'unauthorized' ? 'locked' : fallback;
+}
+
+function failureDetail(error) {
+    return error && error.message === 'unauthorized'
+        ? 'Sai hoặc thiếu mã bảo vệ (token). Kiểm tra lại trong Cài đặt & Dữ liệu.'
+        : (error && error.message) || '';
 }
 
 // --- LOCAL SYNC STATE ---
@@ -56,35 +79,60 @@ function setSyncDirty(mode) {
     }
 }
 
-function readDeletedIds() {
-    const ids = readStoredJson(SYNC_DELETED_KEY, []);
+function readList(key) {
+    const list = readStoredJson(key, []);
 
-    return Array.isArray(ids) ? ids : [];
+    return Array.isArray(list) ? list : [];
 }
 
-function rememberDeletedIds(ids) {
-    const merged = Array.from(new Set([...readDeletedIds(), ...ids]));
+function writeList(key, list) {
+    if (list.length) {
+        localStorage.setItem(key, JSON.stringify(list));
+    } else {
+        localStorage.removeItem(key);
+    }
+}
 
-    localStorage.setItem(SYNC_DELETED_KEY, JSON.stringify(merged));
+function addToList(key, items) {
+    writeList(key, Array.from(new Set([...readList(key), ...items])));
+}
+
+function readDeletedIds() {
+    return readList(SYNC_DELETED_KEY);
 }
 
 function clearDeletedIds() {
     localStorage.removeItem(SYNC_DELETED_KEY);
 }
 
-// --- CHANGE QUEUE ---
-// Call these after a local change, before syncToGoogleSheet(). The legacy protocol only needs the
-// dirty flag and the deleted ids; meta values are not part of it.
-function queueUpsert(ids) {
-    if (ids && ids.length) setSyncDirty('merge');
+/** Is there anything the server has not confirmed yet? Meta only counts for protocol v2. */
+function hasPendingChanges() {
+    return Boolean(getSyncDirty()) || (syncProtocol === 'v2' && readList(SYNC_META_KEY).length > 0);
 }
 
-function queueDelete(ids) {
-    rememberDeletedIds(ids);
+// --- CHANGE QUEUE ---
+// Call these after a local change, then syncToGoogleSheet(). The legacy protocol only needs the
+// dirty flag and the deleted ids, because it rewrites the whole list.
+function queueUpsert(ids) {
+    if (!ids || !ids.length) return;
+
+    addToList(SYNC_UPSERTS_KEY, ids);
     setSyncDirty('merge');
 }
 
-function queueMeta() {}
+function queueDelete(ids) {
+    const upserts = new Set(readList(SYNC_UPSERTS_KEY));
+
+    ids.forEach((id) => upserts.delete(id));
+    writeList(SYNC_UPSERTS_KEY, Array.from(upserts));
+    addToList(SYNC_DELETED_KEY, ids);
+    setSyncDirty('merge');
+}
+
+/** Meta values are only sent by protocol v2; the legacy script cannot store them. */
+function queueMeta(key) {
+    addToList(SYNC_META_KEY, [key]);
+}
 
 // --- SETTINGS ---
 function setScriptUrl(url) {
@@ -92,12 +140,14 @@ function setScriptUrl(url) {
     localStorage.setItem('fm_script_url', url);
     remoteReady = false;
     syncProtocol = '';
+    updateSyncNote();
 
     return syncFromGoogleSheet();
 }
 
 function saveScriptUrl() {
     const urlInput = document.getElementById('setting-script-url');
+    const tokenInput = document.getElementById('setting-script-token');
 
     if (!urlInput) return;
 
@@ -109,15 +159,32 @@ function saveScriptUrl() {
     }
 
     urlInput.value = url;
+    webAppToken = tokenInput ? tokenInput.value.trim() : '';
+    localStorage.setItem('fm_script_token', webAppToken);
     setScriptUrl(url);
     alert(
         url
-            ? 'Đã lưu URL. Đang đồng bộ với Google Sheets...'
+            ? 'Đã lưu cấu hình. Đang đồng bộ với Google Sheets...'
             : 'Đã tắt đồng bộ Google Sheets. Dữ liệu chỉ lưu trên máy này.',
     );
 }
 
-// --- SYNCHRONIZATION ---
+/** Explain which kind of Apps Script is connected (shown under the settings form). */
+function updateSyncNote() {
+    const note = document.getElementById('sync-protocol-note');
+
+    if (!note) return;
+
+    const notes = {
+        legacy: 'Đang dùng Apps Script phiên bản cũ: chỉ đồng bộ giao dịch (7 cột). Danh mục, nguồn tiền, ngân sách, định kỳ và vay nợ chỉ lưu trên máy này. Dán apps-script/Code.gs mới vào Apps Script để đồng bộ tất cả và bật mã bảo vệ.',
+        v2: 'Đã kết nối Apps Script v2: đồng bộ từng giao dịch cùng danh mục, nguồn tiền, ngân sách, định kỳ và vay nợ.',
+    };
+
+    note.textContent = webAppUrl ? notes[syncProtocol] || '' : '';
+    note.hidden = !note.textContent;
+}
+
+// --- RESPONSES AND URLS ---
 function sheetUrl(params = {}) {
     const query = new URLSearchParams(params).toString();
 
@@ -140,22 +207,23 @@ function parseSheetResponse(response) {
 }
 
 // --- LEGACY PROTOCOL ---
-const LEGACY_GET_SAVE_MAX_URL = 6000;
-
 /** The legacy sheet has no targetSource column: carry it in the category ("... → Nguồn nhận"). */
 function encodeLegacyRow(transaction) {
     return transaction.type === 'transfer' && transaction.targetSource
-        ? { ...transaction, category: `${TRANSFER_CATEGORY} → ${transaction.targetSource}` }
+        ? { ...transaction, category: `${TRANSFER_CATEGORY_PREFIX}${transaction.targetSource}` }
         : transaction;
 }
 
 function decodeLegacyRow(row) {
-    const match =
-        row && row.type === 'transfer' && !row.targetSource
-            ? String(row.category ?? '').match(/^Chuyển tiền nội bộ → (.+)$/)
-            : null;
+    const category = row && row.type === 'transfer' && !row.targetSource ? row.category : '';
 
-    return match ? { ...row, category: TRANSFER_CATEGORY, targetSource: match[1] } : row;
+    return typeof category === 'string' && category.startsWith(TRANSFER_CATEGORY_PREFIX)
+        ? {
+              ...row,
+              category: TRANSFER_CATEGORY,
+              targetSource: category.slice(TRANSFER_CATEGORY_PREFIX.length),
+          }
+        : row;
 }
 
 /**
@@ -177,7 +245,7 @@ async function writeLegacySheet(list) {
         const url = sheetUrl({ action: 'save', data: payload });
 
         // The script decodes the parameter a second time, so "%" in the data would break it.
-        if (url.length > LEGACY_GET_SAVE_MAX_URL || payload.includes('%')) {
+        if (url.length > GET_FALLBACK_MAX_URL || payload.includes('%')) {
             throw new Error(
                 'Không gửi được dữ liệu (trình duyệt chặn POST và dữ liệu quá lớn để gửi dự phòng). Hãy cập nhật Apps Script theo hướng dẫn trong README.',
             );
@@ -197,58 +265,6 @@ function mergeTransactions(primary, secondary, excludedIds) {
     );
 
     return [...primary, ...extras];
-}
-
-/**
- * Call after every local change to transactions. `replace` means the local list is the truth
- * (reset or restored backup); `merge` means local edits are combined with the Sheet's content.
- */
-function syncToGoogleSheet(mode = 'merge') {
-    localChangeCount++;
-    setSyncDirty(mode);
-
-    if (!webAppUrl || !remoteReady) return;
-
-    if (pushInFlight) {
-        pushQueued = true;
-        return;
-    }
-
-    pushToGoogleSheet();
-}
-
-function pushToGoogleSheet() {
-    // Never write before a read has told us which protocol the script speaks.
-    if (!syncProtocol) return Promise.resolve();
-
-    const changeCountAtStart = localChangeCount;
-
-    pushInFlight = true;
-    setSyncBadge('syncing');
-
-    return writeLegacySheet(transactions)
-        .then(() => {
-            localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
-
-            if (changeCountAtStart === localChangeCount) {
-                setSyncDirty('');
-                clearDeletedIds();
-                setSyncBadge('synced');
-            } else {
-                pushQueued = true;
-            }
-        })
-        .catch((error) => {
-            setSyncBadge('error', error.message);
-        })
-        .finally(() => {
-            pushInFlight = false;
-
-            if (pushQueued) {
-                pushQueued = false;
-                pushToGoogleSheet();
-            }
-        });
 }
 
 function reconcileWithSheet(rows) {
@@ -287,16 +303,336 @@ function reconcileWithSheet(rows) {
     remoteReady = true;
 
     if (needsPush) {
-        syncToGoogleSheet(mode === 'replace' ? 'replace' : 'merge');
+        if (!mode) setSyncDirty('merge');
+
+        syncToGoogleSheet();
     } else {
         localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
         setSyncBadge('synced');
     }
 }
 
+async function pushLegacy() {
+    const changeCountAtStart = localChangeCount;
+
+    await writeLegacySheet(transactions);
+    localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+
+    if (changeCountAtStart === localChangeCount) {
+        setSyncDirty('');
+        clearDeletedIds();
+        writeList(SYNC_UPSERTS_KEY, []);
+        setSyncBadge('synced');
+    } else {
+        pushQueued = true;
+    }
+}
+
+// --- PROTOCOL V2 ---
+/** Send a sync request; if the POST cannot be made at all, retry as a GET when it is small. */
+async function postSyncV2(payload) {
+    let response;
+
+    try {
+        response = await fetch(webAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(payload),
+        });
+    } catch (error) {
+        const url = sheetUrl({ action: 'sync', payload: JSON.stringify(payload) });
+
+        if (url.length > GET_FALLBACK_MAX_URL) {
+            throw new Error(
+                'Không gửi được dữ liệu: trình duyệt chặn POST tới Apps Script và lượng thay đổi quá lớn để gửi dự phòng.',
+            );
+        }
+
+        response = await fetch(url);
+    }
+
+    const state = await parseSheetResponse(response);
+
+    if (!state || state.version !== 2) {
+        throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
+    }
+
+    return state;
+}
+
+function buildV2Payload() {
+    const replace = getSyncDirty() === 'replace';
+    const pendingIds = new Set(readList(SYNC_UPSERTS_KEY));
+    const upserts = replace
+        ? transactions
+        : transactions.filter((transaction) => pendingIds.has(transaction.id));
+    const metaKeys = (replace ? Object.keys(META_DEFS) : readList(SYNC_META_KEY)).filter(
+        (key) => META_DEFS[key],
+    );
+    const updated = readMetaUpdated();
+
+    return {
+        action: 'sync',
+        token: webAppToken,
+        replace,
+        upserts,
+        deletes: replace ? [] : readDeletedIds(),
+        meta: Object.fromEntries(
+            metaKeys.map((key) => [
+                key,
+                { value: META_ACCESSORS[key].get(), updatedAt: updated[key] || '' },
+            ]),
+        ),
+    };
+}
+
+/** After a successful request, forget what was sent unless it changed again in the meantime. */
+function clearSentPending(payload) {
+    const byId = new Map(transactions.map((transaction) => [transaction.id, transaction]));
+    const sentUpserts = new Map(payload.upserts.map((item) => [item.id, item.updatedAt]));
+    const upserts = readList(SYNC_UPSERTS_KEY).filter((id) => {
+        const current = byId.get(id);
+
+        if (!current) return false; // deleted since: nothing left to send
+        if (!sentUpserts.has(id)) return true; // queued after the request was built
+
+        return current.updatedAt !== sentUpserts.get(id); // edited again meanwhile
+    });
+    // After a replace the server holds exactly what was sent, so a deletion of one of those rows
+    // still has to be sent; other recorded deletions concern rows the server no longer has.
+    const deletes = readDeletedIds().filter((id) =>
+        payload.replace ? sentUpserts.has(id) : !payload.deletes.includes(id),
+    );
+    const updated = readMetaUpdated();
+    const meta = readList(SYNC_META_KEY).filter(
+        (key) => !payload.meta[key] || (updated[key] || '') !== payload.meta[key].updatedAt,
+    );
+
+    writeList(SYNC_UPSERTS_KEY, upserts);
+    writeList(SYNC_DELETED_KEY, deletes);
+    writeList(SYNC_META_KEY, meta);
+
+    // A replace has been applied; anything still pending is an ordinary change made meanwhile.
+    setSyncDirty('');
+
+    if (upserts.length || deletes.length) setSyncDirty('merge');
+}
+
+function unionBy(primary, secondary, keyOf) {
+    const known = new Set(primary.map(keyOf));
+
+    return [...primary, ...secondary.filter((item) => !known.has(keyOf(item)))];
+}
+
+/** First contact with a server that already has this kind of data: keep both sides' items. */
+function mergeMetaFirstContact(key, local, remote) {
+    const lower = (text) => String(text).toLocaleLowerCase('vi');
+
+    if (key === 'categories') {
+        return unionBy(remote, local, (item) => `${item.type}|${lower(item.name)}`);
+    }
+
+    if (key === 'sources') return unionBy(remote, local, (item) => lower(item.name));
+
+    if (key === 'recurring' || key === 'debts') return unionBy(remote, local, (item) => item.id);
+
+    return { ...local, ...remote };
+}
+
+const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+function reconcileMeta(remoteMeta, hasBaseline, replace) {
+    const pending = new Set(readList(SYNC_META_KEY));
+    const updated = readMetaUpdated();
+
+    Object.keys(META_DEFS).forEach((key) => {
+        const definition = META_DEFS[key];
+        const local = META_ACCESSORS[key].get();
+        const localStamp = updated[key] || '';
+        const entry = remoteMeta[key];
+        const remoteValue = entry ? definition.normalize(entry.value) : null;
+
+        if (replace) {
+            if (!localStamp) stampMeta(key);
+
+            pending.add(key);
+            return;
+        }
+
+        if (remoteValue === null) {
+            // The server has nothing usable: offer ours if it was ever customised.
+            if (pending.has(key) || localStamp || !sameValue(local, definition.fallback())) {
+                if (!localStamp) stampMeta(key);
+
+                pending.add(key);
+            }
+
+            return;
+        }
+
+        const remoteStamp = String(entry.updatedAt || '');
+
+        if (!hasBaseline) {
+            const merged = mergeMetaFirstContact(key, local, remoteValue);
+
+            storeMetaValue(key, merged, remoteStamp);
+
+            if (!sameValue(merged, remoteValue)) {
+                stampMeta(key);
+                pending.add(key);
+            }
+
+            return;
+        }
+
+        // A local edit that is not older than the server's stays and is sent.
+        if (pending.has(key) && localStamp >= remoteStamp) return;
+
+        pending.delete(key);
+
+        if (remoteStamp !== localStamp || !sameValue(local, remoteValue)) {
+            storeMetaValue(key, remoteValue, remoteStamp);
+        }
+    });
+
+    writeList(SYNC_META_KEY, Array.from(pending));
+}
+
+/**
+ * Merge the server state into local data, keeping local changes the server has not confirmed:
+ *  - rows pending here win when they are not older than the server's copy;
+ *  - everything else follows the server, so deletions made elsewhere arrive here.
+ */
+function reconcileV2(state) {
+    const rawRows = state.transactions || [];
+    const remote = normalizeTransactions(rawRows.map(decodeLegacyRow));
+    // Rows written by the legacy client carry a transfer's destination in the category; they are
+    // read correctly, and queued so the server gets them back in the clean v2 form.
+    const migratedIds = new Set(
+        rawRows.filter((row) => decodeLegacyRow(row) !== row).map((row) => String(row.id)),
+    );
+    const hasBaseline = localStorage.getItem(SYNC_BASELINE_KEY) === webAppUrl;
+    const replace = getSyncDirty() === 'replace';
+
+    if (!hasBaseline && !replace) {
+        // First contact: everything held locally counts as not yet on the server.
+        addToList(
+            SYNC_UPSERTS_KEY,
+            transactions.map((transaction) => transaction.id),
+        );
+    }
+
+    const localById = new Map(transactions.map((transaction) => [transaction.id, transaction]));
+    // An id whose transaction no longer exists here has nothing left to send.
+    const pendingUpserts = new Set(readList(SYNC_UPSERTS_KEY).filter((id) => localById.has(id)));
+
+    if (!replace) migratedIds.forEach((id) => pendingUpserts.add(id));
+    const deleted = new Set(readDeletedIds());
+
+    if (!replace) {
+        const merged = [];
+        const remoteIds = new Set();
+
+        remote.forEach((row) => {
+            remoteIds.add(row.id);
+
+            if (deleted.has(row.id)) return;
+
+            const local = localById.get(row.id);
+
+            if (local && pendingUpserts.has(row.id) && local.updatedAt >= row.updatedAt) {
+                merged.push(local);
+            } else {
+                if (!migratedIds.has(row.id)) pendingUpserts.delete(row.id);
+
+                merged.push(row);
+            }
+        });
+
+        transactions.forEach((transaction) => {
+            if (pendingUpserts.has(transaction.id) && !remoteIds.has(transaction.id)) {
+                merged.push(transaction);
+            }
+        });
+
+        transactions = merged;
+        // Rows adopted from the server are no longer pending; the others still are.
+        writeList(SYNC_UPSERTS_KEY, Array.from(pendingUpserts));
+
+        if (pendingUpserts.size || deleted.size) setSyncDirty('merge');
+    }
+
+    saveDataLocally();
+    reconcileMeta(state.meta || {}, hasBaseline, replace);
+
+    ensureSourcesForTransactions();
+    updateCategoriesDropdown();
+    populateSourceOptions();
+    renderAll();
+    // Rules that arrived from another device may be due; this can queue new transactions.
+    generateRecurringTransactions();
+}
+
+async function pushV2() {
+    const payload = buildV2Payload();
+    const state = await postSyncV2(payload);
+
+    localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+    clearSentPending(payload);
+    reconcileV2(state);
+
+    if (hasPendingChanges()) {
+        pushQueued = true;
+    } else {
+        setSyncBadge('synced');
+    }
+}
+
+// --- SYNCHRONIZATION ---
+/**
+ * Call after local changes were queued. `replace` means the local data is the truth (reset or
+ * restored backup); otherwise local changes are merged with the Sheet's content.
+ */
+function syncToGoogleSheet(mode = 'merge') {
+    localChangeCount++;
+
+    if (mode === 'replace') setSyncDirty('replace');
+
+    if (!webAppUrl || !remoteReady) return;
+
+    if (pushInFlight) {
+        pushQueued = true;
+        return;
+    }
+
+    pushToGoogleSheet();
+}
+
+function pushToGoogleSheet() {
+    // Never write before a read has told us which protocol the script speaks.
+    if (!syncProtocol || !hasPendingChanges()) return Promise.resolve();
+
+    pushInFlight = true;
+    setSyncBadge('syncing');
+
+    return (syncProtocol === 'v2' ? pushV2() : pushLegacy())
+        .catch((error) => {
+            setSyncBadge(failureBadge(error, 'error'), failureDetail(error));
+        })
+        .finally(() => {
+            pushInFlight = false;
+
+            if (pushQueued) {
+                pushQueued = false;
+                pushToGoogleSheet();
+            }
+        });
+}
+
 function syncFromGoogleSheet() {
     if (!webAppUrl) {
         setSyncBadge('idle');
+        updateSyncNote();
         return Promise.resolve();
     }
 
@@ -304,20 +640,33 @@ function syncFromGoogleSheet() {
 
     setSyncBadge('loading');
 
-    return fetch(sheetUrl({ v: 2 }))
+    return fetch(sheetUrl(webAppToken ? { v: 2, token: webAppToken } : { v: 2 }))
         .then(parseSheetResponse)
         .then((result) => {
             if (requestedUrl !== webAppUrl) return;
 
-            if (!Array.isArray(result)) {
+            if (Array.isArray(result)) {
+                syncProtocol = 'legacy';
+                updateSyncNote();
+                reconcileWithSheet(result);
+            } else if (result && result.version === 2) {
+                syncProtocol = 'v2';
+                updateSyncNote();
+                reconcileV2(result);
+                remoteReady = true;
+
+                if (hasPendingChanges()) {
+                    syncToGoogleSheet();
+                } else {
+                    localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+                    setSyncBadge('synced');
+                }
+            } else {
                 throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
             }
-
-            syncProtocol = 'legacy';
-            reconcileWithSheet(result);
         })
         .catch((error) => {
-            setSyncBadge('offline', error.message);
+            setSyncBadge(failureBadge(error, 'offline'), failureDetail(error));
         });
 }
 
@@ -327,7 +676,7 @@ function resumeSync() {
 
     if (!remoteReady) {
         syncFromGoogleSheet();
-    } else if (getSyncDirty() && !pushInFlight) {
+    } else if (hasPendingChanges() && !pushInFlight) {
         pushToGoogleSheet();
     }
 }

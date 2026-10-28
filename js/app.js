@@ -75,6 +75,8 @@ function initializeApp() {
         urlInput.value = webAppUrl;
     }
 
+    document.getElementById('setting-script-token').value = webAppToken;
+
     document
         .getElementById('transaction-table-body')
         .addEventListener('click', handleTransactionTableClick);

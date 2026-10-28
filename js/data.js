@@ -105,6 +105,7 @@ let budgets = loadMeta('budgets');
 let recurring = loadMeta('recurring');
 let debts = loadMeta('debts');
 let webAppUrl = readStoredText('fm_script_url');
+let webAppToken = readStoredText('fm_script_token');
 let expenseChart = null;
 let monthlyChart = null;
 let editingId = null;
@@ -124,14 +125,26 @@ function readMetaUpdated() {
     return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
 }
 
-/** Persist one meta value after a local change and tell the sync layer about it. */
-function saveMeta(key) {
+/** Record when a meta value last changed (an ISO time; the sync keeps the newest). */
+function stampMeta(key, isoTime = new Date().toISOString()) {
     const updated = readMetaUpdated();
 
-    updated[key] = new Date().toISOString();
-    localStorage.setItem(META_DEFS[key].storage, JSON.stringify(META_ACCESSORS[key].get()));
+    updated[key] = isoTime;
     localStorage.setItem(META_UPDATED_KEY, JSON.stringify(updated));
+}
+
+/** Persist one meta value after a local change and tell the sync layer about it. */
+function saveMeta(key) {
+    localStorage.setItem(META_DEFS[key].storage, JSON.stringify(META_ACCESSORS[key].get()));
+    stampMeta(key);
     queueMeta(key);
+}
+
+/** Store a meta value that came from the server: not a local change, so nothing is queued. */
+function storeMetaValue(key, value, isoTime) {
+    META_ACCESSORS[key].set(value);
+    localStorage.setItem(META_DEFS[key].storage, JSON.stringify(value));
+    stampMeta(key, isoTime);
 }
 
 /**

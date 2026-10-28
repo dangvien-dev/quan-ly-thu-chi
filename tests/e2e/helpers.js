@@ -1,12 +1,13 @@
 // Shared helpers for the e2e tests: app launcher, Apps Script mock, and small utilities.
 //
 // Every test runs in a fresh browser context with no real network: the Google Apps Script URL is
-// answered by the owner's real deployed script (tests/gas/fixtures/user-script.gs) running against
-// an in-memory spreadsheet, and any other external request is blocked and recorded in
-// state.external (the app must not need one).
+// answered by a real Apps Script running against an in-memory spreadsheet - by default the owner's
+// deployed script (tests/gas/fixtures/user-script.gs, "legacy"), or apps-script/Code.gs ("v2") -
+// and any other external request is blocked and recorded in state.external (the app must not need
+// one). Several apps can share one server to act as several devices.
 
 const { test: base, expect } = require('@playwright/test');
-const { createGas, gridFromRows, USER_SCRIPT_FILE } = require('../gas/sandbox');
+const { createGas, gridFromRows, USER_SCRIPT_FILE, CODE_FILE } = require('../gas/sandbox');
 
 const BASE_URL = `http://127.0.0.1:${process.env.PORT || 4173}`;
 const SCRIPT_URL = 'https://script.google.com/macros/s/TEST/exec';
@@ -37,8 +38,34 @@ const syncedSeed = (rows, extra = {}) => ({
 });
 
 /**
+ * An Apps Script server on an in-memory spreadsheet. backend: 'legacy' (the owner's script) or
+ * 'v2' (apps-script/Code.gs). rows seed the Transactions sheet; properties are Script Properties
+ * (FM_TOKEN switches the token on, and server.token then holds it for reading the rows back).
+ */
+function newServer(backend = 'legacy', { rows = [], properties = {}, sheets = {} } = {}) {
+    const server = createGas({
+        codeFile: backend === 'v2' ? CODE_FILE : USER_SCRIPT_FILE,
+        properties,
+        sheets: { Transactions: gridFromRows(rows), ...sheets },
+    });
+
+    server.backend = backend;
+    server.token = properties.FM_TOKEN || '';
+
+    return server;
+}
+
+/** Rows currently in the server's Transactions sheet, as objects. */
+function serverRows(server) {
+    return server.backend === 'v2'
+        ? server.get({ v: '2', token: server.token }).transactions
+        : server.get({ v: '2' });
+}
+
+/**
  * Open the app in a new context.
- * opts: seed (localStorage), remote (rows the spreadsheet starts with), now (fixed clock),
+ * opts: seed (localStorage), remote (rows the spreadsheet starts with), backend ('legacy' | 'v2'),
+ *       server (an existing newServer() to share), properties (Script Properties), now (fixed clock),
  *       getDelay, getFails, postFails, postResponse (raw reply text), blockChart,
  *       serviceWorkers, viewport, promptValue.
  */
@@ -75,13 +102,15 @@ async function openApp(browser, opts = {}) {
         await context.route('**/vendor/chart.umd.js', (route) => route.abort());
     }
 
-    const gas = createGas({
-        codeFile: USER_SCRIPT_FILE,
-        sheets: { Transactions: gridFromRows(opts.remote || []) },
-    });
+    const gas =
+        opts.server ||
+        newServer(opts.backend || 'legacy', {
+            rows: opts.remote || [],
+            properties: opts.properties,
+        });
 
     // The rows currently in the spreadsheet, as the script returns them.
-    Object.defineProperty(state, 'remote', { get: () => gas.get({ v: '2' }) });
+    Object.defineProperty(state, 'remote', { get: () => serverRows(gas) });
     state.gas = gas;
 
     await context.route('https://script.google.com/**', async (route) => {
@@ -131,7 +160,12 @@ async function openApp(browser, opts = {}) {
             sessionStorage.__seeded = '1';
             Object.entries(seed).forEach(([key, value]) => localStorage.setItem(key, value));
         },
-        { ...(opts.remote || opts.getFails ? { fm_script_url: SCRIPT_URL } : {}), ...opts.seed },
+        {
+            ...(opts.remote || opts.getFails || opts.server || opts.backend
+                ? { fm_script_url: SCRIPT_URL }
+                : {}),
+            ...opts.seed,
+        },
     );
 
     const page = await context.newPage();
@@ -193,6 +227,8 @@ const rowsText = (page) =>
     );
 
 module.exports = {
+    newServer,
+    serverRows,
     test,
     expect,
     openApp,

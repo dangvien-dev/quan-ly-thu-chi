@@ -11,7 +11,7 @@ File này được Claude Code tự đọc ở đầu mỗi phiên. Giữ nó ng
     - `doGet` trả mảng giao dịch (7 cột, ngày ra dạng ISO UTC); `?action=save&data=<json>` ghi bằng GET (cách duy nhất từng chạy thật trên trình duyệt của chủ repo vì CORS; giới hạn độ dài URL, và script `decodeURIComponent` lần thứ hai nên dữ liệu có `%` sẽ lỗi).
     - `doPost` chỉ hiểu body `{"transactions": [...]}`. Nó **xóa Sheet trước khi đọc body**, nên mọi body khác (ví dụ `{"action":"save","data":[...]}`) làm mất toàn bộ dữ liệu mà vẫn trả HTTP 200. Lỗi kiểu `{"status":"error","message":...}` cũng trả 200.
     - Chỉ 7 cột `id,date,type,source,category,amount,note`: không có `targetSource`, `updatedAt`, không đồng bộ danh mục/nguồn/số dư.
-- Chưa từng chạy trên Google thật: `Code.gs` (bản tham chiếu trong repo, chưa deploy) và việc POST `text/plain` có đọc được phản hồi từ trình duyệt hay không.
+- Chưa từng chạy trên Google thật: `Code.gs` v2 (chưa deploy) và việc POST `text/plain` có đọc được phản hồi từ trình duyệt hay không (v2 có dự phòng `GET ?action=sync&payload=` khi POST bị chặn).
 
 ## Cấu trúc
 
@@ -31,12 +31,12 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 | `js/transactions.js`                  | thêm/sửa/xóa, bảng giao dịch, bộ lọc/tìm kiếm/"Xem thêm"/xuất CSV                                                                                                                                                                                                  |
 | `js/sources.js`                       | nguồn tiền (`{name, kind, creditLimit, statementDay, dueDay, archived}`), số dư, thêm/sửa/lưu trữ/xóa/đổi tên                                                                                                                                                      |
 | `js/charts.js`                        | Chart.js (có fallback khi thiếu thư viện)                                                                                                                                                                                                                          |
-| `js/sync.js`                          | đồng bộ Google Sheets (xem mục Quyết định thiết kế)                                                                                                                                                                                                                |
+| `js/sync.js`                          | đồng bộ Google Sheets: legacy + v2 (xem mục Quyết định thiết kế)                                                                                                                                                                                                   |
 | `js/backup.js`                        | sao lưu/khôi phục JSON (`format: finmanager-backup`, `version: 1`; mọi loại meta đều có trong file)                                                                                                                                                                |
 | `js/app.js`                           | khởi tạo, Tổng quan, `renderAll`, reset                                                                                                                                                                                                                            |
 | `js/pwa.js`, `sw.js`, `manifest.json` | PWA (service worker stale-while-revalidate, offline)                                                                                                                                                                                                               |
-| `apps-script/Code.gs`                 | backend Apps Script tham chiếu (chưa deploy, chưa chạy trên Google thật)                                                                                                                                                                                           |
-| `tests/e2e/*.spec.js`                 | Playwright; `helpers.js` chạy script Apps Script thật của chủ repo trong sandbox, chặn mọi request ra ngoài                                                                                                                                                        |
+| `apps-script/Code.gs`                 | backend Apps Script v2 (superset của script cũ; chưa deploy, chưa chạy trên Google thật)                                                                                                                                                                           |
+| `tests/e2e/*.spec.js`                 | Playwright; `helpers.js` có `newServer('legacy' \| 'v2')` chạy script Apps Script thật (script của chủ repo hoặc `Code.gs`) trong sandbox, dùng chung cho nhiều "thiết bị" (context), chặn mọi request ra ngoài                                                    |
 | `tests/gas/`                          | `sandbox.js` chạy script Apps Script trong vm với Sheet giả (ngày thành ô ngày như Sheets thật); `fixtures/user-script.gs` = script thật của chủ repo; `code.test.js`                                                                                              |
 | `tests/unit/`                         | `load.js` nạp script trình duyệt không cần DOM vào vm; `utils.test.js`                                                                                                                                                                                             |
 
@@ -44,7 +44,7 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 
 - `fm_transactions`: `{id, date YYYY-MM-DD, type income|expense|transfer, source, targetSource, category, amount, note, updatedAt}`. Id `TX_<ms>`.
 - Dữ liệu "meta" khai báo trong `META_DEFS` (`js/data.js`), lưu bằng `saveMeta(key)` (ghi `localStorage`, đóng dấu `fm_meta_updated[key]`, gọi `queueMeta`): `categories` (`fm_categories`), `sources` (`fm_sources`), `initialBalances` (`fm_initial_balances`), `budgets` (`fm_budgets`), `recurring` (`fm_recurring`), `debts` (`fm_debts`). Mỗi loại có hàm `normalize*` thuần trong `js/utils.js` (trả `null` nếu dữ liệu không dùng được).
-- Đồng bộ: `fm_script_url`, `fm_sync_dirty`, `fm_sync_baseline`, `fm_deleted_ids`. Sau thay đổi cục bộ luôn gọi `queueUpsert/queueDelete/saveMeta` rồi `syncToGoogleSheet()`.
+- Đồng bộ: `fm_script_url`, `fm_script_token`, `fm_sync_baseline`, `fm_sync_dirty`, `fm_pending_upserts`, `fm_deleted_ids`, `fm_pending_meta`, `fm_meta_updated`. Sau thay đổi cục bộ luôn gọi `queueUpsert/queueDelete/saveMeta` (đặt `updatedAt` mới cho giao dịch đã sửa) rồi `syncToGoogleSheet()`.
 
 ## Quy ước
 
@@ -60,9 +60,10 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 
 - "Tổng số dư khả dụng" = tổng số dư các nguồn **không phải nợ** (kể cả số dư ban đầu). Nguồn nợ = nguồn có loại `credit` (thẻ tín dụng/trả sau) hoặc `debt` (khoản nợ), định nghĩa ở `SOURCE_KINDS` trong `js/utils.js`; mặc định `Thẻ Tín Dụng`, `Spaylater` là `credit`, `Nợ Công Ty` là `debt` (nếu "Nợ Công Ty" thực ra là công ty nợ chủ repo thì đổi loại sang `other`). "Dư nợ" = tổng phần âm của các nguồn nợ.
 - Card "Thu/Chi tháng này" chỉ cộng tháng hiện tại; biểu đồ tròn = chi tháng này; biểu đồ cột = 6 tháng gần nhất.
-- Sync (xem comment đầu `js/sync.js`): **không bao giờ ghi lên server trước khi đã đọc và nhận diện được giao thức** (`GET ?v=2`; mảng = `legacy`). Giao thức `legacy` ghi bằng đúng `{"transactions": [...]}` (POST `text/plain`, không preflight), nếu không gửi được thì dự phòng `GET ?action=save&data=` khi URL ≤ 6000 ký tự và không có `%`, ngược lại không gửi gì và báo lỗi. Có test hồi quy `mọi lần ghi ... đều là {transactions}`.
-    - `targetSource` của giao dịch chuyển tiền đi trong cột category (`Chuyển tiền nội bộ → <nguồn nhận>`) khi server là legacy.
-    - Thay đổi chưa xác nhận được giữ (`fm_sync_dirty`, `fm_deleted_ids`) và gộp ở lần mở sau; Sheet trống không xóa dữ liệu máy; khôi phục backup/reset là `replace`.
+- Sync (xem comment đầu `js/sync.js`): **không bao giờ ghi lên server trước khi đã đọc và nhận diện được giao thức** (`GET ?v=2`: mảng = `legacy`, `{version: 2}` = `v2`).
+    - `legacy` (script thật hiện tại của chủ repo): ghi bằng đúng `{"transactions": [...]}` (POST `text/plain`, không preflight); nếu không gửi được thì dự phòng `GET ?action=save&data=` khi URL ≤ 6000 ký tự và không có `%`, ngược lại không gửi gì và báo lỗi. `targetSource` đi trong cột category (`Chuyển tiền nội bộ → <nguồn nhận>`). Chỉ đồng bộ giao dịch; thay đổi danh mục/meta không kích hoạt ghi. Có test hồi quy `mọi lần ghi ... đều là {transactions}`.
+    - `v2` (`apps-script/Code.gs`, chủ repo cần dán và deploy): POST `{action:'sync', token, replace, upserts, deletes, meta}`; server áp dụng theo `updatedAt` (bản mới hơn hoặc bằng thắng) và trả lại **toàn bộ trạng thái**, client gộp lại (`reconcileV2`). Meta (`categories, sources, initialBalances, budgets, recurring, debts`) đồng bộ nguyên khối theo `fm_meta_updated[key]`; lần đầu kết nối thì gộp hai phía (`mergeMetaFirstContact`). Token = Script Property `FM_TOKEN`, chủ repo nhập ở Cài đặt (`fm_script_token`, không nằm trong backup). `Code.gs` luôn validate trước khi ghi và vẫn hiểu các yêu cầu của script cũ (superset).
+    - Hàng chờ cục bộ: `fm_sync_dirty` (`merge|replace`), `fm_pending_upserts`, `fm_deleted_ids`, `fm_pending_meta`; xóa khi server xác nhận _trừ_ phần thay đổi sau khi request được dựng. Sheet trống không xóa dữ liệu máy; khôi phục backup/reset là `replace` (server thay hẳn kể cả meta).
     - Bài học (sự cố 28/10/2026): bản đầu của PR #3 gửi `{"action":"save","data":...}` — do giả định giao thức khi chưa thấy script thật — sẽ xóa Sheet. Luôn kiểm chứng giao thức với script thật trong sandbox trước khi đổi cách ghi.
 - URL Web App coi như mật khẩu (ai có URL đều đọc/ghi được).
 
@@ -94,5 +95,5 @@ npm run format:check   # Prettier (npm run format để sửa)
 - [x] Ngân sách theo danh mục (meta `budgets` = `{tênDanhMục: hạnMức}`; toast qua `showToast` trong `js/ui.js`)
 - [x] Giao dịch định kỳ (meta `recurring`; logic ngày đến hạn là hàm thuần trong `js/utils.js`, có unit test)
 - [x] Sổ vay nợ (tab "Vay Nợ & Cty"; meta `debts`)
-- [ ] Đồng bộ từng dòng (upsert/delete + `updatedAt`) + token + đồng bộ danh mục/số dư/... (v2)
+- [x] Đồng bộ v2: từng dòng + `updatedAt` + token + meta (cần chủ repo deploy `Code.gs`; chưa chạy trên Google thật)
 - [ ] Mobile (bảng → thẻ) + truy cập bằng bàn phím/ARIA

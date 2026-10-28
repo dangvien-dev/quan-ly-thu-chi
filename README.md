@@ -1,28 +1,39 @@
 # quan-ly-thu-chi (FinManager)
 
-Ứng dụng web tĩnh quản lý thu chi cá nhân: nhập thu / chi / chuyển tiền giữa các nguồn tiền, xem số dư từng nguồn, biểu đồ theo tháng, sao lưu JSON và đồng bộ tùy chọn với Google Sheets.
+Ứng dụng web tĩnh quản lý thu chi cá nhân. Không cần build, không cần server riêng: dữ liệu nằm trong `localStorage` của trình duyệt và có thể đồng bộ tùy chọn với Google Sheets qua Google Apps Script. Cài được như ứng dụng (PWA) và chạy offline.
 
-Không cần build. Chạy thử: `npm run serve` rồi mở http://127.0.0.1:4173/ (hoặc host thư mục này bằng bất kỳ static server nào; service worker cần `https` hoặc `localhost`). Dữ liệu lưu trong `localStorage` của trình duyệt. Chart.js và Font Awesome nằm trong `vendor/` nên ứng dụng chạy được hoàn toàn offline sau lần mở đầu tiên (PWA, có thể "Cài đặt ứng dụng").
+## Tính năng
+
+- **Giao dịch**: thu / chi / chuyển tiền giữa các nguồn; lọc theo tháng, loại, danh mục, nguồn; tìm kiếm không dấu; xem thêm theo trang; xuất CSV (UTF-8, mở được trong Excel).
+- **Nguồn tiền**: tiền mặt, ngân hàng, ví điện tử, thẻ tín dụng / trả sau (hạn mức, ngày chốt sao kê, hạn thanh toán), khoản nợ; lưu trữ, đổi tên (cập nhật mọi giao dịch).
+- **Tổng quan**: thu / chi tháng này, số dư khả dụng, dư nợ, biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.
+- **Ngân sách** theo danh mục chi, cảnh báo khi vượt 80% và 100%.
+- **Giao dịch định kỳ** (hằng tháng / hằng tuần): tự tạo khi đến hạn, không tạo trùng.
+- **Sổ vay nợ**: khoản mình nợ và khoản người khác nợ mình, thanh toán từng phần, nhắc khoản quá hạn.
+- **Sao lưu / khôi phục** JSON, **đồng bộ Google Sheets**, **PWA offline**.
+
+Chạy thử: `npm run serve` rồi mở http://127.0.0.1:4173/ (hoặc host thư mục này bằng bất kỳ static server nào; service worker cần `https` hoặc `localhost`). Chart.js và Font Awesome nằm trong `vendor/` nên không phụ thuộc CDN.
 
 ## Cấu trúc
 
-| File                                  | Vai trò                                                                     |
-| ------------------------------------- | --------------------------------------------------------------------------- |
-| `index.html`, `css/style.css`         | Giao diện                                                                   |
-| `js/utils.js`                         | Escape HTML, định dạng tiền / ngày theo giờ địa phương, chuẩn hoá giao dịch |
-| `js/data.js`                          | State dùng chung, đọc `localStorage` an toàn                                |
-| `js/ui.js`                            | Chuyển tab, modal, loại giao dịch, chip nhập nhanh                          |
-| `js/transactions.js`                  | Thêm / sửa / xóa và bảng giao dịch                                          |
-| `js/categories.js`                    | Danh mục                                                                    |
-| `js/sources.js`                       | Nguồn tiền, số dư ban đầu, tính số dư                                       |
-| `js/charts.js`                        | Biểu đồ Chart.js                                                            |
-| `js/sync.js`                          | Đồng bộ Google Sheets                                                       |
-| `js/backup.js`                        | Sao lưu / khôi phục JSON                                                    |
-| `js/app.js`                           | Khởi tạo, tổng quan, xóa dữ liệu                                            |
-| `js/pwa.js`, `sw.js`, `manifest.json` | PWA: cài đặt và chạy offline                                                |
-| `vendor/`                             | Chart.js 4.4.1 (MIT) và Font Awesome Free 6.4.0 (đi kèm giấy phép)          |
-| `apps-script/Code.gs`                 | Mã Google Apps Script tham chiếu cho Sheet                                  |
-| `tests/`                              | Test e2e (Playwright) và test `Code.gs` (`node:test`)                       |
+| File                                  | Vai trò                                                                                               |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `index.html`, `css/style.css`         | Giao diện                                                                                             |
+| `js/utils.js`                         | Hàm thuần dùng chung: escape HTML, định dạng, ngày, chuẩn hoá dữ liệu, lọc, CSV, lịch định kỳ, vay nợ |
+| `js/data.js`                          | State dùng chung, đọc / ghi `localStorage` an toàn, dữ liệu "meta" (`saveMeta`)                       |
+| `js/ui.js`                            | Chuyển tab, hộp thoại, loại giao dịch, thông báo (toast)                                              |
+| `js/categories.js`, `js/budgets.js`   | Danh mục và ngân sách                                                                                 |
+| `js/recurring.js`, `js/debts.js`      | Giao dịch định kỳ và sổ vay nợ                                                                        |
+| `js/transactions.js`, `js/sources.js` | Giao dịch (bộ lọc, xuất CSV) và nguồn tiền                                                            |
+| `js/charts.js`                        | Biểu đồ Chart.js                                                                                      |
+| `js/sync.js`                          | Đồng bộ Google Sheets                                                                                 |
+| `js/backup.js`                        | Sao lưu / khôi phục JSON                                                                              |
+| `js/app.js`                           | Khởi tạo, tổng quan, xóa dữ liệu                                                                      |
+| `js/pwa.js`, `sw.js`, `manifest.json` | PWA: cài đặt và chạy offline                                                                          |
+| `vendor/`                             | Chart.js 4.4.1 (MIT) và Font Awesome Free 6.4.0 (đi kèm giấy phép)                                    |
+| `apps-script/Code.gs`                 | Mã Google Apps Script (giao thức v2)                                                                  |
+| `tests/`                              | Test e2e (Playwright) và test đơn vị / Apps Script (`node:test`)                                      |
+| `CLAUDE.md`                           | Bộ nhớ dự án cho các phiên làm việc với Claude Code                                                   |
 
 ## Kiểm thử
 
@@ -34,22 +45,33 @@ npm run test:unit   # hàm thuần + script Apps Script trên Sheet giả
 npm run format:check
 ```
 
-CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR.
+CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR. Test e2e không dùng mạng: mọi request ra ngoài đều bị chặn, và Google Apps Script được thay bằng chính mã Apps Script chạy trong sandbox trên Sheet giả.
 
 ## Đồng bộ Google Sheets
 
-1. Mở Google Sheet > Extensions > Apps Script, dán nội dung `apps-script/Code.gs`.
-2. Deploy > New deployment > Web app > Execute as: Me > Who has access: Anyone.
-3. Dán URL `/exec` vào **Cài đặt & Dữ liệu > Web App URL** rồi bấm Lưu.
+Ứng dụng tự nhận ra loại Apps Script đang dùng và không ghi gì trước khi đã đọc xong:
 
-Sheet `Transactions` có các cột `id, date, type, source, category, amount, note, targetSource`. Cột `targetSource` bắt buộc để giao dịch chuyển tiền giữ được nguồn nhận.
+|                | Script cũ (legacy)                      | `apps-script/Code.gs` (v2)                                                                   |
+| -------------- | --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Đồng bộ        | Giao dịch (7 cột), ghi lại cả danh sách | Từng giao dịch (theo `updatedAt`) và danh mục, nguồn tiền, số dư, ngân sách, định kỳ, vay nợ |
+| Chuyển tiền    | Nguồn nhận lưu trong cột danh mục       | Cột `targetSource`                                                                           |
+| Nhiều thiết bị | Bản ghi cuối cùng thắng cả danh sách    | Bản có `updatedAt` mới hơn thắng từng dòng; xóa ở máy khác được áp dụng                      |
+| Bảo vệ         | Ai có URL đều đọc / ghi được            | Mã bảo vệ (token) tùy chọn                                                                   |
 
-Quy tắc đồng bộ:
+### Nâng cấp lên v2
 
-- Chỉ ghi đè Sheet sau khi đã đọc Sheet thành công trong phiên đó.
+1. Mở Google Sheet > Extensions > Apps Script, thay toàn bộ mã bằng nội dung `apps-script/Code.gs`.
+2. Deploy > Manage deployments > Edit > Version: New version > Deploy (URL `/exec` giữ nguyên).
+3. Khuyến nghị: Project Settings > Script properties > thêm `FM_TOKEN` với một chuỗi bí mật dài, rồi nhập cùng giá trị vào **Cài đặt & Dữ liệu > Mã bảo vệ** trên mọi thiết bị và bấm Lưu.
+
+Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sheet `Meta` được tạo khi cần. Dữ liệu cũ được giữ; các dòng chuyển tiền do bản cũ ghi sẽ tự chuyển sang dạng mới.
+
+### Quy tắc đồng bộ
+
+- Chỉ ghi lên Sheet sau khi đã đọc Sheet thành công trong phiên đó.
 - Thay đổi chưa được Sheet xác nhận (mất mạng, lỗi) được giữ lại và gộp với Sheet ở lần mở sau; giao dịch đã xóa trên máy này không bị "sống lại".
 - Sheet trống không bao giờ xóa dữ liệu trên máy.
 - Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet.
-- Sửa cùng một giao dịch trên hai thiết bị: bản sửa trên máy có thay đổi chưa đồng bộ được ưu tiên.
+- Với v2, nếu sửa một giao dịch trên máy này trong khi máy khác xóa nó thì bản sửa được giữ lại.
 
-Lưu ý: ai có URL Web App đều đọc / ghi được dữ liệu, hãy coi URL như mật khẩu (file sao lưu cũng chứa URL này).
+Lưu ý: nếu chưa đặt `FM_TOKEN`, ai có URL Web App đều đọc / ghi được dữ liệu; hãy coi URL như mật khẩu (file sao lưu cũng chứa URL này, nhưng không chứa mã bảo vệ).

@@ -770,3 +770,7 @@ canvas {
     gap: 16px;
     padding: 4px 0;
 }
+
+#sync-protocol-note {
+    margin: 0 0 14px;
+}
