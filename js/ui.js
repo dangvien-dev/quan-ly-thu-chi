@@ -246,3 +246,32 @@ function downloadTextFile(filename, text, mimeType) {
     link.remove();
     URL.revokeObjectURL(downloadUrl);
 }
+
+// --- TOASTS ---
+const MAX_TOASTS = 4;
+
+/** Short message in the corner; kind: info | success | warning | danger. */
+function showToast(message, kind = 'info', durationMs = 7000) {
+    let container = document.getElementById('toast-container');
+
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.setAttribute('role', 'status');
+        container.setAttribute('aria-live', 'polite');
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+
+    toast.className = `toast toast-${kind}`;
+    toast.textContent = message;
+    toast.addEventListener('click', () => toast.remove());
+    container.appendChild(toast);
+
+    while (container.children.length > MAX_TOASTS) {
+        container.firstElementChild.remove();
+    }
+
+    setTimeout(() => toast.remove(), durationMs);
+}

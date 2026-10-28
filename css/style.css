@@ -627,3 +627,88 @@ canvas {
     text-align: center;
     margin-bottom: 30px;
 }
+
+.budget-item {
+    margin-bottom: 14px;
+}
+
+.budget-item:last-child {
+    margin-bottom: 0;
+}
+
+.budget-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.budget-name {
+    font-weight: 600;
+}
+
+.budget-amount {
+    color: var(--text-muted);
+}
+
+.progress {
+    height: 8px;
+    background: var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    border-radius: 6px;
+    background: var(--success);
+    transition: width 0.3s ease;
+}
+
+.level-1 .progress-bar {
+    background: var(--warning);
+}
+
+.level-2 .progress-bar {
+    background: var(--danger);
+}
+
+.level-2 .budget-amount b {
+    color: var(--danger);
+}
+
+#toast-container {
+    position: fixed;
+    right: 16px;
+    bottom: 90px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(380px, calc(100vw - 32px));
+}
+
+.toast {
+    background: #0f172a;
+    color: #fff;
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    border-left: 4px solid var(--primary);
+    cursor: pointer;
+}
+
+.toast-success {
+    border-left-color: var(--success);
+}
+
+.toast-warning {
+    border-left-color: var(--warning);
+}
+
+.toast-danger {
+    border-left-color: var(--danger);
+}

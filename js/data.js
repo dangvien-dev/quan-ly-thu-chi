@@ -71,6 +71,11 @@ const META_DEFS = {
         fallback: () => ({}),
         normalize: normalizeBalances,
     },
+    budgets: {
+        storage: 'fm_budgets',
+        fallback: () => ({}),
+        normalize: normalizeBudgets,
+    },
 };
 const META_UPDATED_KEY = 'fm_meta_updated';
 
@@ -86,6 +91,7 @@ let transactions = normalizeTransactions(readStoredJson('fm_transactions', []));
 let categories = loadMeta('categories');
 let sources = loadMeta('sources');
 let initialBalances = loadMeta('initialBalances');
+let budgets = loadMeta('budgets');
 let webAppUrl = readStoredText('fm_script_url');
 let expenseChart = null;
 let monthlyChart = null;
@@ -95,6 +101,7 @@ const META_ACCESSORS = {
     categories: { get: () => categories, set: (value) => (categories = value) },
     sources: { get: () => sources, set: (value) => (sources = value) },
     initialBalances: { get: () => initialBalances, set: (value) => (initialBalances = value) },
+    budgets: { get: () => budgets, set: (value) => (budgets = value) },
 };
 
 function readMetaUpdated() {

@@ -326,3 +326,45 @@ function buildTransactionsCsv(list) {
 
     return '\uFEFF' + lines.map((line) => line.join(',')).join('\r\n') + '\r\n';
 }
+
+// --- BUDGETS ---
+
+const BUDGET_WARN_RATIO = 0.8;
+
+/** { categoryName: monthlyLimit } keeping only positive whole amounts. */
+function normalizeBudgets(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+    return Object.fromEntries(
+        Object.entries(value)
+            .map(([name, limit]) => [name, Math.round(Number(limit))])
+            .filter(([name, limit]) => name && Number.isFinite(limit) && limit > 0),
+    );
+}
+
+/** 0 = within budget, 1 = at least 80% used, 2 = at or over the limit. */
+function budgetLevel(ratio) {
+    if (ratio >= 1) return 2;
+
+    return ratio >= BUDGET_WARN_RATIO ? 1 : 0;
+}
+
+/** Spending against each budget in the given month (YYYY-MM), most used first. */
+function computeBudgetStatus(list, budgetMap, monthKey) {
+    const spent = {};
+
+    list.forEach((transaction) => {
+        if (transaction.type === 'expense' && transaction.date.startsWith(monthKey)) {
+            spent[transaction.category] = (spent[transaction.category] || 0) + transaction.amount;
+        }
+    });
+
+    return Object.entries(budgetMap)
+        .map(([category, limit]) => ({
+            category,
+            limit,
+            spent: spent[category] || 0,
+            ratio: (spent[category] || 0) / limit,
+        }))
+        .sort((a, b) => b.ratio - a.ratio);
+}

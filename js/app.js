@@ -42,6 +42,7 @@ function renderOverview() {
     setMoneyLabel('lbl-total-balance', availableBalance);
     setMoneyLabel('lbl-total-debt', totalDebt);
 
+    renderBudgets();
     renderCharts();
 }
 

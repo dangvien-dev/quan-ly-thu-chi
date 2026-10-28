@@ -24,6 +24,7 @@ function handleFormSubmit(e) {
     }
 
     const stamp = new Date().toISOString();
+    const wasEditing = Boolean(editingId);
     const savedId = editingId || 'TX_' + Date.now();
 
     if (editingId) {
@@ -63,6 +64,10 @@ function handleFormSubmit(e) {
     renderAll();
     closeModal();
     syncToGoogleSheet();
+
+    if (!wasEditing) {
+        notifyBudget(transactions.find((transaction) => transaction.id === savedId));
+    }
 }
 
 function editTransaction(id) {

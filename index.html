@@ -97,6 +97,10 @@
                         <div style="height: 240px"><canvas id="monthlyChart"></canvas></div>
                     </div>
                 </div>
+                <div class="card" id="budget-section" style="margin-top: 20px" hidden>
+                    <h3 style="font-size: 16px; margin-bottom: 15px">Ngân Sách Tháng Này</h3>
+                    <div id="budget-list"></div>
+                </div>
             </section>
 
             <!-- TAB 2: SỔ GIAO DỊCH -->
@@ -226,12 +230,13 @@
                     </button>
                 </div>
                 <div class="table-container">
-                    <table>
+                    <table class="responsive-table">
                         <thead>
                             <tr>
                                 <th>Tên Danh Mục</th>
                                 <th>Loại</th>
                                 <th>Biểu Tượng</th>
+                                <th>Ngân Sách Tháng</th>
                                 <th style="text-align: right">Thao Tác</th>
                             </tr>
                         </thead>
@@ -513,6 +518,7 @@
         <script src="js/data.js"></script>
         <script src="js/ui.js"></script>
         <script src="js/categories.js"></script>
+        <script src="js/budgets.js"></script>
         <script src="js/transactions.js"></script>
         <script src="js/sources.js"></script>
         <script src="js/charts.js"></script>

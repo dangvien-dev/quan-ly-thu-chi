@@ -73,6 +73,12 @@ function deleteCategory(id) {
     if (!confirm(`Xóa danh mục "${category.name}"?${warning}`)) return;
 
     categories = categories.filter((item) => item !== category);
+
+    if (Object.hasOwn(budgets, category.name)) {
+        delete budgets[category.name];
+        saveMeta('budgets');
+    }
+
     saveMeta('categories');
     renderCategories();
     updateCategoriesDropdown();
@@ -80,10 +86,14 @@ function deleteCategory(id) {
 }
 
 function handleCategoryTableClick(event) {
-    const button = event.target.closest('button[data-action="delete"]');
+    const button = event.target.closest('button[data-action]');
 
-    if (button) {
+    if (!button) return;
+
+    if (button.dataset.action === 'delete') {
         deleteCategory(button.dataset.id);
+    } else if (button.dataset.action === 'budget') {
+        editBudget(button.dataset.id);
     }
 }
 
@@ -93,17 +103,28 @@ function renderCategories() {
     if (!tbody) return;
 
     tbody.innerHTML = categories
-        .map(
-            (category) => `<tr>
-            <td><i class="fa-solid ${escapeHtml(category.icon)}" style="margin-right:8px; color:var(--primary);"></i>${escapeHtml(category.name)}</td>
-            <td>${category.type === 'income' ? 'Thu Nhập' : 'Chi Tiêu'}</td>
-            <td>${escapeHtml(category.icon)}</td>
-            <td style="text-align:right;">
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" data-action="delete" data-id="${escapeHtml(category.id)}" title="Xóa">
+        .map((category) => {
+            const id = escapeHtml(category.id);
+            const budget = budgets[category.name];
+            const budgetCell =
+                category.type === 'expense'
+                    ? `${budget ? formatMoney(budget) : '—'}
+                <button class="btn btn-outline btn-small" data-action="budget" data-id="${id}" title="Đặt ngân sách tháng" aria-label="Đặt ngân sách tháng cho ${escapeHtml(category.name)}">
+                    <i class="fa-solid fa-pen"></i>
+                </button>`
+                    : '—';
+
+            return `<tr>
+            <td data-label="Tên danh mục"><i class="fa-solid ${escapeHtml(category.icon)}" style="margin-right:8px; color:var(--primary);"></i>${escapeHtml(category.name)}</td>
+            <td data-label="Loại">${category.type === 'income' ? 'Thu Nhập' : 'Chi Tiêu'}</td>
+            <td data-label="Biểu tượng">${escapeHtml(category.icon)}</td>
+            <td data-label="Ngân sách tháng">${budgetCell}</td>
+            <td class="row-actions" style="text-align:right;">
+                <button class="btn btn-outline btn-small" data-action="delete" data-id="${id}" title="Xóa" aria-label="Xóa danh mục ${escapeHtml(category.name)}">
                     <i class="fa-solid fa-trash"></i>
                 </button>
             </td>
-        </tr>`,
-        )
+        </tr>`;
+        })
         .join('');
 }

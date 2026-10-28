@@ -186,3 +186,53 @@ test.describe('CSV', () => {
         assert.equal(run('csvCell(-5000, { isText: false })'), '-5000');
     });
 });
+
+test.describe('ngân sách', () => {
+    test('normalizeBudgets chỉ giữ số dương làm tròn, từ chối không phải object', () => {
+        assert.deepEqual(
+            plain(run('normalizeBudgets({"Ăn uống":"2000000.4","Đi lại":0,"Xấu":"abc","":5})')),
+            {
+                'Ăn uống': 2000000,
+            },
+        );
+        assert.equal(run('normalizeBudgets([1])'), null);
+        assert.equal(run('normalizeBudgets(null)'), null);
+    });
+
+    test('budgetLevel: dưới 80% = 0, từ 80% = 1, từ 100% = 2', () => {
+        assert.deepEqual(
+            [0, 0.79, 0.8, 0.99, 1, 1.5].map((ratio) => run(`budgetLevel(${ratio})`)),
+            [0, 0, 1, 1, 2, 2],
+        );
+    });
+
+    test('computeBudgetStatus chỉ cộng chi tiêu trong tháng, sắp xếp theo mức dùng giảm dần', () => {
+        const list = [
+            tx({ category: 'Ăn uống', amount: 300000, date: '2026-10-02' }),
+            tx({ id: '2', category: 'Ăn uống', amount: 200000, date: '2026-10-20' }),
+            tx({ id: '3', category: 'Ăn uống', amount: 999999, date: '2026-09-30' }),
+            tx({
+                id: '4',
+                category: 'Ăn uống',
+                type: 'income',
+                amount: 999999,
+                date: '2026-10-03',
+            }),
+            tx({ id: '5', category: 'Đi lại', amount: 90000, date: '2026-10-05' }),
+        ];
+        const status = plain(
+            run(
+                `computeBudgetStatus(${JSON.stringify(list)}, ${JSON.stringify({ 'Ăn uống': 1000000, 'Đi lại': 100000, 'Mua sắm': 500000 })}, "2026-10")`,
+            ),
+        );
+
+        assert.deepEqual(
+            status.map((item) => [item.category, item.spent, item.ratio]),
+            [
+                ['Đi lại', 90000, 0.9],
+                ['Ăn uống', 500000, 0.5],
+                ['Mua sắm', 0, 0],
+            ],
+        );
+    });
+});
