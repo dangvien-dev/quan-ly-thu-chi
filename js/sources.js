@@ -1,18 +1,33 @@
-// Source account balances and initial-balance editing.
+// Money sources: list, balances, and the add / edit / archive / delete / rename actions.
+
+let editingSourceName = null;
+
+function findSource(name) {
+    return sources.find((source) => source.name === name);
+}
+
+function sourceNames({ includeArchived = false } = {}) {
+    return sources
+        .filter((source) => includeArchived || !source.archived)
+        .map((source) => source.name);
+}
+
+function isDebtSource(name) {
+    const source = findSource(name);
+
+    return Boolean(source && SOURCE_KINDS[source.kind].debt);
+}
 
 function getInitialBalances() {
-    const stored = readStoredJson('fm_initial_balances', {});
-
-    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    return initialBalances;
 }
 
 /** Balance of every source: initial balance plus income, minus expenses, adjusted by transfers. */
 function calculateSourceBalances() {
-    const initialBalances = getInitialBalances();
     const balances = {};
 
     sources.forEach((source) => {
-        balances[source] = Number(initialBalances[source]) || 0;
+        balances[source.name] = Number(initialBalances[source.name]) || 0;
     });
 
     transactions.forEach((transaction) => {
@@ -34,42 +49,136 @@ function calculateSourceBalances() {
     return balances;
 }
 
+/**
+ * Transactions synced from a Sheet or restored from a backup may name a source this device does
+ * not know. Register it so its money is counted instead of silently ignored.
+ */
+function ensureSourcesForTransactions() {
+    const known = new Set(sources.map((source) => source.name));
+    let added = false;
+
+    transactions.forEach((transaction) => {
+        [transaction.source, transaction.targetSource].forEach((name) => {
+            if (name && !known.has(name)) {
+                known.add(name);
+                sources.push(normalizeSource({ name, kind: 'other' }));
+                added = true;
+            }
+        });
+    });
+
+    if (added) {
+        saveMeta('sources');
+    }
+
+    return added;
+}
+
+// --- RENDERING ---
+function describeCredit(source, balance) {
+    const lines = [];
+
+    if (source.creditLimit > 0) {
+        lines.push(
+            `Hạn mức ${formatMoney(source.creditLimit)} · Khả dụng ${formatMoney(source.creditLimit + balance)}`,
+        );
+    }
+
+    [
+        ['Chốt sao kê', source.statementDay],
+        ['Hạn thanh toán', source.dueDay],
+    ].forEach(([label, day]) => {
+        if (day) {
+            lines.push(
+                `${label} ngày ${day} (${describeDaysUntil(daysUntil(nextDayOfMonth(day)))})`,
+            );
+        }
+    });
+
+    return lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
+}
+
+function renderSourceCard(source, balance) {
+    const name = escapeHtml(source.name);
+    const kind = SOURCE_KINDS[source.kind];
+    const actions = source.archived
+        ? `<button class="btn btn-outline btn-small" data-action="restore-source" data-source="${name}">
+                <i class="fa-solid fa-rotate-left"></i> Khôi phục
+            </button>`
+        : `<button class="btn btn-outline btn-small" data-action="edit-balance" data-source="${name}">
+                <i class="fa-solid fa-pen"></i> Sửa số dư
+            </button>
+            <button class="btn btn-outline btn-small" data-action="edit-source" data-source="${name}" title="Sửa nguồn tiền" aria-label="Sửa nguồn ${name}">
+                <i class="fa-solid fa-pen-to-square"></i>
+            </button>
+            <button class="btn btn-outline btn-small" data-action="archive-source" data-source="${name}" title="Lưu trữ" aria-label="Lưu trữ nguồn ${name}">
+                <i class="fa-solid fa-box-archive"></i>
+            </button>`;
+
+    return `<div class="card source-card">
+            <div class="source-head">
+                <div class="card-title">${name}</div>
+                <span class="kind-badge">${escapeHtml(kind.label)}</span>
+            </div>
+            <div class="card-value" style="color:${balance >= 0 ? 'var(--text-main)' : 'var(--danger)'};">
+                ${formatMoney(balance)}
+            </div>
+            ${source.kind === 'credit' ? describeCredit(source, balance) : ''}
+            <div class="source-actions">
+                ${actions}
+                <button class="btn btn-outline btn-small" data-action="delete-source" data-source="${name}" title="Xóa" aria-label="Xóa nguồn ${name}">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        </div>`;
+}
+
 function renderSources() {
     const grid = document.getElementById('sources-grid');
+    const archivedSection = document.getElementById('sources-archived-section');
+    const archivedGrid = document.getElementById('sources-archived');
 
     if (!grid) return;
 
     const balances = calculateSourceBalances();
+    const active = sources.filter((source) => !source.archived);
+    const archived = sources.filter((source) => source.archived);
 
-    grid.innerHTML = sources
-        .map((source) => {
-            const balance = balances[source];
-
-            return `<div class="card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <div class="card-title">${escapeHtml(source)}</div>
-                <button class="btn btn-outline" style="padding:2px 6px; font-size:11px;" data-action="edit-balance" data-source="${escapeHtml(source)}">
-                    <i class="fa-solid fa-pen"></i> Sửa số dư
-                </button>
-            </div>
-            <div class="card-value" style="color:${balance >= 0 ? 'var(--text-main)' : 'var(--danger)'}; margin-top:8px;">
-                ${formatMoney(balance)}
-            </div>
-        </div>`;
-        })
+    grid.innerHTML = active
+        .map((source) => renderSourceCard(source, balances[source.name]))
         .join('');
+
+    if (archivedSection && archivedGrid) {
+        archivedSection.hidden = archived.length === 0;
+        archivedGrid.innerHTML = archived
+            .map((source) => renderSourceCard(source, balances[source.name]))
+            .join('');
+    }
+
+    populateSourceOptions();
 }
 
 function handleSourceGridClick(event) {
-    const button = event.target.closest('button[data-action="edit-balance"]');
+    const button = event.target.closest('button[data-action]');
 
-    if (button) {
-        editInitialBalance(button.dataset.source);
+    if (!button) return;
+
+    const name = button.dataset.source;
+    const actions = {
+        'edit-balance': () => editInitialBalance(name),
+        'edit-source': () => openSourceModal(name),
+        'archive-source': () => archiveSource(name, true),
+        'restore-source': () => archiveSource(name, false),
+        'delete-source': () => deleteSource(name),
+    };
+
+    if (actions[button.dataset.action]) {
+        actions[button.dataset.action]();
     }
 }
 
+// --- ACTIONS ---
 function editInitialBalance(sourceName) {
-    const initialBalances = getInitialBalances();
     const currentValue = Number(initialBalances[sourceName]) || 0;
     const input = prompt(`Nhập số dư ban đầu cho [${sourceName}]:`, currentValue);
 
@@ -84,6 +193,194 @@ function editInitialBalance(sourceName) {
     }
 
     initialBalances[sourceName] = newValue;
-    localStorage.setItem('fm_initial_balances', JSON.stringify(initialBalances));
+    saveMeta('initialBalances');
+    renderAll();
+}
+
+function updateSourceFormVisibility() {
+    const isCredit = document.getElementById('srcKind').value === 'credit';
+
+    document.getElementById('srcCreditFields').hidden = !isCredit;
+}
+
+function openSourceModal(name = null) {
+    const source = name ? findSource(name) : null;
+
+    editingSourceName = source ? source.name : null;
+    document.getElementById('sourceModalTitle').innerText = source
+        ? 'Sửa Nguồn Tiền'
+        : 'Thêm Nguồn Tiền';
+    document.getElementById('srcName').value = source ? source.name : '';
+    document.getElementById('srcKind').value = source ? source.kind : 'bank';
+    document.getElementById('srcCreditLimit').value =
+        source && source.creditLimit ? source.creditLimit : '';
+    document.getElementById('srcStatementDay').value =
+        source && source.statementDay ? source.statementDay : '';
+    document.getElementById('srcDueDay').value = source && source.dueDay ? source.dueDay : '';
+    document.getElementById('srcInitialBalance').value = source
+        ? Number(initialBalances[source.name]) || 0
+        : '';
+    updateSourceFormVisibility();
+    openDialog('sourceModal', 'srcName');
+}
+
+function closeSourceModal() {
+    editingSourceName = null;
+    closeDialog('sourceModal');
+}
+
+/** Rename a source everywhere it is referenced. */
+function renameSource(oldName, newName) {
+    const changedIds = [];
+
+    transactions = transactions.map((transaction) => {
+        if (transaction.source !== oldName && transaction.targetSource !== oldName) {
+            return transaction;
+        }
+
+        changedIds.push(transaction.id);
+
+        return {
+            ...transaction,
+            source: transaction.source === oldName ? newName : transaction.source,
+            targetSource: transaction.targetSource === oldName ? newName : transaction.targetSource,
+            updatedAt: new Date().toISOString(),
+        };
+    });
+
+    if (Object.hasOwn(initialBalances, oldName)) {
+        initialBalances[newName] = initialBalances[oldName];
+        delete initialBalances[oldName];
+    }
+
+    if (typeof renameSourceInRecurring === 'function') {
+        renameSourceInRecurring(oldName, newName);
+    }
+
+    saveDataLocally();
+    queueUpsert(changedIds);
+}
+
+function handleSourceSubmit(event) {
+    event.preventDefault();
+
+    const name = document.getElementById('srcName').value.trim();
+    const kind = document.getElementById('srcKind').value;
+    const openingBalance = document.getElementById('srcInitialBalance').value;
+    const existing = editingSourceName ? findSource(editingSourceName) : null;
+
+    if (!name) {
+        alert('Vui lòng nhập tên nguồn tiền!');
+        return;
+    }
+
+    const duplicate = sources.some(
+        (source) =>
+            source !== existing &&
+            source.name.toLocaleLowerCase('vi') === name.toLocaleLowerCase('vi'),
+    );
+
+    if (duplicate) {
+        alert(`Nguồn tiền "${name}" đã tồn tại.`);
+        return;
+    }
+
+    const updated = normalizeSource({
+        name,
+        kind,
+        creditLimit: document.getElementById('srcCreditLimit').value,
+        statementDay: document.getElementById('srcStatementDay').value,
+        dueDay: document.getElementById('srcDueDay').value,
+        archived: existing ? existing.archived : false,
+    });
+
+    if (existing && existing.name !== name) {
+        const usedBy = transactions.filter(
+            (transaction) =>
+                transaction.source === existing.name || transaction.targetSource === existing.name,
+        ).length;
+
+        if (
+            usedBy &&
+            !confirm(
+                `Đổi tên sẽ cập nhật ${usedBy} giao dịch đang dùng nguồn "${existing.name}". Tiếp tục?`,
+            )
+        ) {
+            return;
+        }
+
+        renameSource(existing.name, name);
+    }
+
+    if (existing) {
+        sources[sources.indexOf(existing)] = updated;
+    } else {
+        sources.push(updated);
+    }
+
+    if (openingBalance !== '') {
+        initialBalances[name] = Number(openingBalance) || 0;
+    }
+
+    saveMeta('sources');
+    saveMeta('initialBalances');
+    closeSourceModal();
+    renderAll();
+    syncToGoogleSheet();
+}
+
+function archiveSource(name, archive) {
+    const source = findSource(name);
+
+    if (!source) return;
+
+    if (archive) {
+        if (sourceNames().length <= 1) {
+            alert('Phải còn ít nhất một nguồn tiền đang dùng.');
+            return;
+        }
+
+        if (Math.abs(calculateSourceBalances()[name]) >= 1) {
+            alert(
+                `Nguồn "${name}" còn số dư ${formatMoney(calculateSourceBalances()[name])}. Hãy chuyển hết tiền (hoặc tất toán) về 0 trước khi lưu trữ.`,
+            );
+            return;
+        }
+    }
+
+    source.archived = archive;
+    saveMeta('sources');
+    renderAll();
+}
+
+function deleteSource(name) {
+    const source = findSource(name);
+
+    if (!source) return;
+
+    const usedByTransactions = transactions.filter(
+        (transaction) => transaction.source === name || transaction.targetSource === name,
+    ).length;
+    const usedByRecurring =
+        typeof countRecurringUsingSource === 'function' ? countRecurringUsingSource(name) : 0;
+
+    if (usedByTransactions || usedByRecurring) {
+        alert(
+            `Không thể xóa "${name}": đang được ${usedByTransactions} giao dịch và ${usedByRecurring} giao dịch định kỳ sử dụng. Hãy dùng "Lưu trữ" để ẩn nguồn này.`,
+        );
+        return;
+    }
+
+    if (sources.length <= 1) {
+        alert('Phải còn ít nhất một nguồn tiền.');
+        return;
+    }
+
+    if (!confirm(`Xóa nguồn tiền "${name}"?`)) return;
+
+    sources = sources.filter((item) => item !== source);
+    delete initialBalances[name];
+    saveMeta('sources');
+    saveMeta('initialBalances');
     renderAll();
 }

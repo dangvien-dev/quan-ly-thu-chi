@@ -84,10 +84,8 @@ function setTxType(type) {
         targetGroup.className = 'form-group';
         targetGroup.style.display = 'none';
         targetGroup.innerHTML = `
-            <label>Chuyển Đến Nguồn (Nhận)</label>
-            <select id="txTargetSource" class="form-control">
-                ${sources.map((source) => `<option value="${escapeHtml(source)}">${escapeHtml(source)}</option>`).join('')}
-            </select>
+            <label for="txTargetSource">Chuyển Đến Nguồn (Nhận)</label>
+            <select id="txTargetSource" class="form-control"></select>
         `;
 
         const txSourceEl = document.getElementById('txSource');
@@ -96,6 +94,8 @@ function setTxType(type) {
         if (sourceGroup) {
             sourceGroup.after(targetGroup);
         }
+
+        populateSourceOptions();
     }
 
     targetGroup.style.display = type === 'transfer' ? 'block' : 'none';
@@ -114,7 +114,74 @@ function setTxType(type) {
     }
 }
 
-// --- MODAL CONTROLS ---
+// --- SELECT OPTIONS ---
+/**
+ * Select `value` in a <select>. With keepMissing, a value that is not an option (an archived
+ * source, a deleted category, a value synced from another device) is added as a temporary
+ * option so editing a record does not silently change it.
+ */
+function selectValue(selectId, value, keepMissing = false) {
+    const select = document.getElementById(selectId);
+
+    if (!select || !value) return;
+
+    const exists = Array.from(select.options).some((option) => option.value === value);
+
+    if (!exists && keepMissing) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+    }
+
+    if (exists || keepMissing) {
+        select.value = value;
+    }
+}
+
+/** Fill the transaction form's source dropdowns from the active sources. */
+function populateSourceOptions() {
+    ['txSource', 'txTargetSource'].forEach((id) => {
+        const select = document.getElementById(id);
+
+        if (!select) return;
+
+        const previous = select.value;
+
+        select.innerHTML = sourceNames()
+            .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+            .join('');
+        selectValue(id, previous, Boolean(previous && findSource(previous)));
+    });
+}
+
+// --- DIALOGS ---
+const dialogReturnFocus = new Map();
+
+function openDialog(id, focusId) {
+    const dialog = document.getElementById(id);
+
+    dialogReturnFocus.set(id, document.activeElement);
+    dialog.classList.add('open');
+
+    const target = focusId && document.getElementById(focusId);
+
+    if (target) target.focus();
+}
+
+function closeDialog(id) {
+    document.getElementById(id).classList.remove('open');
+
+    const previous = dialogReturnFocus.get(id);
+
+    dialogReturnFocus.delete(id);
+
+    if (previous && document.contains(previous) && typeof previous.focus === 'function') {
+        previous.focus();
+    }
+}
+
+// --- TRANSACTION MODAL ---
 function resetTransactionForm() {
     editingId = null;
 
@@ -129,6 +196,7 @@ function resetTransactionForm() {
         modalTitle.innerText = 'Thêm Giao Dịch';
     }
 
+    populateSourceOptions();
     setTxType('expense');
 }
 
@@ -137,21 +205,21 @@ function openModal() {
         document.getElementById('txDate').value = toLocalDateString();
     }
 
-    document.getElementById('transactionModal').classList.add('open');
+    openDialog('transactionModal', 'txAmount');
 }
 
 function closeModal() {
-    document.getElementById('transactionModal').classList.remove('open');
+    closeDialog('transactionModal');
     resetTransactionForm();
     document.getElementById('txDate').value = toLocalDateString();
 }
 
 function openCategoryModal() {
-    document.getElementById('categoryModal').classList.add('open');
+    openDialog('categoryModal', 'catName');
 }
 
 function closeCategoryModal() {
-    document.getElementById('categoryModal').classList.remove('open');
+    closeDialog('categoryModal');
     document.getElementById('catName').value = '';
 }
 
@@ -159,12 +227,8 @@ function initModalShortcuts() {
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
 
-        if (document.getElementById('transactionModal').classList.contains('open')) {
-            closeModal();
-        }
+        const closeButton = document.querySelector('.modal.open .close-btn');
 
-        if (document.getElementById('categoryModal').classList.contains('open')) {
-            closeCategoryModal();
-        }
+        if (closeButton) closeButton.click();
     });
 }

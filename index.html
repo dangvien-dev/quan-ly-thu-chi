@@ -142,8 +142,17 @@
 
             <!-- TAB 3: NGUỒN TIỀN -->
             <section id="tab-sources" class="view-section">
-                <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
+                <div class="section-head">
+                    <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
+                    <button class="btn" onclick="openSourceModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Nguồn Tiền
+                    </button>
+                </div>
                 <div class="grid-cards" id="sources-grid"></div>
+                <div id="sources-archived-section" hidden>
+                    <h3 class="subsection-title">Đã lưu trữ</h3>
+                    <div class="grid-cards" id="sources-archived"></div>
+                </div>
             </section>
 
             <!-- TAB 4: DANH MỤC -->
@@ -307,14 +316,8 @@
                         ><input type="date" id="txDate" class="form-control" required />
                     </div>
                     <div class="form-group">
-                        <label>Nguồn Tiền</label>
-                        <select id="txSource" class="form-control" required>
-                            <option value="Tiền Mặt">Tiền Mặt</option>
-                            <option value="Thẻ Ngân Hàng">Thẻ Ngân Hàng</option>
-                            <option value="Thẻ Tín Dụng">Thẻ Tín Dụng</option>
-                            <option value="Spaylater">Spaylater</option>
-                            <option value="Nợ Công Ty">Nợ Công Ty</option>
-                        </select>
+                        <label for="txSource">Nguồn Tiền</label>
+                        <select id="txSource" class="form-control" required></select>
                     </div>
                     <div class="form-group">
                         <label>Danh Mục</label
@@ -364,6 +367,87 @@
                     </div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">
                         Thêm
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
+            id="sourceModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sourceModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="sourceModalTitle">Thêm Nguồn Tiền</h3>
+                    <button class="close-btn" onclick="closeSourceModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="sourceForm" onsubmit="handleSourceSubmit(event)">
+                    <div class="form-group">
+                        <label for="srcName">Tên</label>
+                        <input type="text" id="srcName" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="srcKind">Loại</label>
+                        <select
+                            id="srcKind"
+                            class="form-control"
+                            onchange="updateSourceFormVisibility()"
+                        ></select>
+                    </div>
+                    <div id="srcCreditFields" hidden>
+                        <div class="form-group">
+                            <label for="srcCreditLimit">Hạn mức (VNĐ)</label>
+                            <input
+                                type="number"
+                                id="srcCreditLimit"
+                                class="form-control"
+                                min="0"
+                                step="1"
+                                inputmode="numeric"
+                            />
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="srcStatementDay">Ngày chốt sao kê</label>
+                                <input
+                                    type="number"
+                                    id="srcStatementDay"
+                                    class="form-control"
+                                    min="1"
+                                    max="31"
+                                    inputmode="numeric"
+                                />
+                            </div>
+                            <div class="form-group">
+                                <label for="srcDueDay">Ngày hạn thanh toán</label>
+                                <input
+                                    type="number"
+                                    id="srcDueDay"
+                                    class="form-control"
+                                    min="1"
+                                    max="31"
+                                    inputmode="numeric"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="srcInitialBalance">Số dư ban đầu (nợ thì nhập số âm)</label>
+                        <input
+                            type="number"
+                            id="srcInitialBalance"
+                            class="form-control"
+                            step="1"
+                            inputmode="numeric"
+                        />
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
                     </button>
                 </form>
             </div>

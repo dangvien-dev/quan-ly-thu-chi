@@ -23,6 +23,9 @@ function handleFormSubmit(e) {
         return;
     }
 
+    const stamp = new Date().toISOString();
+    const savedId = editingId || 'TX_' + Date.now();
+
     if (editingId) {
         transactions = transactions.map((transaction) =>
             transaction.id === editingId
@@ -35,12 +38,13 @@ function handleFormSubmit(e) {
                       category,
                       amount,
                       note,
+                      updatedAt: stamp,
                   }
                 : transaction,
         );
     } else {
         const newTransaction = {
-            id: 'TX_' + Date.now(),
+            id: savedId,
             date: dateInput,
             type,
             source,
@@ -48,12 +52,14 @@ function handleFormSubmit(e) {
             category,
             amount,
             note,
+            updatedAt: stamp,
         };
 
         transactions.unshift(newTransaction);
     }
 
     saveDataLocally();
+    queueUpsert([savedId]);
     renderAll();
     closeModal();
     syncToGoogleSheet();
@@ -67,14 +73,10 @@ function editTransaction(id) {
     editingId = id;
     setTxType(transaction.type);
     document.getElementById('txDate').value = transaction.date;
-    document.getElementById('txSource').value = transaction.source;
+    selectValue('txSource', transaction.source, true);
 
     if (transaction.type === 'transfer') {
-        const targetEl = document.getElementById('txTargetSource');
-
-        if (targetEl && transaction.targetSource) {
-            targetEl.value = transaction.targetSource;
-        }
+        selectValue('txTargetSource', transaction.targetSource, true);
     } else {
         selectCategory(transaction.category, true);
     }
@@ -95,7 +97,7 @@ function deleteTransaction(id) {
     if (!confirm('Xóa giao dịch này?')) return;
 
     transactions = transactions.filter((transaction) => transaction.id !== id);
-    rememberDeletedIds([id]);
+    queueDelete([id]);
     saveDataLocally();
     renderAll();
     syncToGoogleSheet();

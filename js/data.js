@@ -9,9 +9,6 @@ const DEFAULT_CATEGORIES = [
     { id: 6, name: 'Thu nhập khác', type: 'income', icon: 'fa-circle-plus' },
 ];
 
-// Sources whose negative balance is money owed. They are excluded from the available balance.
-const DEBT_SOURCES = ['Thẻ Tín Dụng', 'Spaylater', 'Nợ Công Ty'];
-
 /**
  * Read JSON from local storage without letting a corrupted value stop the whole app.
  * A value that cannot be parsed is copied to "<key>.corrupt" so it can still be recovered.
@@ -44,29 +41,77 @@ function readStoredText(key) {
     }
 }
 
-function readStoredCategories() {
-    const stored = readStoredJson('fm_categories', null);
+const DEFAULT_SOURCES = [
+    { name: 'Tiền Mặt', kind: 'cash' },
+    { name: 'Thẻ Ngân Hàng', kind: 'bank' },
+    { name: 'Thẻ Tín Dụng', kind: 'credit' },
+    { name: 'Spaylater', kind: 'credit' },
+    { name: 'Nợ Công Ty', kind: 'debt' },
+];
 
-    if (!Array.isArray(stored)) {
-        return DEFAULT_CATEGORIES.map((category) => ({ ...category }));
-    }
+/**
+ * Data that is not a transaction ("meta"): stored under its own key, stamped with the time of
+ * the last change, and synchronized as a whole by js/sync.js.
+ *  - storage: localStorage key; fallback: value when nothing valid is stored;
+ *  - normalize: returns the cleaned value, or null when the input is unusable.
+ */
+const META_DEFS = {
+    categories: {
+        storage: 'fm_categories',
+        fallback: () => DEFAULT_CATEGORIES.map((category) => ({ ...category })),
+        normalize: normalizeCategories,
+    },
+    sources: {
+        storage: 'fm_sources',
+        fallback: () => DEFAULT_SOURCES.map((source) => normalizeSource(source)),
+        normalize: normalizeSources,
+    },
+    initialBalances: {
+        storage: 'fm_initial_balances',
+        fallback: () => ({}),
+        normalize: normalizeBalances,
+    },
+};
+const META_UPDATED_KEY = 'fm_meta_updated';
 
-    return stored.filter(
-        (category) =>
-            category &&
-            category.name &&
-            (category.type === 'income' || category.type === 'expense'),
-    );
+function loadMeta(key) {
+    const definition = META_DEFS[key];
+    const value = definition.normalize(readStoredJson(definition.storage, null));
+
+    return value === null ? definition.fallback() : value;
 }
 
 let currentType = 'expense';
 let transactions = normalizeTransactions(readStoredJson('fm_transactions', []));
-let categories = readStoredCategories();
-let sources = ['Tiền Mặt', 'Thẻ Ngân Hàng', 'Thẻ Tín Dụng', 'Spaylater', 'Nợ Công Ty'];
+let categories = loadMeta('categories');
+let sources = loadMeta('sources');
+let initialBalances = loadMeta('initialBalances');
 let webAppUrl = readStoredText('fm_script_url');
 let expenseChart = null;
 let monthlyChart = null;
 let editingId = null;
+
+const META_ACCESSORS = {
+    categories: { get: () => categories, set: (value) => (categories = value) },
+    sources: { get: () => sources, set: (value) => (sources = value) },
+    initialBalances: { get: () => initialBalances, set: (value) => (initialBalances = value) },
+};
+
+function readMetaUpdated() {
+    const stored = readStoredJson(META_UPDATED_KEY, {});
+
+    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+}
+
+/** Persist one meta value after a local change and tell the sync layer about it. */
+function saveMeta(key) {
+    const updated = readMetaUpdated();
+
+    updated[key] = new Date().toISOString();
+    localStorage.setItem(META_DEFS[key].storage, JSON.stringify(META_ACCESSORS[key].get()));
+    localStorage.setItem(META_UPDATED_KEY, JSON.stringify(updated));
+    queueMeta(key);
+}
 
 /**
  * Persist transactions to local storage.

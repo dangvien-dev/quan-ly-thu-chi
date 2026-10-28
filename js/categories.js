@@ -17,28 +17,8 @@ function updateCategoriesDropdown() {
         });
 }
 
-/**
- * Select a category in the transaction form.
- * With keepMissing, a category that no longer exists (deleted, or synced from another device)
- * is added as a temporary option so editing a transaction does not silently change it.
- */
 function selectCategory(name, keepMissing = false) {
-    const select = document.getElementById('txCategory');
-
-    if (!select) return;
-
-    const exists = Array.from(select.options).some((option) => option.value === name);
-
-    if (!exists && keepMissing && name) {
-        const option = document.createElement('option');
-        option.value = name;
-        option.textContent = name;
-        select.appendChild(option);
-    }
-
-    if (exists || (keepMissing && name)) {
-        select.value = name;
-    }
+    selectValue('txCategory', name, keepMissing);
 }
 
 function handleCategorySubmit(e) {
@@ -70,11 +50,12 @@ function handleCategorySubmit(e) {
         icon: 'fa-tag',
     });
 
-    localStorage.setItem('fm_categories', JSON.stringify(categories));
+    saveMeta('categories');
 
     renderCategories();
     updateCategoriesDropdown();
     closeCategoryModal();
+    syncToGoogleSheet();
 }
 
 function deleteCategory(id) {
@@ -92,9 +73,10 @@ function deleteCategory(id) {
     if (!confirm(`Xóa danh mục "${category.name}"?${warning}`)) return;
 
     categories = categories.filter((item) => item !== category);
-    localStorage.setItem('fm_categories', JSON.stringify(categories));
+    saveMeta('categories');
     renderCategories();
     updateCategoriesDropdown();
+    syncToGoogleSheet();
 }
 
 function handleCategoryTableClick(event) {

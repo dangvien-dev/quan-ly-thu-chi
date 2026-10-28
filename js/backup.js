@@ -2,11 +2,6 @@
 
 const BACKUP_FORMAT = 'finmanager-backup';
 const BACKUP_VERSION = 1;
-const BACKUP_STORAGE_KEYS = {
-    transactions: 'fm_transactions',
-    categories: 'fm_categories',
-    initialBalances: 'fm_initial_balances',
-};
 
 function exportBackup() {
     const backup = {
@@ -15,8 +10,9 @@ function exportBackup() {
         exportedAt: new Date().toISOString(),
         data: {
             transactions,
-            categories,
-            initialBalances: getInitialBalances(),
+            ...Object.fromEntries(
+                Object.keys(META_DEFS).map((key) => [key, META_ACCESSORS[key].get()]),
+            ),
             scriptUrl: webAppUrl,
         },
     };
@@ -73,27 +69,22 @@ async function importBackup(file) {
     if (!confirmed) return;
 
     const restoredTransactions = normalizeTransactions(backup.data.transactions);
-    const restoredCategories = backup.data.categories.filter(
-        (category) =>
-            category &&
-            category.name &&
-            (category.type === 'income' || category.type === 'expense'),
-    );
     const skippedCount = backup.data.transactions.length - restoredTransactions.length;
 
     try {
-        localStorage.setItem(
-            BACKUP_STORAGE_KEYS.transactions,
-            JSON.stringify(restoredTransactions),
-        );
-        localStorage.setItem(BACKUP_STORAGE_KEYS.categories, JSON.stringify(restoredCategories));
-        localStorage.setItem(
-            BACKUP_STORAGE_KEYS.initialBalances,
-            JSON.stringify(backup.data.initialBalances),
-        );
-
         transactions = restoredTransactions;
-        categories = restoredCategories;
+        saveDataLocally();
+
+        // Data kinds missing from an older backup keep their current value.
+        Object.keys(META_DEFS).forEach((key) => {
+            const value = META_DEFS[key].normalize(backup.data[key]);
+
+            if (value !== null) {
+                META_ACCESSORS[key].set(value);
+                saveMeta(key);
+            }
+        });
+        ensureSourcesForTransactions();
 
         const urlInput = document.getElementById('setting-script-url');
 
@@ -102,6 +93,7 @@ async function importBackup(file) {
         }
 
         updateCategoriesDropdown();
+        populateSourceOptions();
         renderAll();
 
         // With a Sheet configured, the restored list becomes the Sheet's content as well. The flag

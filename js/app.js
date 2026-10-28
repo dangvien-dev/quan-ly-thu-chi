@@ -29,13 +29,13 @@ function renderOverview() {
     const thisMonth = summarizeMonth(currentMonthKey());
     const balances = calculateSourceBalances();
 
+    const isDebt = (source) => SOURCE_KINDS[source.kind].debt;
     const availableBalance = sources
-        .filter((source) => !DEBT_SOURCES.includes(source))
-        .reduce((total, source) => total + balances[source], 0);
-    const totalDebt = DEBT_SOURCES.reduce(
-        (total, source) => total + Math.max(0, -(balances[source] || 0)),
-        0,
-    );
+        .filter((source) => !isDebt(source))
+        .reduce((total, source) => total + balances[source.name], 0);
+    const totalDebt = sources
+        .filter(isDebt)
+        .reduce((total, source) => total + Math.max(0, -balances[source.name]), 0);
 
     setMoneyLabel('lbl-total-income', thisMonth.income);
     setMoneyLabel('lbl-total-expense', thisMonth.expense);
@@ -46,6 +46,8 @@ function renderOverview() {
 }
 
 function renderAll() {
+    ensureSourcesForTransactions();
+
     // A failure in one view (for example the charts) must not stop the others from rendering.
     [renderTransactions, renderOverview, renderSources, renderCategories].forEach((render) => {
         try {
@@ -70,6 +72,10 @@ function initializeApp() {
         .getElementById('category-table-body')
         .addEventListener('click', handleCategoryTableClick);
     document.getElementById('sources-grid').addEventListener('click', handleSourceGridClick);
+    document.getElementById('sources-archived').addEventListener('click', handleSourceGridClick);
+    document.getElementById('srcKind').innerHTML = Object.entries(SOURCE_KINDS)
+        .map(([kind, { label }]) => `<option value="${kind}">${label}</option>`)
+        .join('');
 
     initModalShortcuts();
     window.addEventListener('online', resumeSync);

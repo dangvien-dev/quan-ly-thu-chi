@@ -94,6 +94,7 @@ function normalizeTransaction(raw, index = 0) {
         category: String(raw.category ?? ''),
         amount,
         note: String(raw.note ?? ''),
+        updatedAt: String(raw.updatedAt ?? ''),
     };
 }
 
@@ -124,4 +125,110 @@ function compareNewestFirst(a, b) {
     if (a.date !== b.date) return a.date < b.date ? 1 : -1;
 
     return transactionTimestamp(b) - transactionTimestamp(a);
+}
+
+// --- SOURCES (money accounts) ---
+
+// debt: a negative balance on this kind of source is money owed.
+const SOURCE_KINDS = {
+    cash: { label: 'Tiền mặt', debt: false },
+    bank: { label: 'Ngân hàng', debt: false },
+    ewallet: { label: 'Ví điện tử', debt: false },
+    credit: { label: 'Thẻ tín dụng / Trả sau', debt: true },
+    debt: { label: 'Khoản nợ', debt: true },
+    other: { label: 'Khác', debt: false },
+};
+
+function dayOfMonthOrNull(value) {
+    const day = Math.round(Number(value));
+
+    return Number.isFinite(day) && day >= 1 && day <= 31 ? day : null;
+}
+
+/** Coerce a stored source (the old format was a plain name string) to its current shape. */
+function normalizeSource(raw) {
+    const source = typeof raw === 'string' ? { name: raw } : raw;
+    const name = String((source && source.name) ?? '').trim();
+
+    if (!name) return null;
+
+    const kind = Object.hasOwn(SOURCE_KINDS, source.kind) ? source.kind : 'other';
+
+    return {
+        name,
+        kind,
+        creditLimit: kind === 'credit' ? Math.max(0, Number(source.creditLimit) || 0) : 0,
+        statementDay: kind === 'credit' ? dayOfMonthOrNull(source.statementDay) : null,
+        dueDay: kind === 'credit' ? dayOfMonthOrNull(source.dueDay) : null,
+        archived: Boolean(source.archived),
+    };
+}
+
+/** Returns null when the value is not a usable list, so callers can fall back to defaults. */
+function normalizeSources(list) {
+    if (!Array.isArray(list)) return null;
+
+    const seen = new Set();
+    const result = [];
+
+    list.forEach((raw) => {
+        const source = normalizeSource(raw);
+
+        if (source && !seen.has(source.name)) {
+            seen.add(source.name);
+            result.push(source);
+        }
+    });
+
+    return result.length ? result : null;
+}
+
+function normalizeCategories(list) {
+    if (!Array.isArray(list)) return null;
+
+    return list.filter(
+        (category) =>
+            category &&
+            category.name &&
+            (category.type === 'income' || category.type === 'expense'),
+    );
+}
+
+/** { sourceName: openingBalance } with only finite numbers kept. */
+function normalizeBalances(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+    return Object.fromEntries(
+        Object.entries(value)
+            .map(([name, amount]) => [name, Number(amount)])
+            .filter(([, amount]) => Number.isFinite(amount)),
+    );
+}
+
+/** The next date (today included) whose day of month is `day`, clamped to short months. */
+function nextDayOfMonth(day, from = new Date()) {
+    const today = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+
+    for (let offset = 0; offset < 3; offset++) {
+        const lastDay = new Date(today.getFullYear(), today.getMonth() + offset + 1, 0).getDate();
+        const candidate = new Date(
+            today.getFullYear(),
+            today.getMonth() + offset,
+            Math.min(day, lastDay),
+        );
+
+        if (candidate >= today) return candidate;
+    }
+
+    return today;
+}
+
+function daysUntil(date, from = new Date()) {
+    const today = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+
+    return Math.round((date - today) / 86400000);
+}
+
+function describeDaysUntil(days) {
+    return days === 0 ? 'hôm nay' : `còn ${days} ngày`;
 }

@@ -34,16 +34,11 @@ test.describe('Form nhập giao dịch', () => {
 
         expect(await page.evaluate(() => transactions.length)).toBe(1);
 
-        const cards = await page.locator('#sources-grid .card').allInnerTexts();
         const balanceOf = (name) =>
-            cards
-                .find((text) => text.includes(name))
-                .split('Sửa số dư')[1]
-                .replace(/\s+/g, ' ')
-                .trim();
+            page.locator('#sources-grid .card', { hasText: name }).locator('.card-value');
 
-        expect(balanceOf('Tiền Mặt')).toContain('-21.000');
-        expect(balanceOf('Thẻ Ngân Hàng')).toContain('21.000');
+        await expect(balanceOf('Tiền Mặt')).toContainText('-21.000');
+        await expect(balanceOf('Thẻ Ngân Hàng')).toContainText('21.000');
     });
 
     test('từ chối chuyển tiền cùng một nguồn', async ({ app }) => {
