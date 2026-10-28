@@ -2,26 +2,39 @@
 
 Ứng dụng web tĩnh quản lý thu chi cá nhân: nhập thu / chi / chuyển tiền giữa các nguồn tiền, xem số dư từng nguồn, biểu đồ theo tháng, sao lưu JSON và đồng bộ tùy chọn với Google Sheets.
 
-Không cần build: mở `index.html` trực tiếp hoặc host thư mục này bằng bất kỳ static server nào. Dữ liệu lưu trong `localStorage` của trình duyệt.
+Không cần build. Chạy thử: `npm run serve` rồi mở http://127.0.0.1:4173/ (hoặc host thư mục này bằng bất kỳ static server nào; service worker cần `https` hoặc `localhost`). Dữ liệu lưu trong `localStorage` của trình duyệt. Chart.js và Font Awesome nằm trong `vendor/` nên ứng dụng chạy được hoàn toàn offline sau lần mở đầu tiên (PWA, có thể "Cài đặt ứng dụng").
 
 ## Cấu trúc
 
-| File | Vai trò |
-| --- | --- |
-| `index.html`, `style.css` | Giao diện |
-| `js/utils.js` | Escape HTML, định dạng tiền / ngày theo giờ địa phương, chuẩn hoá dữ liệu giao dịch |
-| `js/data.js` | State dùng chung, đọc `localStorage` an toàn |
-| `js/ui.js` | Chuyển tab, modal, loại giao dịch, chip nhập nhanh |
-| `js/transactions.js` | Thêm / sửa / xóa và bảng giao dịch |
-| `js/categories.js` | Danh mục |
-| `js/sources.js` | Nguồn tiền, số dư ban đầu, tính số dư |
-| `js/charts.js` | Biểu đồ Chart.js |
-| `js/sync.js` | Đồng bộ Google Sheets |
-| `js/backup.js` | Sao lưu / khôi phục JSON |
-| `js/app.js` | Khởi tạo, tổng quan, xóa dữ liệu |
-| `apps-script/Code.gs` | Mã Google Apps Script tham chiếu cho Sheet |
+| File                                  | Vai trò                                                                     |
+| ------------------------------------- | --------------------------------------------------------------------------- |
+| `index.html`, `css/style.css`         | Giao diện                                                                   |
+| `js/utils.js`                         | Escape HTML, định dạng tiền / ngày theo giờ địa phương, chuẩn hoá giao dịch |
+| `js/data.js`                          | State dùng chung, đọc `localStorage` an toàn                                |
+| `js/ui.js`                            | Chuyển tab, modal, loại giao dịch, chip nhập nhanh                          |
+| `js/transactions.js`                  | Thêm / sửa / xóa và bảng giao dịch                                          |
+| `js/categories.js`                    | Danh mục                                                                    |
+| `js/sources.js`                       | Nguồn tiền, số dư ban đầu, tính số dư                                       |
+| `js/charts.js`                        | Biểu đồ Chart.js                                                            |
+| `js/sync.js`                          | Đồng bộ Google Sheets                                                       |
+| `js/backup.js`                        | Sao lưu / khôi phục JSON                                                    |
+| `js/app.js`                           | Khởi tạo, tổng quan, xóa dữ liệu                                            |
+| `js/pwa.js`, `sw.js`, `manifest.json` | PWA: cài đặt và chạy offline                                                |
+| `vendor/`                             | Chart.js 4.4.1 (MIT) và Font Awesome Free 6.4.0 (đi kèm giấy phép)          |
+| `apps-script/Code.gs`                 | Mã Google Apps Script tham chiếu cho Sheet                                  |
+| `tests/`                              | Test e2e (Playwright) và test `Code.gs` (`node:test`)                       |
 
-Các file `script.js`, `css/*`, `manifest.json`, `sw.js` hiện là bản cũ / chỗ trống, `index.html` không dùng.
+## Kiểm thử
+
+```bash
+npm install
+npx playwright install chromium
+npm test            # e2e trên Chromium, tự khởi động tests/serve.js
+npm run test:gas    # logic Code.gs trên mock Sheet
+npm run format:check
+```
+
+CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR.
 
 ## Đồng bộ Google Sheets
 

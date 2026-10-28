@@ -1,0 +1,17 @@
+{
+    "name": "quan-ly-thu-chi",
+    "version": "1.0.0",
+    "private": true,
+    "description": "FinManager - quản lý thu chi cá nhân (web tĩnh, không cần build)",
+    "scripts": {
+        "serve": "node tests/serve.js",
+        "test": "playwright test",
+        "test:gas": "node --test \"tests/gas/*.test.js\"",
+        "format": "prettier --write .",
+        "format:check": "prettier --check ."
+    },
+    "devDependencies": {
+        "@playwright/test": "1.63.0",
+        "prettier": "3.9.10"
+    }
+}

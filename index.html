@@ -1,227 +1,385 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FinManager - Quản Lý Dòng Tiền Cá Nhân</title>
-    <!-- Thư viện ngoài -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Liên kết file CSS riêng -->
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>FinManager - Quản Lý Dòng Tiền Cá Nhân</title>
+        <meta name="theme-color" content="#4f46e5" />
+        <link rel="manifest" href="manifest.json" />
+        <link rel="icon" type="image/svg+xml" href="assets/icons/icon.svg" />
+        <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
+        <!-- Thư viện đi kèm trong repo (vendor/) để chạy offline -->
+        <script src="vendor/chart.umd.js"></script>
+        <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css" />
+        <!-- Liên kết file CSS riêng -->
+        <link rel="stylesheet" href="css/style.css" />
+    </head>
+    <body>
+        <!-- Sidebar Desktop -->
+        <aside>
+            <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
+            <ul class="menu">
+                <li class="active" data-tab="overview" onclick="switchTab('overview')">
+                    <i class="fa-solid fa-chart-pie"></i> Tổng Quan
+                </li>
+                <li data-tab="transactions" onclick="switchTab('transactions')">
+                    <i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch
+                </li>
+                <li data-tab="sources" onclick="switchTab('sources')">
+                    <i class="fa-solid fa-vault"></i> Nguồn Tiền
+                </li>
+                <li data-tab="categories" onclick="switchTab('categories')">
+                    <i class="fa-solid fa-tags"></i> Danh Mục
+                </li>
+                <li data-tab="debts" onclick="switchTab('debts')">
+                    <i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty
+                </li>
+                <li data-tab="settings" onclick="switchTab('settings')">
+                    <i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu
+                </li>
+            </ul>
+        </aside>
 
-    <!-- Sidebar Desktop -->
-    <aside>
-        <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
-        <ul class="menu">
-            <li class="active" data-tab="overview" onclick="switchTab('overview')"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
-            <li data-tab="transactions" onclick="switchTab('transactions')"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
-            <li data-tab="sources" onclick="switchTab('sources')"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
-            <li data-tab="categories" onclick="switchTab('categories')"><i class="fa-solid fa-tags"></i> Danh Mục</li>
-            <li data-tab="debts" onclick="switchTab('debts')"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
-            <li data-tab="settings" onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
-        </ul>
-    </aside>
-
-    <!-- Main Content -->
-    <main>
-        <header>
-            <div class="header-title">
-                <h1 id="page-title">Tổng Quan Dòng Tiền</h1>
-                <p id="current-date-label">Theo dõi tài chính cá nhân</p>
-            </div>
-            <div style="display: flex; gap: 12px; align-items: center;">
-                <div id="sync-status" class="sync-badge"><i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng</div>
-                <button class="btn" onclick="openModal()"><i class="fa-solid fa-plus"></i> Nhập Giao Dịch</button>
-            </div>
-        </header>
-
-        <!-- TAB 1: TỔNG QUAN -->
-        <section id="tab-overview" class="view-section active">
-            <div class="grid-cards">
-                <div class="card"><div class="card-title">Tổng Số Dư Khả Dụng</div><div class="card-value" id="lbl-total-balance">0 đ</div></div>
-                <div class="card"><div class="card-title">Tổng Thu Tháng Này</div><div class="card-value income" id="lbl-total-income">0 đ</div></div>
-                <div class="card"><div class="card-title">Tổng Chi Tháng Này</div><div class="card-value expense" id="lbl-total-expense">0 đ</div></div>
-                <div class="card"><div class="card-title">Dư Nợ Tín Dụng / SPay</div><div class="card-value expense" id="lbl-total-debt">0 đ</div></div>
-            </div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
-                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Tỷ Trọng Chi Tiêu Tháng Này</h3><div style="height: 240px;"><canvas id="expenseCategoryChart"></canvas></div></div>
-                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Thu / Chi 6 Tháng Gần Đây</h3><div style="height: 240px;"><canvas id="monthlyChart"></canvas></div></div>
-            </div>
-        </section>
-
-        <!-- TAB 2: SỔ GIAO DỊCH -->
-        <section id="tab-transactions" class="view-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3>Lịch Sử Giao Dịch</h3>
-                <select id="filter-type" class="form-control" style="width: 140px;" onchange="renderTransactions()">
-                    <option value="ALL">Tất cả loại</option>
-                    <option value="income">Thu nhập</option>
-                    <option value="expense">Chi tiêu</option>
-                    <option value="transfer">Chuyển tiền</option>
-                </select>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead><tr><th>Ngày</th><th>Nguồn Tiền</th><th>Danh Mục</th><th>Loại</th><th>Số Tiền</th><th>Mô Tả</th><th style="text-align: right;">Thao Tác</th></tr></thead>
-                    <tbody id="transaction-table-body"></tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- TAB 3: NGUỒN TIỀN -->
-        <section id="tab-sources" class="view-section">
-            <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
-            <div class="grid-cards" id="sources-grid"></div>
-        </section>
-
-        <!-- TAB 4: DANH MỤC -->
-        <section id="tab-categories" class="view-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3>Quản Lý Danh Mục Thu / Chi</h3>
-                <button class="btn" onclick="openCategoryModal()"><i class="fa-solid fa-plus"></i> Thêm Danh Mục</button>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead><tr><th>Tên Danh Mục</th><th>Loại</th><th>Biểu Tượng</th><th style="text-align: right;">Thao Tác</th></tr></thead>
-                    <tbody id="category-table-body"></tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- TAB 5: VAY NỢ -->
-        <section id="tab-debts" class="view-section">
-            <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
-            <div class="card"><p style="color: var(--text-muted);">Tính năng đang phát triển.</p></div>
-        </section>
-
-        <!-- TAB 6: CÀI ĐẶT -->
-        <section id="tab-settings" class="view-section">
-            <div class="card" style="margin-bottom: 20px;">
-                <h3 style="margin-bottom: 12px;">Đồng Bộ Google Sheets</h3>
-                <div class="form-group">
-                    <label>Web App URL:</label>
-                    <input
-                        type="text"
-                        id="setting-script-url"
-                        class="form-control"
-                        placeholder="Dán URL Google Apps Script Web App">
+        <!-- Main Content -->
+        <main>
+            <header>
+                <div class="header-title">
+                    <h1 id="page-title">Tổng Quan Dòng Tiền</h1>
+                    <p id="current-date-label">Theo dõi tài chính cá nhân</p>
                 </div>
-                <button class="btn" onclick="saveScriptUrl()"><i class="fa-solid fa-save"></i> Lưu Cấu Hình</button>
+                <div style="display: flex; gap: 12px; align-items: center">
+                    <div id="sync-status" class="sync-badge">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng
+                    </div>
+                    <button class="btn" onclick="openModal()">
+                        <i class="fa-solid fa-plus"></i> Nhập Giao Dịch
+                    </button>
+                </div>
+            </header>
 
-                <hr style="margin:20px 0">
+            <!-- TAB 1: TỔNG QUAN -->
+            <section id="tab-overview" class="view-section active">
+                <div class="grid-cards">
+                    <div class="card">
+                        <div class="card-title">Tổng Số Dư Khả Dụng</div>
+                        <div class="card-value" id="lbl-total-balance">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Tổng Thu Tháng Này</div>
+                        <div class="card-value income" id="lbl-total-income">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Tổng Chi Tháng Này</div>
+                        <div class="card-value expense" id="lbl-total-expense">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Dư Nợ Tín Dụng / SPay</div>
+                        <div class="card-value expense" id="lbl-total-debt">0 đ</div>
+                    </div>
+                </div>
+                <div
+                    style="
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                        gap: 20px;
+                    "
+                >
+                    <div class="card">
+                        <h3 style="font-size: 16px; margin-bottom: 15px">
+                            Tỷ Trọng Chi Tiêu Tháng Này
+                        </h3>
+                        <div style="height: 240px"><canvas id="expenseCategoryChart"></canvas></div>
+                    </div>
+                    <div class="card">
+                        <h3 style="font-size: 16px; margin-bottom: 15px">
+                            Thu / Chi 6 Tháng Gần Đây
+                        </h3>
+                        <div style="height: 240px"><canvas id="monthlyChart"></canvas></div>
+                    </div>
+                </div>
+            </section>
 
-<h3>Sao lưu & Khôi phục dữ liệu</h3>
-
-<button class="btn" onclick="exportBackup()">
-    <i class="fa-solid fa-download"></i>
-    Sao lưu dữ liệu
-</button>
-
-<br><br>
-
-<input
-    type="file"
-    accept=".json"
-    onchange="if (this.files.length) { importBackup(this.files[0]); this.value = ''; }">
-                
-            </div>
-            <div class="card" style="border-color: var(--danger);">
-                <h3 style="color: var(--danger); margin-bottom: 12px;">Vùng Nguy Hiểm</h3>
-                <button class="btn btn-danger" onclick="resetAllData()"><i class="fa-solid fa-trash"></i> Xóa Toàn Bộ Dữ Liệu</button>
-            </div>
-        </section>
-    </main>
-
-    <!-- Mobile Navigation -->
-    <nav class="mobile-nav">
-        <button class="mobile-nav-item active" data-tab="overview" onclick="switchTab('overview')">
-            <i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span>
-        </button>
-        
-        <button class="mobile-nav-item" data-tab="transactions" onclick="switchTab('transactions')">
-            <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
-        </button>
-        
-        <button class="mobile-nav-item" data-tab="sources" onclick="switchTab('sources')">
-            <i class="fa-solid fa-vault"></i><span>Nguồn</span>
-        </button>
-        
-        <button class="mobile-nav-item" data-tab="categories" onclick="switchTab('categories')">
-            <i class="fa-solid fa-tags"></i><span>Danh mục</span>
-        </button>
-        
-        <button class="mobile-nav-item" data-tab="settings" onclick="switchTab('settings')">
-            <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
-        </button>
-    </nav>
-    
-    <button class="floating-add-btn"
-        title="Thêm giao dịch"
-        onclick="openModal()">
-        <i class="fa-solid fa-plus"></i>
-    </button>
-
-    <!-- Modals -->
-    <div id="transactionModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header"><h3>Thêm Giao Dịch</h3><button class="close-btn" onclick="closeModal()">&times;</button></div>
-            <form id="transactionForm" onsubmit="handleFormSubmit(event)">
-               <div class="type-selector">
-    <button type="button" class="type-btn expense active" id="btnTypeExpense" onclick="setTxType('expense')">Chi Tiêu (-)</button>
-    <button type="button" class="type-btn income" id="btnTypeIncome" onclick="setTxType('income')">Thu Nhập (+)</button>
-    <button type="button" class="type-btn" id="btnTypeTransfer" onclick="setTxType('transfer')" style="border-color:var(--warning); color:var(--warning);">Chuyển Tiền</button>
-</div>
-                <div class="form-group"><label>Ngày</label><input type="date" id="txDate" class="form-control" required></div>
-                <div class="form-group"><label>Nguồn Tiền</label>
-                    <select id="txSource" class="form-control" required>
-                        <option value="Tiền Mặt">Tiền Mặt</option><option value="Thẻ Ngân Hàng">Thẻ Ngân Hàng</option>
-                        <option value="Thẻ Tín Dụng">Thẻ Tín Dụng</option><option value="Spaylater">Spaylater</option><option value="Nợ Công Ty">Nợ Công Ty</option>
+            <!-- TAB 2: SỔ GIAO DỊCH -->
+            <section id="tab-transactions" class="view-section">
+                <div
+                    style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 20px;
+                    "
+                >
+                    <h3>Lịch Sử Giao Dịch</h3>
+                    <select
+                        id="filter-type"
+                        class="form-control"
+                        style="width: 140px"
+                        onchange="renderTransactions()"
+                    >
+                        <option value="ALL">Tất cả loại</option>
+                        <option value="income">Thu nhập</option>
+                        <option value="expense">Chi tiêu</option>
+                        <option value="transfer">Chuyển tiền</option>
                     </select>
                 </div>
-                <div class="form-group"><label>Danh Mục</label><select id="txCategory" class="form-control" required></select></div>
-                
-                <div class="form-group">
-                    <label>Số Tiền (VNĐ)</label>
-                    <input type="number"
-                           id="txAmount"
-                           class="form-control"
-                           min="1"
-                           step="1"
-                           inputmode="numeric"
-                           required>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Ngày</th>
+                                <th>Nguồn Tiền</th>
+                                <th>Danh Mục</th>
+                                <th>Loại</th>
+                                <th>Số Tiền</th>
+                                <th>Mô Tả</th>
+                                <th style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transaction-table-body"></tbody>
+                    </table>
                 </div>
-                
-                <div class="form-group"><label>Mô Tả</label><input type="text" id="txNote" class="form-control"></div>
-                <button type="submit" class="btn" style="width: 100%; justify-content: center;">Lưu Giao Dịch</button>
-            </form>
-        </div>
-    </div>
+            </section>
 
-    <div id="categoryModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header"><h3>Thêm Danh Mục</h3><button class="close-btn" onclick="closeCategoryModal()">&times;</button></div>
-            <form onsubmit="handleCategorySubmit(event)">
-                <div class="form-group"><label>Tên</label><input type="text" id="catName" class="form-control" required></div>
-                <div class="form-group"><label>Loại</label><select id="catType" class="form-control"><option value="expense">Chi Tiêu</option><option value="income">Thu Nhập</option></select></div>
-                <button type="submit" class="btn" style="width: 100%; justify-content: center;">Thêm</button>
-            </form>
-        </div>
-    </div>
+            <!-- TAB 3: NGUỒN TIỀN -->
+            <section id="tab-sources" class="view-section">
+                <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
+                <div class="grid-cards" id="sources-grid"></div>
+            </section>
 
-    <!-- Liên kết file JavaScript riêng -->
-    <script src="js/utils.js"></script>
-    <script src="js/data.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/categories.js"></script>
-    <script src="js/transactions.js"></script>
-    <script src="js/sources.js"></script>
-    <script src="js/charts.js"></script>
-    <script src="js/sync.js"></script>
-    <script src="js/backup.js"></script>
-    <script src="js/app.js"></script>
-    
-</body>
+            <!-- TAB 4: DANH MỤC -->
+            <section id="tab-categories" class="view-section">
+                <div
+                    style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 20px;
+                    "
+                >
+                    <h3>Quản Lý Danh Mục Thu / Chi</h3>
+                    <button class="btn" onclick="openCategoryModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Danh Mục
+                    </button>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tên Danh Mục</th>
+                                <th>Loại</th>
+                                <th>Biểu Tượng</th>
+                                <th style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="category-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB 5: VAY NỢ -->
+            <section id="tab-debts" class="view-section">
+                <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
+                <div class="card">
+                    <p style="color: var(--text-muted)">Tính năng đang phát triển.</p>
+                </div>
+            </section>
+
+            <!-- TAB 6: CÀI ĐẶT -->
+            <section id="tab-settings" class="view-section">
+                <div class="card" style="margin-bottom: 20px">
+                    <h3 style="margin-bottom: 12px">Đồng Bộ Google Sheets</h3>
+                    <div class="form-group">
+                        <label>Web App URL:</label>
+                        <input
+                            type="text"
+                            id="setting-script-url"
+                            class="form-control"
+                            placeholder="Dán URL Google Apps Script Web App"
+                        />
+                    </div>
+                    <button class="btn" onclick="saveScriptUrl()">
+                        <i class="fa-solid fa-save"></i> Lưu Cấu Hình
+                    </button>
+
+                    <hr style="margin: 20px 0" />
+
+                    <h3>Sao lưu & Khôi phục dữ liệu</h3>
+
+                    <button class="btn" onclick="exportBackup()">
+                        <i class="fa-solid fa-download"></i>
+                        Sao lưu dữ liệu
+                    </button>
+
+                    <br /><br />
+
+                    <input
+                        type="file"
+                        accept=".json"
+                        onchange="
+                            if (this.files.length) {
+                                importBackup(this.files[0]);
+                                this.value = '';
+                            }
+                        "
+                    />
+                </div>
+                <div class="card" style="border-color: var(--danger)">
+                    <h3 style="color: var(--danger); margin-bottom: 12px">Vùng Nguy Hiểm</h3>
+                    <button class="btn btn-danger" onclick="resetAllData()">
+                        <i class="fa-solid fa-trash"></i> Xóa Toàn Bộ Dữ Liệu
+                    </button>
+                </div>
+            </section>
+        </main>
+
+        <!-- Mobile Navigation -->
+        <nav class="mobile-nav">
+            <button
+                class="mobile-nav-item active"
+                data-tab="overview"
+                onclick="switchTab('overview')"
+            >
+                <i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span>
+            </button>
+
+            <button
+                class="mobile-nav-item"
+                data-tab="transactions"
+                onclick="switchTab('transactions')"
+            >
+                <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
+            </button>
+
+            <button class="mobile-nav-item" data-tab="sources" onclick="switchTab('sources')">
+                <i class="fa-solid fa-vault"></i><span>Nguồn</span>
+            </button>
+
+            <button class="mobile-nav-item" data-tab="categories" onclick="switchTab('categories')">
+                <i class="fa-solid fa-tags"></i><span>Danh mục</span>
+            </button>
+
+            <button class="mobile-nav-item" data-tab="settings" onclick="switchTab('settings')">
+                <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
+            </button>
+        </nav>
+
+        <button class="floating-add-btn" title="Thêm giao dịch" onclick="openModal()">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+
+        <!-- Modals -->
+        <div id="transactionModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Thêm Giao Dịch</h3>
+                    <button class="close-btn" onclick="closeModal()">&times;</button>
+                </div>
+                <form id="transactionForm" onsubmit="handleFormSubmit(event)">
+                    <div class="type-selector">
+                        <button
+                            type="button"
+                            class="type-btn expense active"
+                            id="btnTypeExpense"
+                            onclick="setTxType('expense')"
+                        >
+                            Chi Tiêu (-)
+                        </button>
+                        <button
+                            type="button"
+                            class="type-btn income"
+                            id="btnTypeIncome"
+                            onclick="setTxType('income')"
+                        >
+                            Thu Nhập (+)
+                        </button>
+                        <button
+                            type="button"
+                            class="type-btn"
+                            id="btnTypeTransfer"
+                            onclick="setTxType('transfer')"
+                            style="border-color: var(--warning); color: var(--warning)"
+                        >
+                            Chuyển Tiền
+                        </button>
+                    </div>
+                    <div class="form-group">
+                        <label>Ngày</label
+                        ><input type="date" id="txDate" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label>Nguồn Tiền</label>
+                        <select id="txSource" class="form-control" required>
+                            <option value="Tiền Mặt">Tiền Mặt</option>
+                            <option value="Thẻ Ngân Hàng">Thẻ Ngân Hàng</option>
+                            <option value="Thẻ Tín Dụng">Thẻ Tín Dụng</option>
+                            <option value="Spaylater">Spaylater</option>
+                            <option value="Nợ Công Ty">Nợ Công Ty</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Danh Mục</label
+                        ><select id="txCategory" class="form-control" required></select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Số Tiền (VNĐ)</label>
+                        <input
+                            type="number"
+                            id="txAmount"
+                            class="form-control"
+                            min="1"
+                            step="1"
+                            inputmode="numeric"
+                            required
+                        />
+                    </div>
+
+                    <div class="form-group">
+                        <label>Mô Tả</label><input type="text" id="txNote" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu Giao Dịch
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div id="categoryModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Thêm Danh Mục</h3>
+                    <button class="close-btn" onclick="closeCategoryModal()">&times;</button>
+                </div>
+                <form onsubmit="handleCategorySubmit(event)">
+                    <div class="form-group">
+                        <label>Tên</label
+                        ><input type="text" id="catName" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label>Loại</label
+                        ><select id="catType" class="form-control">
+                            <option value="expense">Chi Tiêu</option>
+                            <option value="income">Thu Nhập</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Thêm
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Liên kết file JavaScript riêng -->
+        <script src="js/utils.js"></script>
+        <script src="js/data.js"></script>
+        <script src="js/ui.js"></script>
+        <script src="js/categories.js"></script>
+        <script src="js/transactions.js"></script>
+        <script src="js/sources.js"></script>
+        <script src="js/charts.js"></script>
+        <script src="js/sync.js"></script>
+        <script src="js/backup.js"></script>
+        <script src="js/app.js"></script>
+        <script src="js/pwa.js"></script>
+    </body>
 </html>
