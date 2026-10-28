@@ -16,33 +16,39 @@ File này được Claude Code tự đọc ở đầu mỗi phiên. Giữ nó ng
 ## Cấu trúc
 
 `index.html` nạp các script theo thứ tự (hàm/biến là global, không dùng module):
-`utils → data → ui → categories → budgets → recurring → transactions → sources → charts → sync → backup → app → pwa`.
+`utils → data → ui → categories → budgets → recurring → debts → transactions → sources → charts → sync → backup → app → pwa`.
 Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file nội bộ `index.html` nạp phải có trong `APP_SHELL` của `sw.js` (có test kiểm tra).
 
-| File                                  | Vai trò                                                                        |
-| ------------------------------------- | ------------------------------------------------------------------------------ |
-| `js/utils.js`                         | escapeHtml, formatMoney (vi-VN), ngày theo giờ địa phương, chuẩn hoá giao dịch |
-| `js/data.js`                          | state toàn cục, đọc `localStorage` an toàn                                     |
-| `js/ui.js`                            | tab, modal, loại giao dịch, chip nhập nhanh                                    |
-| `js/transactions.js`                  | thêm/sửa/xóa, bảng giao dịch                                                   |
-| `js/categories.js`                    | danh mục                                                                       |
-| `js/sources.js`                       | nguồn tiền, số dư                                                              |
-| `js/charts.js`                        | Chart.js (có fallback khi thiếu thư viện)                                      |
-| `js/sync.js`                          | đồng bộ Google Sheets                                                          |
-| `js/backup.js`                        | sao lưu/khôi phục JSON (`format: finmanager-backup`, `version: 1`)             |
-| `js/app.js`                           | khởi tạo, Tổng quan, reset                                                     |
-| `js/pwa.js`, `sw.js`, `manifest.json` | PWA (service worker stale-while-revalidate, offline)                           |
-| `apps-script/Code.gs`                 | backend Apps Script tham chiếu                                                 |
-| `tests/e2e/*.spec.js`                 | Playwright; `helpers.js` có mock Apps Script, chặn mọi request ra ngoài        |
-| `tests/gas/`                          | `sandbox.js` chạy `Code.gs` trong vm với Sheet giả; `code.test.js`             |
+| File                                  | Vai trò                                                                                                                                                                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `js/utils.js`                         | Hàm thuần dùng chung (có unit test): escapeHtml, formatMoney (vi-VN), ngày theo giờ địa phương, chuẩn hoá giao dịch/nguồn/ngân sách/định kỳ/vay nợ, `filterTransactions`, CSV, tính ngày định kỳ                                                                   |
+| `js/data.js`                          | state toàn cục, `META_DEFS`/`saveMeta`, đọc `localStorage` an toàn                                                                                                                                                                                                 |
+| `js/ui.js`                            | tab, `openDialog/closeDialog`, modal giao dịch, `showToast`, `selectValue`, tải file                                                                                                                                                                               |
+| `js/categories.js`                    | danh mục (bảng có cột ngân sách)                                                                                                                                                                                                                                   |
+| `js/budgets.js`                       | ngân sách tháng theo danh mục chi: đặt, thanh tiến độ trên Tổng quan, toast khi vượt 80%/100% (chỉ khi _vượt qua_ mốc)                                                                                                                                             |
+| `js/recurring.js`                     | giao dịch định kỳ: quy tắc (tab Định Kỳ), sinh giao dịch đến hạn khi mở app / quay lại tab. Id sinh ra xác định `TX_R<số của id quy tắc>_<yyyymmdd>` nên nhiều thiết bị không tạo trùng; tạm dừng rồi tiếp tục không tạo bù; `lastGenerated` quyết định kỳ đã chạy |
+| `js/debts.js`                         | sổ vay nợ (tab Vay Nợ & Cty): khoản `owe` (tôi nợ) / `owed` (họ nợ tôi), thanh toán từng phần, lịch sử, quá hạn, nhắc 1 lần/ngày (`fm_debt_reminder_day`, chỉ trên thiết bị). Độc lập với giao dịch và nguồn tiền (chưa tự ghi giao dịch khi trả nợ)               |
+| `js/transactions.js`                  | thêm/sửa/xóa, bảng giao dịch, bộ lọc/tìm kiếm/"Xem thêm"/xuất CSV                                                                                                                                                                                                  |
+| `js/sources.js`                       | nguồn tiền (`{name, kind, creditLimit, statementDay, dueDay, archived}`), số dư, thêm/sửa/lưu trữ/xóa/đổi tên                                                                                                                                                      |
+| `js/charts.js`                        | Chart.js (có fallback khi thiếu thư viện)                                                                                                                                                                                                                          |
+| `js/sync.js`                          | đồng bộ Google Sheets (xem mục Quyết định thiết kế)                                                                                                                                                                                                                |
+| `js/backup.js`                        | sao lưu/khôi phục JSON (`format: finmanager-backup`, `version: 1`; mọi loại meta đều có trong file)                                                                                                                                                                |
+| `js/app.js`                           | khởi tạo, Tổng quan, `renderAll`, reset                                                                                                                                                                                                                            |
+| `js/pwa.js`, `sw.js`, `manifest.json` | PWA (service worker stale-while-revalidate, offline)                                                                                                                                                                                                               |
+| `apps-script/Code.gs`                 | backend Apps Script tham chiếu (chưa deploy, chưa chạy trên Google thật)                                                                                                                                                                                           |
+| `tests/e2e/*.spec.js`                 | Playwright; `helpers.js` chạy script Apps Script thật của chủ repo trong sandbox, chặn mọi request ra ngoài                                                                                                                                                        |
+| `tests/gas/`                          | `sandbox.js` chạy script Apps Script trong vm với Sheet giả (ngày thành ô ngày như Sheets thật); `fixtures/user-script.gs` = script thật của chủ repo; `code.test.js`                                                                                              |
+| `tests/unit/`                         | `load.js` nạp script trình duyệt không cần DOM vào vm; `utils.test.js`                                                                                                                                                                                             |
 
 ## Mô hình dữ liệu (localStorage)
 
 - `fm_transactions`: `{id, date YYYY-MM-DD, type income|expense|transfer, source, targetSource, category, amount, note, updatedAt}`. Id `TX_<ms>`.
-- Dữ liệu "meta" khai báo trong `META_DEFS` (`js/data.js`), lưu bằng `saveMeta(key)` (ghi `localStorage`, đóng dấu `fm_meta_updated[key]`, gọi `queueMeta`): `categories` (`fm_categories`), `sources` (`fm_sources`), `initialBalances` (`fm_initial_balances`), `budgets` (`fm_budgets`), `recurring` (`fm_recurring`); sẽ thêm `debts`. Mỗi loại có hàm `normalize*` thuần trong `js/utils.js` (trả `null` nếu dữ liệu không dùng được).
+- Dữ liệu "meta" khai báo trong `META_DEFS` (`js/data.js`), lưu bằng `saveMeta(key)` (ghi `localStorage`, đóng dấu `fm_meta_updated[key]`, gọi `queueMeta`): `categories` (`fm_categories`), `sources` (`fm_sources`), `initialBalances` (`fm_initial_balances`), `budgets` (`fm_budgets`), `recurring` (`fm_recurring`), `debts` (`fm_debts`). Mỗi loại có hàm `normalize*` thuần trong `js/utils.js` (trả `null` nếu dữ liệu không dùng được).
 - Đồng bộ: `fm_script_url`, `fm_sync_dirty`, `fm_sync_baseline`, `fm_deleted_ids`. Sau thay đổi cục bộ luôn gọi `queueUpsert/queueDelete/saveMeta` rồi `syncToGoogleSheet()`.
 
 ## Quy ước
+
+- Khi sửa file bằng script (Python `str.replace`) luôn `assert` chuỗi tìm thấy: Prettier đổi bố cục code/bảng nên thay chuỗi có thể âm thầm không làm gì (đã từng khiến tab Vay Nợ không render và bỏ sót cập nhật tài liệu).
 
 - Prettier theo `.prettierrc.json` (4 space, single quote, `;`, trailing comma, width 100). Comment code bằng English, chuỗi giao diện bằng tiếng Việt.
 - Không nội suy dữ liệu người dùng vào `innerHTML` mà không qua `escapeHtml`; không dùng `onclick="fn('${data}')"` — dùng `data-*` + event delegation.
@@ -69,10 +75,10 @@ npm run test:unit      # node:test: Code.gs trên Sheet giả (tests/gas) + hàm
 npm run format:check   # Prettier (npm run format để sửa)
 ```
 
-- Test e2e chạy hoàn toàn không cần mạng: mọi request tới host ngoài bị chặn và ghi vào `state.external` (phải rỗng); `script.google.com` được mock trong `tests/e2e/helpers.js`.
+- Test e2e chạy hoàn toàn không cần mạng: mọi request tới host ngoài bị chặn và ghi vào `state.external` (phải rỗng); `script.google.com` được trả lời bởi script thật của chủ repo chạy trong sandbox (`tests/e2e/helpers.js`).
 - Khi dùng `page.clock.setFixedTime` thì animation Chart.js bị đóng băng (chỉ kiểm tra dữ liệu, đừng chụp ảnh biểu đồ).
 - Sandbox không tải được CDN; mọi thư viện đã nằm trong `vendor/`. `npm` registry thì dùng được.
-- Mock `Code.gs` chỉ là mock — chưa từng chạy trên Google thật.
+- Sandbox Apps Script chỉ là mock của Sheets/ContentService — script chạy đúng trong mock chưa chứng minh chạy y hệt trên Google.
 
 ## Tiến độ nâng cấp (PR #3, branch `claude/hopeful-einstein-l7hu3u`)
 
@@ -87,6 +93,6 @@ npm run format:check   # Prettier (npm run format để sửa)
 - [x] Lọc/tìm kiếm/phân trang/xuất CSV (lọc thuần ở `filterTransactions` trong `js/utils.js`, có unit test)
 - [x] Ngân sách theo danh mục (meta `budgets` = `{tênDanhMục: hạnMức}`; toast qua `showToast` trong `js/ui.js`)
 - [x] Giao dịch định kỳ (meta `recurring`; logic ngày đến hạn là hàm thuần trong `js/utils.js`, có unit test)
-- [ ] Sổ vay nợ (tab "Vay Nợ & Cty")
+- [x] Sổ vay nợ (tab "Vay Nợ & Cty"; meta `debts`)
 - [ ] Đồng bộ từng dòng (upsert/delete + `updatedAt`) + token + đồng bộ danh mục/số dư/... (v2)
 - [ ] Mobile (bảng → thẻ) + truy cập bằng bàn phím/ARIA
