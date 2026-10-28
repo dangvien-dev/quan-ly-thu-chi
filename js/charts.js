@@ -1,76 +1,111 @@
-// Chart.js visualizations for expense categories and income/expense totals.
+// Chart.js visualizations: this month's expense categories and income/expense by month.
+
+const CHART_COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const CHART_MONTH_COUNT = 6;
+
+const moneyTooltip = {
+    callbacks: {
+        label: (context) => {
+            const name = context.dataset.label || context.label;
+            const value = typeof context.parsed === 'object' ? context.parsed.y : context.parsed;
+
+            return `${name}: ${formatMoney(value)}`;
+        },
+    },
+};
+
+function showChartUnavailable(canvas) {
+    if (canvas && canvas.parentElement) {
+        canvas.parentElement.innerHTML =
+            '<p style="color:var(--text-muted); font-size:14px;">Không tải được thư viện biểu đồ. Hãy kết nối mạng và tải lại trang.</p>';
+    }
+}
+
+/** Update an existing chart in place, or create it the first time. */
+function upsertChart(chart, canvas, config) {
+    if (!chart) {
+        return new Chart(canvas.getContext('2d'), config);
+    }
+
+    chart.data.labels = config.data.labels;
+    chart.data.datasets = config.data.datasets;
+    chart.update();
+
+    return chart;
+}
 
 function renderCharts() {
-    const categoryTotals = {};
-
-    transactions
-        .filter((transaction) => transaction.type === 'expense')
-        .forEach((transaction) => {
-            categoryTotals[transaction.category] =
-                (categoryTotals[transaction.category] || 0) + transaction.amount;
-        });
-
     const expenseCanvas = document.getElementById('expenseCategoryChart');
+    const monthlyCanvas = document.getElementById('monthlyChart');
+
+    // Chart.js comes from a CDN: the rest of the app must keep working when it is unreachable.
+    if (typeof Chart === 'undefined') {
+        showChartUnavailable(expenseCanvas);
+        showChartUnavailable(monthlyCanvas);
+        expenseChart = null;
+        monthlyChart = null;
+        return;
+    }
+
+    const thisMonth = currentMonthKey();
 
     if (expenseCanvas) {
-        if (expenseChart) {
-            expenseChart.destroy();
-        }
+        const categoryTotals = {};
 
-        expenseChart = new Chart(expenseCanvas.getContext('2d'), {
+        transactions
+            .filter((transaction) => transaction.type === 'expense')
+            .filter((transaction) => transaction.date.startsWith(thisMonth))
+            .forEach((transaction) => {
+                const name = transaction.category || 'Khác';
+                categoryTotals[name] = (categoryTotals[name] || 0) + transaction.amount;
+            });
+
+        expenseChart = upsertChart(expenseChart, expenseCanvas, {
             type: 'doughnut',
             data: {
                 labels: Object.keys(categoryTotals),
                 datasets: [
                     {
                         data: Object.values(categoryTotals),
-                        backgroundColor: [
-                            '#4f46e5',
-                            '#10b981',
-                            '#f59e0b',
-                            '#ef4444',
-                            '#8b5cf6',
-                            '#ec4899',
-                        ],
+                        backgroundColor: CHART_COLORS,
                     },
                 ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                plugins: { tooltip: moneyTooltip },
             },
         });
     }
 
-    const monthlyCanvas = document.getElementById('monthlyChart');
-
     if (monthlyCanvas) {
-        if (monthlyChart) {
-            monthlyChart.destroy();
-        }
+        const monthKeys = Array.from({ length: CHART_MONTH_COUNT }, (_, index) =>
+            shiftMonthKey(thisMonth, index - (CHART_MONTH_COUNT - 1)),
+        );
+        const totals = monthKeys.map((monthKey) => summarizeMonth(monthKey));
 
-        const totalIncome = transactions
-            .filter((transaction) => transaction.type === 'income')
-            .reduce((total, transaction) => total + transaction.amount, 0);
-        const totalExpense = transactions
-            .filter((transaction) => transaction.type === 'expense')
-            .reduce((total, transaction) => total + transaction.amount, 0);
-
-        monthlyChart = new Chart(monthlyCanvas.getContext('2d'), {
+        monthlyChart = upsertChart(monthlyChart, monthlyCanvas, {
             type: 'bar',
             data: {
-                labels: ['Tổng Thu', 'Tổng Chi'],
+                labels: monthKeys.map((key) => `${key.slice(5)}/${key.slice(0, 4)}`),
                 datasets: [
                     {
-                        label: 'VNĐ',
-                        data: [totalIncome, totalExpense],
-                        backgroundColor: ['#10b981', '#ef4444'],
+                        label: 'Thu',
+                        data: totals.map((total) => total.income),
+                        backgroundColor: '#10b981',
+                    },
+                    {
+                        label: 'Chi',
+                        data: totals.map((total) => total.expense),
+                        backgroundColor: '#ef4444',
                     },
                 ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                plugins: { tooltip: moneyTooltip },
             },
         });
     }

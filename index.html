@@ -1,225 +1,862 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FinManager - Quản Lý Dòng Tiền Cá Nhân</title>
-    <!-- Thư viện ngoài -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Liên kết file CSS riêng -->
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>FinManager - Quản Lý Dòng Tiền Cá Nhân</title>
+        <meta name="theme-color" content="#4f46e5" />
+        <link rel="manifest" href="manifest.json" />
+        <link rel="icon" type="image/svg+xml" href="assets/icons/icon.svg" />
+        <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
+        <!-- Thư viện đi kèm trong repo (vendor/) để chạy offline -->
+        <script src="vendor/chart.umd.js"></script>
+        <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css" />
+        <!-- Liên kết file CSS riêng -->
+        <link rel="stylesheet" href="css/style.css" />
+    </head>
+    <body>
+        <a class="skip-link" href="#main-content">Bỏ qua điều hướng</a>
+        <!-- Sidebar Desktop -->
+        <aside>
+            <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
+            <nav aria-label="Điều hướng chính">
+                <ul class="menu">
+                    <li class="active" data-tab="overview">
+                        <button
+                            type="button"
+                            class="menu-link"
+                            aria-current="page"
+                            onclick="switchTab('overview')"
+                        >
+                            <i class="fa-solid fa-chart-pie"></i> Tổng Quan
+                        </button>
+                    </li>
+                    <li data-tab="transactions">
+                        <button type="button" class="menu-link" onclick="switchTab('transactions')">
+                            <i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch
+                        </button>
+                    </li>
+                    <li data-tab="sources">
+                        <button type="button" class="menu-link" onclick="switchTab('sources')">
+                            <i class="fa-solid fa-vault"></i> Nguồn Tiền
+                        </button>
+                    </li>
+                    <li data-tab="categories">
+                        <button type="button" class="menu-link" onclick="switchTab('categories')">
+                            <i class="fa-solid fa-tags"></i> Danh Mục
+                        </button>
+                    </li>
+                    <li data-tab="recurring">
+                        <button type="button" class="menu-link" onclick="switchTab('recurring')">
+                            <i class="fa-solid fa-repeat"></i> Định Kỳ
+                        </button>
+                    </li>
+                    <li data-tab="debts">
+                        <button type="button" class="menu-link" onclick="switchTab('debts')">
+                            <i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty
+                        </button>
+                    </li>
+                    <li data-tab="settings">
+                        <button type="button" class="menu-link" onclick="switchTab('settings')">
+                            <i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu
+                        </button>
+                    </li>
+                </ul>
+            </nav>
+        </aside>
 
-    <!-- Sidebar Desktop -->
-    <aside>
-        <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
-        <ul class="menu">
-            <li class="active" onclick="switchTab('overview', this)"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
-            <li onclick="switchTab('transactions', this)"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
-            <li onclick="switchTab('sources', this)"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
-            <li onclick="switchTab('categories', this)"><i class="fa-solid fa-tags"></i> Danh Mục</li>
-            <li onclick="switchTab('debts', this)"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
-            <li onclick="switchTab('settings', this)"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
-        </ul>
-    </aside>
+        <!-- Main Content -->
+        <main id="main-content" tabindex="-1">
+            <header>
+                <div class="header-title">
+                    <h1 id="page-title">Tổng Quan Dòng Tiền</h1>
+                    <p id="current-date-label">Theo dõi tài chính cá nhân</p>
+                </div>
+                <div style="display: flex; gap: 12px; align-items: center">
+                    <div id="sync-status" class="sync-badge" role="status" aria-live="polite">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng
+                    </div>
+                    <button class="btn" onclick="openModal()">
+                        <i class="fa-solid fa-plus"></i> Nhập Giao Dịch
+                    </button>
+                </div>
+            </header>
 
-    <!-- Main Content -->
-    <main>
-        <header>
-            <div class="header-title">
-                <h1 id="page-title">Tổng Quan Dòng Tiền</h1>
-                <p id="current-date-label">Theo dõi tài chính cá nhân</p>
-            </div>
-            <div style="display: flex; gap: 12px; align-items: center;">
-                <div id="sync-status" class="sync-badge"><i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng</div>
-                <button class="btn" onclick="openModal()"><i class="fa-solid fa-plus"></i> Nhập Giao Dịch</button>
-            </div>
-        </header>
+            <!-- TAB 1: TỔNG QUAN -->
+            <section id="tab-overview" class="view-section active">
+                <div class="grid-cards">
+                    <div class="card">
+                        <div class="card-title">Tổng Số Dư Khả Dụng</div>
+                        <div class="card-value" id="lbl-total-balance">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Tổng Thu Tháng Này</div>
+                        <div class="card-value income" id="lbl-total-income">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Tổng Chi Tháng Này</div>
+                        <div class="card-value expense" id="lbl-total-expense">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Dư Nợ Tín Dụng / SPay</div>
+                        <div class="card-value expense" id="lbl-total-debt">0 đ</div>
+                    </div>
+                </div>
+                <div
+                    style="
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                        gap: 20px;
+                    "
+                >
+                    <div class="card">
+                        <h3 style="font-size: 16px; margin-bottom: 15px">
+                            Tỷ Trọng Chi Tiêu Tháng Này
+                        </h3>
+                        <div style="height: 240px">
+                            <canvas
+                                id="expenseCategoryChart"
+                                role="img"
+                                aria-label="Biểu đồ tròn tỷ trọng chi tiêu tháng này"
+                            ></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3 style="font-size: 16px; margin-bottom: 15px">
+                            Thu / Chi 6 Tháng Gần Đây
+                        </h3>
+                        <div style="height: 240px">
+                            <canvas
+                                id="monthlyChart"
+                                role="img"
+                                aria-label="Biểu đồ cột thu chi 6 tháng gần đây"
+                            ></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="card" id="budget-section" style="margin-top: 20px" hidden>
+                    <h3 style="font-size: 16px; margin-bottom: 15px">Ngân Sách Tháng Này</h3>
+                    <div id="budget-list"></div>
+                </div>
+            </section>
 
-        <!-- TAB 1: TỔNG QUAN -->
-        <section id="tab-overview" class="view-section active">
-            <div class="grid-cards">
-                <div class="card"><div class="card-title">Tổng Số Dư Khả Dụng</div><div class="card-value" id="lbl-total-balance">0 đ</div></div>
-                <div class="card"><div class="card-title">Tổng Thu Tháng Này</div><div class="card-value income" id="lbl-total-income">0 đ</div></div>
-                <div class="card"><div class="card-title">Tổng Chi Tháng Này</div><div class="card-value expense" id="lbl-total-expense">0 đ</div></div>
-                <div class="card"><div class="card-title">Dư Nợ Tín Dụng / SPay</div><div class="card-value expense" id="lbl-total-debt">0 đ</div></div>
-            </div>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
-                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Tỷ Trọng Chi Tiêu</h3><div style="height: 240px;"><canvas id="expenseCategoryChart"></canvas></div></div>
-                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Biểu Đồ Thu / Chi</h3><div style="height: 240px;"><canvas id="monthlyChart"></canvas></div></div>
-            </div>
-        </section>
+            <!-- TAB 2: SỔ GIAO DỊCH -->
+            <section id="tab-transactions" class="view-section">
+                <div class="section-head">
+                    <h3>Lịch Sử Giao Dịch</h3>
+                    <button class="btn btn-outline" onclick="exportTransactionsCsv()">
+                        <i class="fa-solid fa-file-csv"></i> Xuất CSV
+                    </button>
+                </div>
+                <div class="filter-bar" role="search">
+                    <div class="filter-item">
+                        <label for="filter-month">Tháng</label>
+                        <div class="month-nav">
+                            <button
+                                type="button"
+                                class="btn btn-outline btn-small"
+                                onclick="shiftFilterMonth(-1)"
+                                aria-label="Tháng trước"
+                            >
+                                <i class="fa-solid fa-chevron-left"></i>
+                            </button>
+                            <input type="month" id="filter-month" class="form-control" />
+                            <button
+                                type="button"
+                                class="btn btn-outline btn-small"
+                                onclick="shiftFilterMonth(1)"
+                                aria-label="Tháng sau"
+                            >
+                                <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="filter-item">
+                        <label for="filter-type">Loại</label>
+                        <select id="filter-type" class="form-control">
+                            <option value="ALL">Tất cả loại</option>
+                            <option value="income">Thu nhập</option>
+                            <option value="expense">Chi tiêu</option>
+                            <option value="transfer">Chuyển tiền</option>
+                        </select>
+                    </div>
+                    <div class="filter-item">
+                        <label for="filter-category">Danh mục</label>
+                        <select id="filter-category" class="form-control"></select>
+                    </div>
+                    <div class="filter-item">
+                        <label for="filter-source">Nguồn tiền</label>
+                        <select id="filter-source" class="form-control"></select>
+                    </div>
+                    <div class="filter-item grow">
+                        <label for="filter-search">Tìm kiếm</label>
+                        <input
+                            type="search"
+                            id="filter-search"
+                            class="form-control"
+                            placeholder="Ghi chú, danh mục, số tiền..."
+                            autocomplete="off"
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        class="btn btn-outline"
+                        onclick="resetTransactionFilters()"
+                    >
+                        Xóa lọc
+                    </button>
+                </div>
+                <div id="transaction-summary" class="filter-summary" aria-live="polite"></div>
+                <div class="table-container">
+                    <table class="responsive-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Ngày</th>
+                                <th scope="col">Nguồn Tiền</th>
+                                <th scope="col">Danh Mục</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Số Tiền</th>
+                                <th scope="col">Mô Tả</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transaction-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="load-more">
+                    <button
+                        type="button"
+                        id="load-more-btn"
+                        class="btn btn-outline"
+                        onclick="showMoreTransactions()"
+                        hidden
+                    >
+                        Xem thêm
+                    </button>
+                </div>
+            </section>
 
-        <!-- TAB 2: SỔ GIAO DỊCH -->
-        <section id="tab-transactions" class="view-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3>Lịch Sử Giao Dịch</h3>
-                <select id="filter-type" class="form-control" style="width: 140px;" onchange="renderTransactions()">
-                    <option value="ALL">Tất cả loại</option>
-                    <option value="income">Thu nhập</option>
-                    <option value="expense">Chi tiêu</option>
-                    <option value="transfer">Chuyển tiền</option>
-                </select>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead><tr><th>Ngày</th><th>Nguồn Tiền</th><th>Danh Mục</th><th>Loại</th><th>Số Tiền</th><th>Mô Tả</th><th style="text-align: right;">Thao Tác</th></tr></thead>
-                    <tbody id="transaction-table-body"></tbody>
-                </table>
-            </div>
-        </section>
+            <!-- TAB 3: NGUỒN TIỀN -->
+            <section id="tab-sources" class="view-section">
+                <div class="section-head">
+                    <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
+                    <button class="btn" onclick="openSourceModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Nguồn Tiền
+                    </button>
+                </div>
+                <div class="grid-cards" id="sources-grid"></div>
+                <div id="sources-archived-section" hidden>
+                    <h3 class="subsection-title">Đã lưu trữ</h3>
+                    <div class="grid-cards" id="sources-archived"></div>
+                </div>
+            </section>
 
-        <!-- TAB 3: NGUỒN TIỀN -->
-        <section id="tab-sources" class="view-section">
-            <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
-            <div class="grid-cards" id="sources-grid"></div>
-        </section>
+            <!-- TAB 4: DANH MỤC -->
+            <section id="tab-categories" class="view-section">
+                <div
+                    style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 20px;
+                    "
+                >
+                    <h3>Quản Lý Danh Mục Thu / Chi</h3>
+                    <button class="btn" onclick="openCategoryModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Danh Mục
+                    </button>
+                </div>
+                <div class="table-container">
+                    <table class="responsive-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Tên Danh Mục</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Biểu Tượng</th>
+                                <th scope="col">Ngân Sách Tháng</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="category-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
 
-        <!-- TAB 4: DANH MỤC -->
-        <section id="tab-categories" class="view-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3>Quản Lý Danh Mục Thu / Chi</h3>
-                <button class="btn" onclick="openCategoryModal()"><i class="fa-solid fa-plus"></i> Thêm Danh Mục</button>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead><tr><th>Tên Danh Mục</th><th>Loại</th><th>Biểu Tượng</th><th style="text-align: right;">Thao Tác</th></tr></thead>
-                    <tbody id="category-table-body"></tbody>
-                </table>
-            </div>
-        </section>
+            <!-- TAB: GIAO DỊCH ĐỊNH KỲ -->
+            <section id="tab-recurring" class="view-section">
+                <div class="section-head">
+                    <h3>Giao Dịch Định Kỳ</h3>
+                    <button class="btn" onclick="openRecurringModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Định Kỳ
+                    </button>
+                </div>
+                <p class="hint">
+                    Khi đến hạn, ứng dụng tự tạo giao dịch mỗi lần bạn mở hoặc quay lại ứng dụng.
+                </p>
+                <div class="table-container">
+                    <table class="responsive-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Tên</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Nguồn Tiền</th>
+                                <th scope="col">Số Tiền</th>
+                                <th scope="col">Lịch</th>
+                                <th scope="col">Hiệu Lực</th>
+                                <th scope="col">Trạng Thái</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recurring-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
 
-        <!-- TAB 5: VAY NỢ -->
-        <section id="tab-debts" class="view-section">
-            <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
-            <div class="card"><p style="color: var(--text-muted);">Tính năng đang phát triển.</p></div>
-        </section>
+            <!-- TAB 5: VAY NỢ -->
+            <section id="tab-debts" class="view-section">
+                <div class="section-head">
+                    <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
+                    <button class="btn" onclick="openDebtModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Khoản
+                    </button>
+                </div>
+                <div class="grid-cards">
+                    <div class="card">
+                        <div class="card-title">Tôi đang nợ</div>
+                        <div class="card-value expense" id="lbl-debt-owe">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Người khác nợ tôi</div>
+                        <div class="card-value income" id="lbl-debt-owed">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Quá hạn</div>
+                        <div class="card-value" id="lbl-debt-overdue" style="font-size: 18px">
+                            Không có
+                        </div>
+                    </div>
+                </div>
+                <div class="filter-bar">
+                    <label class="check-label">
+                        <input type="checkbox" id="debt-hide-settled" checked /> Ẩn khoản đã tất
+                        toán
+                    </label>
+                </div>
+                <div class="table-container">
+                    <table class="responsive-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Đối Tác</th>
+                                <th scope="col">Loại</th>
+                                <th scope="col">Số Tiền Gốc</th>
+                                <th scope="col">Đã Thanh Toán</th>
+                                <th scope="col">Còn Lại</th>
+                                <th scope="col">Hạn</th>
+                                <th scope="col">Trạng Thái</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="debt-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
 
-        <!-- TAB 6: CÀI ĐẶT -->
-        <section id="tab-settings" class="view-section">
-            <div class="card" style="margin-bottom: 20px;">
-                <h3 style="margin-bottom: 12px;">Đồng Bộ Google Sheets</h3>
-                <div class="form-group">
-                    <label>Web App URL:</label>
+            <!-- TAB 6: CÀI ĐẶT -->
+            <section id="tab-settings" class="view-section">
+                <div class="card" style="margin-bottom: 20px">
+                    <h3 style="margin-bottom: 12px">Đồng Bộ Google Sheets</h3>
+                    <div class="form-group">
+                        <label for="setting-script-url">Web App URL:</label>
+                        <input
+                            type="text"
+                            id="setting-script-url"
+                            class="form-control"
+                            placeholder="Dán URL Google Apps Script Web App"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-script-token">Mã bảo vệ (token, nếu có):</label>
+                        <input
+                            type="password"
+                            id="setting-script-token"
+                            class="form-control"
+                            placeholder="Giá trị FM_TOKEN đã đặt trong Apps Script"
+                            autocomplete="off"
+                        />
+                    </div>
+                    <p id="sync-protocol-note" class="hint" role="status" hidden></p>
+                    <button class="btn" onclick="saveScriptUrl()">
+                        <i class="fa-solid fa-save"></i> Lưu Cấu Hình
+                    </button>
+
+                    <hr style="margin: 20px 0" />
+
+                    <h3>Sao lưu & Khôi phục dữ liệu</h3>
+
+                    <button class="btn" onclick="exportBackup()">
+                        <i class="fa-solid fa-download"></i>
+                        Sao lưu dữ liệu
+                    </button>
+
+                    <br /><br />
+
                     <input
-                        type="text"
-                        id="setting-script-url"
-                        class="form-control"
-                        placeholder="Dán URL Google Apps Script Web App">
+                        type="file"
+                        accept=".json"
+                        aria-label="Chọn file sao lưu JSON để khôi phục"
+                        onchange="
+                            if (this.files.length) {
+                                importBackup(this.files[0]);
+                                this.value = '';
+                            }
+                        "
+                    />
                 </div>
-                <button class="btn" onclick="saveScriptUrl()"><i class="fa-solid fa-save"></i> Lưu Cấu Hình</button>
+                <div class="card" style="border-color: var(--danger)">
+                    <h3 style="color: var(--danger); margin-bottom: 12px">Vùng Nguy Hiểm</h3>
+                    <button class="btn btn-danger" onclick="resetAllData()">
+                        <i class="fa-solid fa-trash"></i> Xóa Toàn Bộ Dữ Liệu
+                    </button>
+                </div>
+            </section>
+        </main>
 
-                <hr style="margin:20px 0">
+        <!-- Mobile Navigation -->
+        <nav class="mobile-nav" aria-label="Điều hướng nhanh">
+            <button
+                class="mobile-nav-item active"
+                aria-current="page"
+                data-tab="overview"
+                onclick="switchTab('overview')"
+            >
+                <i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span>
+            </button>
 
-<h3>Sao lưu & Khôi phục dữ liệu</h3>
+            <button
+                class="mobile-nav-item"
+                data-tab="transactions"
+                onclick="switchTab('transactions')"
+            >
+                <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
+            </button>
 
-<button class="btn" onclick="exportBackup()">
-    <i class="fa-solid fa-download"></i>
-    Sao lưu dữ liệu
-</button>
+            <button class="mobile-nav-item" data-tab="sources" onclick="switchTab('sources')">
+                <i class="fa-solid fa-vault"></i><span>Nguồn</span>
+            </button>
 
-<br><br>
+            <button class="mobile-nav-item" data-tab="categories" onclick="switchTab('categories')">
+                <i class="fa-solid fa-tags"></i><span>Danh mục</span>
+            </button>
 
-<input
-    type="file"
-    accept=".json"
-    onchange="this.files.length && importBackup(this.files[0])">
-                
+            <button class="mobile-nav-item" data-tab="recurring" onclick="switchTab('recurring')">
+                <i class="fa-solid fa-repeat"></i><span>Định kỳ</span>
+            </button>
+
+            <button class="mobile-nav-item" data-tab="debts" onclick="switchTab('debts')">
+                <i class="fa-solid fa-hand-holding-dollar"></i><span>Vay nợ</span>
+            </button>
+
+            <button class="mobile-nav-item" data-tab="settings" onclick="switchTab('settings')">
+                <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
+            </button>
+        </nav>
+
+        <button
+            class="floating-add-btn"
+            title="Thêm giao dịch"
+            aria-label="Thêm giao dịch"
+            onclick="openModal()"
+        >
+            <i class="fa-solid fa-plus"></i>
+        </button>
+
+        <!-- Modals -->
+        <div
+            id="transactionModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="transactionModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="transactionModalTitle">Thêm Giao Dịch</h3>
+                    <button class="close-btn" onclick="closeModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="transactionForm" onsubmit="handleFormSubmit(event)">
+                    <div class="type-selector">
+                        <button
+                            type="button"
+                            class="type-btn expense active"
+                            id="btnTypeExpense"
+                            onclick="setTxType('expense')"
+                        >
+                            Chi Tiêu (-)
+                        </button>
+                        <button
+                            type="button"
+                            class="type-btn income"
+                            id="btnTypeIncome"
+                            onclick="setTxType('income')"
+                        >
+                            Thu Nhập (+)
+                        </button>
+                        <button
+                            type="button"
+                            class="type-btn"
+                            id="btnTypeTransfer"
+                            onclick="setTxType('transfer')"
+                            style="border-color: var(--warning); color: var(--warning)"
+                        >
+                            Chuyển Tiền
+                        </button>
+                    </div>
+                    <div class="form-group">
+                        <label for="txDate">Ngày</label
+                        ><input type="date" id="txDate" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="txSource">Nguồn Tiền</label>
+                        <select id="txSource" class="form-control" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="txCategory">Danh Mục</label
+                        ><select id="txCategory" class="form-control" required></select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="txAmount">Số Tiền (VNĐ)</label>
+                        <input
+                            type="number"
+                            id="txAmount"
+                            class="form-control"
+                            min="1"
+                            step="1"
+                            inputmode="numeric"
+                            required
+                        />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="txNote">Mô Tả</label
+                        ><input type="text" id="txNote" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu Giao Dịch
+                    </button>
+                </form>
             </div>
-            <div class="card" style="border-color: var(--danger);">
-                <h3 style="color: var(--danger); margin-bottom: 12px;">Vùng Nguy Hiểm</h3>
-                <button class="btn btn-danger" onclick="resetAllData()"><i class="fa-solid fa-trash"></i> Xóa Toàn Bộ Dữ Liệu</button>
+        </div>
+
+        <div
+            id="categoryModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="categoryModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="categoryModalTitle">Thêm Danh Mục</h3>
+                    <button class="close-btn" onclick="closeCategoryModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form onsubmit="handleCategorySubmit(event)">
+                    <div class="form-group">
+                        <label for="catName">Tên</label
+                        ><input type="text" id="catName" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="catType">Loại</label
+                        ><select id="catType" class="form-control">
+                            <option value="expense">Chi Tiêu</option>
+                            <option value="income">Thu Nhập</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Thêm
+                    </button>
+                </form>
             </div>
-        </section>
-    </main>
-
-    <!-- Mobile Navigation -->
-    <nav class="mobile-nav">
-        <button class="mobile-nav-item active" onclick="switchTab('overview', this)">
-            <i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span>
-        </button>
-        
-        <button class="mobile-nav-item" onclick="switchTab('transactions', this)">
-            <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
-        </button>
-        
-        <button class="mobile-nav-item" onclick="switchTab('sources', this)">
-            <i class="fa-solid fa-vault"></i><span>Nguồn</span>
-        </button>
-        
-        <button class="mobile-nav-item" onclick="switchTab('categories', this)">
-            <i class="fa-solid fa-tags"></i><span>Danh mục</span>
-        </button>
-        
-        <button class="mobile-nav-item" onclick="switchTab('settings', this)">
-            <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
-        </button>
-    </nav>
-    
-    <button class="floating-add-btn"
-        title="Thêm giao dịch"
-        onclick="openModal()">
-        <i class="fa-solid fa-plus"></i>
-    </button>
-
-    <!-- Modals -->
-    <div id="transactionModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header"><h3>Thêm Giao Dịch</h3><button class="close-btn" onclick="closeModal()">&times;</button></div>
-            <form id="transactionForm" onsubmit="handleFormSubmit(event)">
-               <div class="type-selector">
-    <button type="button" class="type-btn expense active" id="btnTypeExpense" onclick="setTxType('expense')">Chi Tiêu (-)</button>
-    <button type="button" class="type-btn income" id="btnTypeIncome" onclick="setTxType('income')">Thu Nhập (+)</button>
-    <button type="button" class="type-btn" id="btnTypeTransfer" onclick="setTxType('transfer')" style="border-color:var(--warning); color:var(--warning);">Chuyển Tiền</button>
-</div>
-                <div class="form-group"><label>Ngày</label><input type="date" id="txDate" class="form-control" required></div>
-                <div class="form-group"><label>Nguồn Tiền</label>
-                    <select id="txSource" class="form-control" required>
-                        <option value="Tiền Mặt">Tiền Mặt</option><option value="Thẻ Ngân Hàng">Thẻ Ngân Hàng</option>
-                        <option value="Thẻ Tín Dụng">Thẻ Tín Dụng</option><option value="Spaylater">Spaylater</option><option value="Nợ Công Ty">Nợ Công Ty</option>
-                    </select>
-                </div>
-                <div class="form-group"><label>Danh Mục</label><select id="txCategory" class="form-control" required></select></div>
-                
-                <div class="form-group">
-                    <label>Số Tiền (VNĐ)</label>
-                    <input type="number"
-                           id="txAmount"
-                           class="form-control"
-                           min="1"
-                           step="1000"
-                           required>
-                </div>
-                
-                <div class="form-group"><label>Mô Tả</label><input type="text" id="txNote" class="form-control"></div>
-                <button type="submit" class="btn" style="width: 100%; justify-content: center;">Lưu Giao Dịch</button>
-            </form>
         </div>
-    </div>
 
-    <div id="categoryModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header"><h3>Thêm Danh Mục</h3><button class="close-btn" onclick="closeCategoryModal()">&times;</button></div>
-            <form onsubmit="handleCategorySubmit(event)">
-                <div class="form-group"><label>Tên</label><input type="text" id="catName" class="form-control" required></div>
-                <div class="form-group"><label>Loại</label><select id="catType" class="form-control"><option value="expense">Chi Tiêu</option><option value="income">Thu Nhập</option></select></div>
-                <button type="submit" class="btn" style="width: 100%; justify-content: center;">Thêm</button>
-            </form>
+        <div
+            id="sourceModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sourceModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="sourceModalTitle">Thêm Nguồn Tiền</h3>
+                    <button class="close-btn" onclick="closeSourceModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="sourceForm" onsubmit="handleSourceSubmit(event)">
+                    <div class="form-group">
+                        <label for="srcName">Tên</label>
+                        <input type="text" id="srcName" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="srcKind">Loại</label>
+                        <select
+                            id="srcKind"
+                            class="form-control"
+                            onchange="updateSourceFormVisibility()"
+                        ></select>
+                    </div>
+                    <div id="srcCreditFields" hidden>
+                        <div class="form-group">
+                            <label for="srcCreditLimit">Hạn mức (VNĐ)</label>
+                            <input
+                                type="number"
+                                id="srcCreditLimit"
+                                class="form-control"
+                                min="0"
+                                step="1"
+                                inputmode="numeric"
+                            />
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="srcStatementDay">Ngày chốt sao kê</label>
+                                <input
+                                    type="number"
+                                    id="srcStatementDay"
+                                    class="form-control"
+                                    min="1"
+                                    max="31"
+                                    inputmode="numeric"
+                                />
+                            </div>
+                            <div class="form-group">
+                                <label for="srcDueDay">Ngày hạn thanh toán</label>
+                                <input
+                                    type="number"
+                                    id="srcDueDay"
+                                    class="form-control"
+                                    min="1"
+                                    max="31"
+                                    inputmode="numeric"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="srcInitialBalance">Số dư ban đầu (nợ thì nhập số âm)</label>
+                        <input
+                            type="number"
+                            id="srcInitialBalance"
+                            class="form-control"
+                            step="1"
+                            inputmode="numeric"
+                        />
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
         </div>
-    </div>
 
-    <!-- Liên kết file JavaScript riêng -->
-    <script src="js/data.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/categories.js"></script>
-    <script src="js/transactions.js"></script>
-    <script src="js/sources.js"></script>
-    <script src="js/charts.js"></script>
-    <script src="js/sync.js"></script>
-    <script src="js/backup.js"></script>
-    <script src="js/app.js"></script>
-    
-</body>
+        <div
+            id="recurringModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recurringModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="recurringModalTitle">Thêm Giao Dịch Định Kỳ</h3>
+                    <button class="close-btn" onclick="closeRecurringModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="recurringForm" onsubmit="handleRecurringSubmit(event)">
+                    <div class="form-group">
+                        <label for="rcName">Tên</label>
+                        <input
+                            type="text"
+                            id="rcName"
+                            class="form-control"
+                            placeholder="Ví dụ: Tiền điện, Lương, Gói internet"
+                            required
+                        />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rcType">Loại</label>
+                            <select id="rcType" class="form-control">
+                                <option value="expense">Chi tiêu</option>
+                                <option value="income">Thu nhập</option>
+                                <option value="transfer">Chuyển tiền</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="rcAmount">Số tiền (VNĐ)</label>
+                            <input
+                                type="number"
+                                id="rcAmount"
+                                class="form-control"
+                                min="1"
+                                step="1"
+                                inputmode="numeric"
+                                required
+                            />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="rcSource">Nguồn tiền</label>
+                        <select id="rcSource" class="form-control" required></select>
+                    </div>
+                    <div class="form-group" id="rcTargetGroup" hidden>
+                        <label for="rcTarget">Chuyển đến nguồn (nhận)</label>
+                        <select id="rcTarget" class="form-control"></select>
+                    </div>
+                    <div class="form-group" id="rcCategoryGroup">
+                        <label for="rcCategory">Danh mục</label>
+                        <select id="rcCategory" class="form-control" required></select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rcFrequency">Lặp lại</label>
+                            <select id="rcFrequency" class="form-control">
+                                <option value="monthly">Hằng tháng</option>
+                                <option value="weekly">Hằng tuần</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="rcMonthDayGroup">
+                            <label for="rcMonthDay">Ngày trong tháng</label>
+                            <input
+                                type="number"
+                                id="rcMonthDay"
+                                class="form-control"
+                                min="1"
+                                max="31"
+                                inputmode="numeric"
+                                value="1"
+                            />
+                        </div>
+                        <div class="form-group" id="rcWeekDayGroup" hidden>
+                            <label for="rcWeekDay">Thứ</label>
+                            <select id="rcWeekDay" class="form-control">
+                                <option value="1">Thứ hai</option>
+                                <option value="2">Thứ ba</option>
+                                <option value="3">Thứ tư</option>
+                                <option value="4">Thứ năm</option>
+                                <option value="5">Thứ sáu</option>
+                                <option value="6">Thứ bảy</option>
+                                <option value="0">Chủ nhật</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="rcStart">Bắt đầu</label>
+                            <input type="date" id="rcStart" class="form-control" required />
+                        </div>
+                        <div class="form-group">
+                            <label for="rcEnd">Kết thúc (tùy chọn)</label>
+                            <input type="date" id="rcEnd" class="form-control" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="rcNote">Ghi chú (mặc định lấy theo tên)</label>
+                        <input type="text" id="rcNote" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label class="check-label">
+                            <input type="checkbox" id="rcActive" checked /> Đang chạy
+                        </label>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
+            id="debtModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="debtModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="debtModalTitle">Thêm Khoản Vay Nợ</h3>
+                    <button class="close-btn" onclick="closeDebtModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="debtForm" onsubmit="handleDebtSubmit(event)">
+                    <div class="form-group">
+                        <label for="debtParty">Đối tác (người hoặc công ty)</label>
+                        <input type="text" id="debtParty" class="form-control" required />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="debtDirection">Loại</label>
+                            <select id="debtDirection" class="form-control">
+                                <option value="owe">Tôi nợ họ</option>
+                                <option value="owed">Họ nợ tôi</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="debtAmount">Số tiền gốc (VNĐ)</label>
+                            <input
+                                type="number"
+                                id="debtAmount"
+                                class="form-control"
+                                min="1"
+                                step="1"
+                                inputmode="numeric"
+                                required
+                            />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="debtDate">Ngày vay</label>
+                            <input type="date" id="debtDate" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label for="debtDue">Hạn thanh toán (tùy chọn)</label>
+                            <input type="date" id="debtDue" class="form-control" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtNote">Ghi chú</label>
+                        <input type="text" id="debtNote" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Liên kết file JavaScript riêng -->
+        <script src="js/utils.js"></script>
+        <script src="js/data.js"></script>
+        <script src="js/ui.js"></script>
+        <script src="js/categories.js"></script>
+        <script src="js/budgets.js"></script>
+        <script src="js/recurring.js"></script>
+        <script src="js/debts.js"></script>
+        <script src="js/transactions.js"></script>
+        <script src="js/sources.js"></script>
+        <script src="js/charts.js"></script>
+        <script src="js/sync.js"></script>
+        <script src="js/backup.js"></script>
+        <script src="js/app.js"></script>
+        <script src="js/pwa.js"></script>
+    </body>
 </html>

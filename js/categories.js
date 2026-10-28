@@ -17,11 +17,31 @@ function updateCategoriesDropdown() {
         });
 }
 
+function selectCategory(name, keepMissing = false) {
+    selectValue('txCategory', name, keepMissing);
+}
+
 function handleCategorySubmit(e) {
     e.preventDefault();
 
-    const name = document.getElementById('catName').value;
+    const name = document.getElementById('catName').value.trim();
     const type = document.getElementById('catType').value;
+
+    if (!name) {
+        alert('Vui lòng nhập tên danh mục!');
+        return;
+    }
+
+    const duplicate = categories.some(
+        (category) =>
+            category.type === type &&
+            category.name.toLocaleLowerCase('vi') === name.toLocaleLowerCase('vi'),
+    );
+
+    if (duplicate) {
+        alert(`Danh mục "${name}" đã tồn tại.`);
+        return;
+    }
 
     categories.push({
         id: Date.now(),
@@ -30,19 +50,51 @@ function handleCategorySubmit(e) {
         icon: 'fa-tag',
     });
 
-    localStorage.setItem('fm_categories', JSON.stringify(categories));
+    saveMeta('categories');
 
     renderCategories();
     updateCategoriesDropdown();
     closeCategoryModal();
-
-    document.getElementById('catName').value = '';
+    syncToGoogleSheet();
 }
 
 function deleteCategory(id) {
-    categories = categories.filter((category) => category.id !== id);
-    localStorage.setItem('fm_categories', JSON.stringify(categories));
+    const category = categories.find((item) => String(item.id) === String(id));
+
+    if (!category) return;
+
+    const usedBy = transactions.filter(
+        (transaction) => transaction.category === category.name,
+    ).length;
+    const warning = usedBy
+        ? `\n\n${usedBy} giao dịch đang dùng danh mục này vẫn được giữ nguyên tên danh mục.`
+        : '';
+
+    if (!confirm(`Xóa danh mục "${category.name}"?${warning}`)) return;
+
+    categories = categories.filter((item) => item !== category);
+
+    if (Object.hasOwn(budgets, category.name)) {
+        delete budgets[category.name];
+        saveMeta('budgets');
+    }
+
+    saveMeta('categories');
     renderCategories();
+    updateCategoriesDropdown();
+    syncToGoogleSheet();
+}
+
+function handleCategoryTableClick(event) {
+    const button = event.target.closest('button[data-action]');
+
+    if (!button) return;
+
+    if (button.dataset.action === 'delete') {
+        deleteCategory(button.dataset.id);
+    } else if (button.dataset.action === 'budget') {
+        editBudget(button.dataset.id);
+    }
 }
 
 function renderCategories() {
@@ -50,18 +102,29 @@ function renderCategories() {
 
     if (!tbody) return;
 
-    tbody.innerHTML = '';
+    tbody.innerHTML = categories
+        .map((category) => {
+            const id = escapeHtml(category.id);
+            const budget = budgets[category.name];
+            const budgetCell =
+                category.type === 'expense'
+                    ? `${budget ? formatMoney(budget) : '—'}
+                <button class="btn btn-outline btn-small" data-action="budget" data-id="${id}" title="Đặt ngân sách tháng" aria-label="Đặt ngân sách tháng cho ${escapeHtml(category.name)}">
+                    <i class="fa-solid fa-pen"></i>
+                </button>`
+                    : '—';
 
-    categories.forEach((category) => {
-        tbody.innerHTML += `<tr>
-            <td><i class="fa-solid ${category.icon}" style="margin-right:8px; color:var(--primary);"></i>${category.name}</td>
-            <td>${category.type === 'income' ? 'Thu Nhập' : 'Chi Tiêu'}</td>
-            <td>${category.icon}</td>
-            <td style="text-align:right;">
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" onclick="deleteCategory(${category.id})">
+            return `<tr>
+            <td data-label="Tên danh mục"><i class="fa-solid ${escapeHtml(category.icon)}" style="margin-right:8px; color:var(--primary);"></i>${escapeHtml(category.name)}</td>
+            <td data-label="Loại">${category.type === 'income' ? 'Thu Nhập' : 'Chi Tiêu'}</td>
+            <td data-label="Biểu tượng">${escapeHtml(category.icon)}</td>
+            <td data-label="Ngân sách tháng">${budgetCell}</td>
+            <td class="row-actions" style="text-align:right;">
+                <button class="btn btn-outline btn-small" data-action="delete" data-id="${id}" title="Xóa" aria-label="Xóa danh mục ${escapeHtml(category.name)}">
                     <i class="fa-solid fa-trash"></i>
                 </button>
             </td>
         </tr>`;
-    });
+        })
+        .join('');
 }
