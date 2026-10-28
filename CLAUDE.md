@@ -49,7 +49,7 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 ## Quy ước
 
 - Khi sửa file bằng script (Python `str.replace`) luôn `assert` chuỗi tìm thấy: Prettier đổi bố cục code/bảng nên thay chuỗi có thể âm thầm không làm gì (đã từng khiến tab Vay Nợ không render và bỏ sót cập nhật tài liệu).
-
+- Git: làm việc trên branch được giao và không tạo PR trùng khi branch đã có PR (cập nhật mô tả PR bằng `update_pull_request`); commit message viết bằng English, mỗi cột mốc một commit, chạy `npm test`, `npm run test:unit`, `npm run format:check` trước khi push.
 - Prettier theo `.prettierrc.json` (4 space, single quote, `;`, trailing comma, width 100). Comment code bằng English, chuỗi giao diện bằng tiếng Việt.
 - Không nội suy dữ liệu người dùng vào `innerHTML` mà không qua `escapeHtml`; không dùng `onclick="fn('${data}')"` — dùng `data-*` + event delegation.
 - Ngày luôn là chuỗi `YYYY-MM-DD` theo giờ địa phương. Không dùng `toISOString().split('T')[0]` cho ngày hiển thị/nhập (UTC lệch ngày).
@@ -82,19 +82,20 @@ npm run format:check   # Prettier (npm run format để sửa)
 - Sandbox không tải được CDN; mọi thư viện đã nằm trong `vendor/`. `npm` registry thì dùng được.
 - Sandbox Apps Script chỉ là mock của Sheets/ContentService — script chạy đúng trong mock chưa chứng minh chạy y hệt trên Google.
 
-## Tiến độ nâng cấp (PR #3, branch `claude/hopeful-einstein-l7hu3u`)
+## Trạng thái (cập nhật 28/10/2026)
 
-Đã xong (commit a723408): sửa lỗi chuyển tiền, step số tiền, ngày lệch, sync mất dữ liệu, XSS, số liệu Tổng quan, localStorage hỏng/CDN lỗi, Apps Script tham chiếu, README.
+PR #3 (`claude/hopeful-einstein-l7hu3u` → `main`) gồm, theo thứ tự commit: sửa lỗi gốc (chuyển tiền không lưu được, `step` số tiền, ngày lệch múi giờ, sync mất dữ liệu, XSS, số liệu Tổng quan, localStorage hỏng/CDN lỗi) → PWA + vendor thư viện + test/CI trong repo → **sửa giao thức sync cho khớp script thật** → quản lý nguồn tiền → lọc/tìm kiếm/CSV → ngân sách → định kỳ → vay nợ → đồng bộ v2 → mobile + trợ năng. Toàn bộ test (162 e2e, 51 unit) pass trên bản clone sạch.
 
-Đang làm theo thứ tự (đánh dấu khi xong):
+Việc chủ repo cần làm / quyết định:
 
-- [x] Dọn repo (xóa `script.js`, css/asset trống), chuyển `style.css` → `css/style.css`
-- [x] Vendor Chart.js + Font Awesome, PWA (`manifest.json`, `sw.js`, icon)
-- [x] Test e2e + CI trong repo
-- [x] Quản lý nguồn tiền (thêm/sửa/lưu trữ/xóa, loại, hạn mức, ngày sao kê; nguồn lạ từ Sheet tự thêm)
-- [x] Lọc/tìm kiếm/phân trang/xuất CSV (lọc thuần ở `filterTransactions` trong `js/utils.js`, có unit test)
-- [x] Ngân sách theo danh mục (meta `budgets` = `{tênDanhMục: hạnMức}`; toast qua `showToast` trong `js/ui.js`)
-- [x] Giao dịch định kỳ (meta `recurring`; logic ngày đến hạn là hàm thuần trong `js/utils.js`, có unit test)
-- [x] Sổ vay nợ (tab "Vay Nợ & Cty"; meta `debts`)
-- [x] Đồng bộ v2: từng dòng + `updatedAt` + token + meta (cần chủ repo deploy `Code.gs`; chưa chạy trên Google thật)
-- [x] Mobile (bảng → thẻ, thanh điều hướng dưới cuộn ngang) + bàn phím/ARIA (skip link, focus trap, `aria-current`, axe sạch trên mọi tab/hộp thoại)
+- Xem và merge PR #3. Sau khi merge, bật GitHub Pages (hoặc host tĩnh bất kỳ) nếu muốn dùng PWA trên điện thoại (service worker cần https).
+- Tùy chọn: nâng cấp Apps Script lên `apps-script/Code.gs` (xem README "Nâng cấp lên v2") để đồng bộ danh mục/nguồn/ngân sách/định kỳ/vay nợ và bật `FM_TOKEN`. **Chưa ai chạy `Code.gs` trên Google thật** — sau khi deploy, thử thêm/sửa/xóa một giao dịch và mở app trên máy thứ hai.
+- Xác nhận cách POST `text/plain` đọc được phản hồi trên Web App thật (nếu không, app tự dự phòng bằng GET khi dữ liệu nhỏ).
+- Nếu "Nợ Công Ty" thực ra là công ty nợ chủ repo: đổi loại nguồn đó sang "Khác".
+
+Chưa làm / ý tưởng cho phiên sau:
+
+- Trả nợ trong sổ vay nợ chưa tự ghi giao dịch/nguồn tiền tương ứng.
+- Meta đồng bộ nguyên khối (hai thiết bị cùng sửa danh sách vay nợ/định kỳ một lúc thì bản mới hơn thắng cả danh sách, không gộp từng phần tử).
+- Xóa trên server không có "bia mộ": sửa một giao dịch trên máy này trong khi máy khác xóa nó thì bản sửa sống lại.
+- Biểu đồ theo nguồn tiền / theo danh mục nhiều tháng, ngân sách theo tháng cụ thể, nhập CSV, nhiều ví tiền tệ.
