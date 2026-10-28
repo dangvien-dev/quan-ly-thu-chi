@@ -7,6 +7,8 @@ const path = require('path');
 const vm = require('vm');
 
 const CODE_FILE = path.join(__dirname, '..', '..', 'apps-script', 'Code.gs');
+// The script the repo owner had deployed before Code.gs (kept verbatim, see CLAUDE.md).
+const USER_SCRIPT_FILE = path.join(__dirname, 'fixtures', 'user-script.gs');
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 const OFFSET_HOURS = 7; // Asia/Ho_Chi_Minh has no daylight saving
 
@@ -47,6 +49,24 @@ function createSheet(grid = []) {
         clearContents() {
             grid.length = 0;
         },
+        /** Like Sheets, a "yyyy-mm-dd" string typed into a cell becomes a real date. */
+        appendRow(row) {
+            grid.push(
+                row.map((value) =>
+                    typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+                        ? dateCell(value)
+                        : value,
+                ),
+            );
+        },
+        getDataRange() {
+            const width = sheet.getLastColumn();
+
+            return {
+                getValues: () =>
+                    grid.map((row) => Array.from({ length: width }, (_, i) => row[i] ?? '')),
+            };
+        },
     };
 
     return sheet;
@@ -57,7 +77,7 @@ function createSheet(grid = []) {
  * @param {Record<string, any[][]>} [options.sheets] initial sheets by name (arrays of rows)
  * @param {Record<string, string>} [options.properties] Script Properties, e.g. { FM_TOKEN: 'x' }
  */
-function createGas({ sheets = {}, properties = {} } = {}) {
+function createGas({ sheets = {}, properties = {}, codeFile = CODE_FILE } = {}) {
     const book = new Map(Object.entries(sheets).map(([name, grid]) => [name, createSheet(grid)]));
     const sandbox = {
         SpreadsheetApp: {
@@ -78,7 +98,7 @@ function createGas({ sheets = {}, properties = {} } = {}) {
             getScriptProperties: () => ({ getProperty: (key) => properties[key] ?? null }),
         },
         ContentService: {
-            MimeType: { JSON: 'json' },
+            MimeType: { JSON: 'json', JAVASCRIPT: 'javascript' },
             createTextOutput: (text) => ({
                 text,
                 setMimeType() {
@@ -106,7 +126,9 @@ function createGas({ sheets = {}, properties = {} } = {}) {
     };
 
     vm.createContext(sandbox);
-    vm.runInContext(fs.readFileSync(CODE_FILE, 'utf8'), sandbox, { filename: 'Code.gs' });
+    vm.runInContext(fs.readFileSync(codeFile, 'utf8'), sandbox, {
+        filename: path.basename(codeFile),
+    });
 
     const respond = (output) => JSON.parse(output.text);
 
@@ -115,6 +137,11 @@ function createGas({ sheets = {}, properties = {} } = {}) {
         sheet: (name) => book.get(name),
         /** GET request; returns the parsed JSON body. */
         get: (parameter = {}) => respond(sandbox.doGet({ parameter })),
+        /** GET request; returns the raw response text (for JSONP or non-JSON replies). */
+        getText: (parameter = {}) => sandbox.doGet({ parameter }).text,
+        /** POST with a raw string body; returns the raw response text. */
+        postText: (contents, parameter = {}) =>
+            sandbox.doPost({ parameter, postData: { contents } }).text,
         /** POST request with a JSON body; returns the parsed JSON response. */
         post: (body, parameter = {}) =>
             respond(sandbox.doPost({ parameter, postData: { contents: JSON.stringify(body) } })),
@@ -126,4 +153,23 @@ function createGas({ sheets = {}, properties = {} } = {}) {
 /** A real date cell value for a calendar day, like Sheets returns for a date column. */
 const dateCell = (isoDay) => new Date(Date.parse(`${isoDay}T00:00:00+0${OFFSET_HOURS}:00`));
 
-module.exports = { createGas, dateCell, TIME_ZONE };
+/** Rows as objects -> sheet grid with a header, dates as real date cells. */
+function gridFromRows(
+    rows,
+    header = ['id', 'date', 'type', 'source', 'category', 'amount', 'note'],
+) {
+    return [
+        header,
+        ...rows.map((row) =>
+            header.map((name) => {
+                const value = row[name] ?? '';
+
+                return name === 'date' && value
+                    ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? dateCell(value) : value)
+                    : value;
+            }),
+        ),
+    ];
+}
+
+module.exports = { createGas, dateCell, gridFromRows, CODE_FILE, USER_SCRIPT_FILE, TIME_ZONE };

@@ -1,10 +1,12 @@
 // Shared helpers for the e2e tests: app launcher, Apps Script mock, and small utilities.
 //
 // Every test runs in a fresh browser context with no real network: the Google Apps Script URL is
-// answered by an in-memory mock, and any other external request is blocked and recorded in
+// answered by the owner's real deployed script (tests/gas/fixtures/user-script.gs) running against
+// an in-memory spreadsheet, and any other external request is blocked and recorded in
 // state.external (the app must not need one).
 
 const { test: base, expect } = require('@playwright/test');
+const { createGas, gridFromRows, USER_SCRIPT_FILE } = require('../gas/sandbox');
 
 const BASE_URL = `http://127.0.0.1:${process.env.PORT || 4173}`;
 const SCRIPT_URL = 'https://script.google.com/macros/s/TEST/exec';
@@ -36,8 +38,9 @@ const syncedSeed = (rows, extra = {}) => ({
 
 /**
  * Open the app in a new context.
- * opts: seed (localStorage), remote (rows the mock Sheet starts with), now (fixed clock),
- *       getDelay, getFails, blockChart, serviceWorkers, viewport, promptValue.
+ * opts: seed (localStorage), remote (rows the spreadsheet starts with), now (fixed clock),
+ *       getDelay, getFails, postFails, postResponse (raw reply text), blockChart,
+ *       serviceWorkers, viewport, promptValue.
  */
 async function openApp(browser, opts = {}) {
     const context = await browser.newContext({
@@ -48,9 +51,9 @@ async function openApp(browser, opts = {}) {
         serviceWorkers: opts.serviceWorkers || 'block',
     });
     const state = {
-        remote: opts.remote || [],
         posts: [],
         gets: 0,
+        getUrls: [],
         alerts: [],
         confirms: [],
         errors: [],
@@ -72,6 +75,15 @@ async function openApp(browser, opts = {}) {
         await context.route('**/vendor/chart.umd.js', (route) => route.abort());
     }
 
+    const gas = createGas({
+        codeFile: USER_SCRIPT_FILE,
+        sheets: { Transactions: gridFromRows(opts.remote || []) },
+    });
+
+    // The rows currently in the spreadsheet, as the script returns them.
+    Object.defineProperty(state, 'remote', { get: () => gas.get({ v: '2' }) });
+    state.gas = gas;
+
     await context.route('https://script.google.com/**', async (route) => {
         const request = route.request();
 
@@ -80,6 +92,7 @@ async function openApp(browser, opts = {}) {
 
         if (request.method() === 'GET') {
             state.gets++;
+            state.getUrls.push(request.url());
 
             if (opts.getDelay) await wait(opts.getDelay);
 
@@ -89,23 +102,25 @@ async function openApp(browser, opts = {}) {
                 status: 200,
                 headers: CORS,
                 contentType: 'application/json',
-                body: JSON.stringify(state.remote),
+                body: gas.getText(Object.fromEntries(new URL(request.url()).searchParams)),
             });
         }
 
-        const body = JSON.parse(request.postData());
+        const raw = request.postData();
 
-        state.posts.push({ contentType: request.headers()['content-type'] || '', body });
+        state.posts.push({
+            contentType: request.headers()['content-type'] || '',
+            raw,
+            body: JSON.parse(raw),
+        });
 
         if (opts.postFails) return route.abort();
-
-        if (body.action === 'save') state.remote = body.data;
 
         return route.fulfill({
             status: 200,
             headers: CORS,
             contentType: 'application/json',
-            body: '{"ok":true}',
+            body: opts.postResponse || gas.postText(raw),
         });
     });
 

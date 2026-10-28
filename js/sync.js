@@ -1,5 +1,12 @@
 // Google Apps Script URL configuration and Google Sheets synchronization.
 //
+// Protocols. The app never writes to a server before it has read from it and recognised it:
+//  - legacy: the script the owner originally deployed (see tests/gas/fixtures/user-script.gs).
+//    GET returns the list of transactions; a save is POST {"transactions": [...]}, or
+//    GET ?action=save&data=... as a fallback. Its body format is strict: any other body makes the
+//    script clear the whole sheet and then fail, so the shape must never change here.
+//    The legacy sheet has 7 columns, so a transfer's destination travels inside the category.
+//
 // The whole transaction list is read from / written to the Sheet. To keep data safe:
 //  - The Sheet is only overwritten after it has been read successfully in this session.
 //  - Local changes the Sheet has not confirmed stay flagged (fm_sync_dirty) across reloads, so
@@ -12,6 +19,7 @@ const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device l
 const SYNC_DELETED_KEY = 'fm_deleted_ids';
 
 let remoteReady = false;
+let syncProtocol = ''; // set by the first successful read: 'legacy'
 let pushInFlight = false;
 let pushQueued = false;
 let localChangeCount = 0;
@@ -26,11 +34,12 @@ const SYNC_BADGES = {
     error: '<i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Lỗi kết nối',
 };
 
-function setSyncBadge(state) {
+function setSyncBadge(state, detail = '') {
     const badge = document.getElementById('sync-status');
 
     if (badge) {
         badge.innerHTML = SYNC_BADGES[state];
+        badge.title = detail;
     }
 }
 
@@ -63,11 +72,26 @@ function clearDeletedIds() {
     localStorage.removeItem(SYNC_DELETED_KEY);
 }
 
+// --- CHANGE QUEUE ---
+// Call these after a local change, before syncToGoogleSheet(). The legacy protocol only needs the
+// dirty flag and the deleted ids; meta values are not part of it.
+function queueUpsert(ids) {
+    if (ids && ids.length) setSyncDirty('merge');
+}
+
+function queueDelete(ids) {
+    rememberDeletedIds(ids);
+    setSyncDirty('merge');
+}
+
+function queueMeta() {}
+
 // --- SETTINGS ---
 function setScriptUrl(url) {
     webAppUrl = url;
     localStorage.setItem('fm_script_url', url);
     remoteReady = false;
+    syncProtocol = '';
 
     return syncFromGoogleSheet();
 }
@@ -94,18 +118,76 @@ function saveScriptUrl() {
 }
 
 // --- SYNCHRONIZATION ---
+function sheetUrl(params = {}) {
+    const query = new URLSearchParams(params).toString();
+
+    return query ? `${webAppUrl}${webAppUrl.includes('?') ? '&' : '?'}${query}` : webAppUrl;
+}
+
+/** The Apps Script answers HTTP 200 even for errors: look inside the JSON body. */
 function parseSheetResponse(response) {
     if (!response.ok) {
         throw new Error('Server Error');
     }
 
     return response.json().then((result) => {
-        if (result && result.error) {
-            throw new Error(result.error);
+        if (result && (result.error || result.status === 'error')) {
+            throw new Error(result.error || result.message || 'Server Error');
         }
 
         return result;
     });
+}
+
+// --- LEGACY PROTOCOL ---
+const TRANSFER_CATEGORY = 'Chuyển tiền nội bộ';
+const LEGACY_GET_SAVE_MAX_URL = 6000;
+
+/** The legacy sheet has no targetSource column: carry it in the category ("... → Nguồn nhận"). */
+function encodeLegacyRow(transaction) {
+    return transaction.type === 'transfer' && transaction.targetSource
+        ? { ...transaction, category: `${TRANSFER_CATEGORY} → ${transaction.targetSource}` }
+        : transaction;
+}
+
+function decodeLegacyRow(row) {
+    const match =
+        row && row.type === 'transfer' && !row.targetSource
+            ? String(row.category ?? '').match(/^Chuyển tiền nội bộ → (.+)$/)
+            : null;
+
+    return match ? { ...row, category: TRANSFER_CATEGORY, targetSource: match[1] } : row;
+}
+
+/**
+ * Replace the legacy sheet's content. POST first (plain text, so no CORS preflight); only if the
+ * request itself cannot be made, fall back to the GET form the script also understands.
+ */
+async function writeLegacySheet(list) {
+    const rows = list.map(encodeLegacyRow);
+    let response;
+
+    try {
+        response = await fetch(webAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ transactions: rows }),
+        });
+    } catch (error) {
+        const payload = JSON.stringify(rows);
+        const url = sheetUrl({ action: 'save', data: payload });
+
+        // The script decodes the parameter a second time, so "%" in the data would break it.
+        if (url.length > LEGACY_GET_SAVE_MAX_URL || payload.includes('%')) {
+            throw new Error(
+                'Không gửi được dữ liệu (trình duyệt chặn POST và dữ liệu quá lớn để gửi dự phòng). Hãy cập nhật Apps Script theo hướng dẫn trong README.',
+            );
+        }
+
+        response = await fetch(url);
+    }
+
+    return parseSheetResponse(response);
 }
 
 /** Union of two lists: everything in `primary`, plus items of `secondary` it does not have. */
@@ -137,18 +219,15 @@ function syncToGoogleSheet(mode = 'merge') {
 }
 
 function pushToGoogleSheet() {
+    // Never write before a read has told us which protocol the script speaks.
+    if (!syncProtocol) return Promise.resolve();
+
     const changeCountAtStart = localChangeCount;
 
     pushInFlight = true;
     setSyncBadge('syncing');
 
-    return fetch(webAppUrl, {
-        method: 'POST',
-        // text/plain keeps this a "simple" CORS request: Apps Script cannot answer a preflight.
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'save', data: transactions }),
-    })
-        .then(parseSheetResponse)
+    return writeLegacySheet(transactions)
         .then(() => {
             localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
 
@@ -160,8 +239,8 @@ function pushToGoogleSheet() {
                 pushQueued = true;
             }
         })
-        .catch(() => {
-            setSyncBadge('error');
+        .catch((error) => {
+            setSyncBadge('error', error.message);
         })
         .finally(() => {
             pushInFlight = false;
@@ -174,7 +253,7 @@ function pushToGoogleSheet() {
 }
 
 function reconcileWithSheet(rows) {
-    const remote = normalizeTransactions(rows);
+    const remote = normalizeTransactions(rows.map(decodeLegacyRow));
     const mode = getSyncDirty();
     const hasBaseline = localStorage.getItem(SYNC_BASELINE_KEY) === webAppUrl;
     const hasRowsWithoutId = rows.some((row) => row && row.type && !row.id);
@@ -226,19 +305,20 @@ function syncFromGoogleSheet() {
 
     setSyncBadge('loading');
 
-    return fetch(requestedUrl)
+    return fetch(sheetUrl({ v: 2 }))
         .then(parseSheetResponse)
-        .then((rows) => {
+        .then((result) => {
             if (requestedUrl !== webAppUrl) return;
 
-            if (!Array.isArray(rows)) {
-                throw new Error('Unexpected response');
+            if (!Array.isArray(result)) {
+                throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
             }
 
-            reconcileWithSheet(rows);
+            syncProtocol = 'legacy';
+            reconcileWithSheet(result);
         })
-        .catch(() => {
-            setSyncBadge('offline');
+        .catch((error) => {
+            setSyncBadge('offline', error.message);
         });
 }
 

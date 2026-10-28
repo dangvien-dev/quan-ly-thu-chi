@@ -181,14 +181,21 @@ test.describe('Đồng bộ Google Sheets (giao thức v1)', () => {
         expect(state.remote.map((row) => row.note)).toEqual(expect.arrayContaining(['mot', 'hai']));
     });
 
-    test('đẩy thất bại: giữ cờ chưa đồng bộ và hiện "Lỗi kết nối"', async ({ app }) => {
-        const { page } = await app({ seed: syncedSeed([A]), remote: [A], postFails: true });
+    test('script trả {"status":"error"} (HTTP 200) được coi là lỗi: giữ cờ chưa đồng bộ', async ({
+        app,
+    }) => {
+        const { page } = await app({
+            seed: syncedSeed([A]),
+            remote: [A],
+            postResponse: '{"status":"error","message":"boom"}',
+        });
 
         await addExpense(page, 5000, 'x');
         await wait(200);
 
         expect(await page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe('merge');
         await expect(page.locator('#sync-status')).toContainText('Lỗi');
+        await expect(page.locator('#sync-status')).toHaveAttribute('title', 'boom');
         expect(await page.evaluate(() => transactions.length)).toBe(2);
     });
 
@@ -205,5 +212,124 @@ test.describe('Đồng bộ Google Sheets (giao thức v1)', () => {
 
         expect(state.remote.map((row) => row.id).sort()).toEqual(['L1', 'R1', 'R2']);
         expect(await page.evaluate(() => webAppUrl)).toBe(SCRIPT_URL);
+    });
+});
+
+test.describe('Tương thích với script Apps Script hiện tại của chủ repo', () => {
+    // The deployed script clears the whole sheet BEFORE it reads the request body, and only
+    // understands {"transactions": [...]}. Any other body wipes the data and still answers 200.
+
+    test('dò phiên bản bằng GET trước, rồi mới ghi đúng định dạng {transactions}, Sheet không bị xóa', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ seed: syncedSeed([A]), remote: [A] });
+
+        await addExpense(page, 5000, 'moi');
+        await wait(300);
+
+        expect(state.getUrls[0]).toContain('v=2');
+        expect(state.posts).toHaveLength(1);
+        expect(Object.keys(state.posts[0].body)).toEqual(['transactions']);
+        expect(state.remote.map((row) => row.id)).toHaveLength(2);
+        expect(state.remote.map((row) => row.note)).toContain('moi');
+    });
+
+    test('ghi lên Sheet 7 cột vẫn giữ nguồn nhận của giao dịch chuyển tiền (mã hoá trong danh mục)', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ seed: syncedSeed([A]), remote: [A] });
+
+        await page.click('header .btn');
+        await page.click('#btnTypeTransfer');
+        await page.fill('#txAmount', '30000');
+        await page.selectOption('#txSource', 'Tiền Mặt');
+        await page.selectOption('#txTargetSource', 'Thẻ Ngân Hàng');
+        await page.click('#transactionForm button[type=submit]');
+        await wait(300);
+
+        const row = state.remote.find((item) => item.type === 'transfer');
+
+        expect(row.category).toBe('Chuyển tiền nội bộ → Thẻ Ngân Hàng');
+        expect(Object.keys(row)).not.toContain('targetSource');
+    });
+
+    test('đọc lại từ Sheet 7 cột khôi phục nguồn nhận và danh mục của chuyển tiền', async ({
+        app,
+    }) => {
+        const { page } = await app({
+            remote: [
+                tx({
+                    id: 'T1',
+                    type: 'transfer',
+                    source: 'Tiền Mặt',
+                    category: 'Chuyển tiền nội bộ → Thẻ Ngân Hàng',
+                    amount: 50000,
+                }),
+            ],
+        });
+        const saved = await page.evaluate(() => transactions[0]);
+
+        expect(saved).toMatchObject({
+            category: 'Chuyển tiền nội bộ',
+            targetSource: 'Thẻ Ngân Hàng',
+        });
+        await expect(
+            page.locator('#sources-grid .card', { hasText: 'Thẻ Ngân Hàng' }),
+        ).toContainText('50.000');
+    });
+
+    test('POST bị chặn (CORS/mạng): dùng GET ?action=save dự phòng và dữ liệu vẫn lên Sheet', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ seed: syncedSeed([A]), remote: [A], postFails: true });
+
+        await addExpense(page, 5000, 'du-phong');
+        await wait(300);
+
+        expect(state.getUrls.some((url) => url.includes('action=save'))).toBe(true);
+        expect(state.remote.map((row) => row.note)).toEqual(expect.arrayContaining(['du-phong']));
+        expect(state.remote).toHaveLength(2);
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('POST bị chặn và dữ liệu quá lớn cho GET: không gửi gì, Sheet nguyên vẹn, báo lỗi', async ({
+        app,
+    }) => {
+        const many = Array.from({ length: 80 }, (_, index) =>
+            tx({ id: `TX_${1000000000000 + index}`, note: `ghi chú số ${index} có tiếng Việt` }),
+        );
+        const { page, state } = await app({
+            seed: syncedSeed(many),
+            remote: many,
+            postFails: true,
+        });
+
+        await addExpense(page, 5000, 'moi');
+        await wait(300);
+
+        expect(state.getUrls.some((url) => url.includes('action=save'))).toBe(false);
+        expect(state.remote).toHaveLength(80);
+        await expect(page.locator('#sync-status')).toContainText('Lỗi');
+        expect(await page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe('merge');
+    });
+
+    test('mọi lần ghi trong một phiên dùng đầy đủ đều là {transactions} (không bao giờ làm script xóa Sheet)', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ seed: syncedSeed([A, B]), remote: [A, B] });
+
+        await addExpense(page, 1000, 'a');
+        await addExpense(page, 2000, 'b');
+        await goTransactions(page);
+        await page.click('#transaction-table-body button[data-action=delete] >> nth=0');
+        await page.evaluate(() => resetAllData());
+        await wait(500);
+
+        expect(state.posts.length).toBeGreaterThan(0);
+
+        for (const post of state.posts) {
+            expect(Array.isArray(post.body.transactions)).toBe(true);
+            expect(Object.keys(post.body)).toEqual(['transactions']);
+        }
     });
 });
