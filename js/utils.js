@@ -513,3 +513,95 @@ function describeRecurringSchedule(rule) {
         ? `Hằng tuần, ${WEEKDAY_LABELS[rule.day]}`
         : `Hằng tháng, ngày ${rule.day}`;
 }
+
+// --- DEBTS (loans owed to or by the user) ---
+
+const DEBT_SOON_DAYS = 7;
+
+/**
+ * A debt: { id, party, direction: 'owe' (the user owes) | 'owed' (owed to the user), amount,
+ * date, dueDate, note, payments: [{ id, date, amount }], updatedAt }. Null when unusable.
+ */
+function normalizeDebt(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const id = String(raw.id ?? '').trim();
+    const party = String(raw.party ?? '').trim();
+    const amount = parseAmount(raw.amount);
+
+    if (!id || !party || !(amount > 0)) return null;
+
+    const payments = (Array.isArray(raw.payments) ? raw.payments : [])
+        .map((payment, index) => ({
+            id: String(payment && payment.id ? payment.id : `${id}_P${index}`),
+            date: normalizeDate(payment && payment.date),
+            amount: parseAmount(payment && payment.amount),
+        }))
+        .filter((payment) => payment.amount > 0);
+
+    return {
+        id,
+        party,
+        direction: raw.direction === 'owed' ? 'owed' : 'owe',
+        amount,
+        date: normalizeDate(raw.date),
+        dueDate: normalizeDate(raw.dueDate),
+        note: String(raw.note ?? ''),
+        payments,
+        updatedAt: String(raw.updatedAt ?? ''),
+    };
+}
+
+function normalizeDebts(list) {
+    if (!Array.isArray(list)) return null;
+
+    const seen = new Set();
+    const result = [];
+
+    list.forEach((raw) => {
+        const debt = normalizeDebt(raw);
+
+        if (debt && !seen.has(debt.id)) {
+            seen.add(debt.id);
+            result.push(debt);
+        }
+    });
+
+    return result;
+}
+
+function debtPaid(debt) {
+    return debt.payments.reduce((total, payment) => total + payment.amount, 0);
+}
+
+function debtRemaining(debt) {
+    return Math.max(0, debt.amount - debtPaid(debt));
+}
+
+/** 'settled', 'overdue' (past the due date), 'soon' (due within a week) or 'open'. */
+function debtStatus(debt, todayKey) {
+    if (debtRemaining(debt) === 0) return 'settled';
+
+    if (!debt.dueDate) return 'open';
+
+    if (debt.dueDate < todayKey) return 'overdue';
+
+    const days = Math.round((parseLocalDate(debt.dueDate) - parseLocalDate(todayKey)) / 86400000);
+
+    return days <= DEBT_SOON_DAYS ? 'soon' : 'open';
+}
+
+function summarizeDebts(list, todayKey) {
+    const summary = { owe: 0, owed: 0, overdueCount: 0, overdueAmount: 0 };
+
+    list.forEach((debt) => {
+        summary[debt.direction] += debtRemaining(debt);
+
+        if (debtStatus(debt, todayKey) === 'overdue') {
+            summary.overdueCount++;
+            summary.overdueAmount += debtRemaining(debt);
+        }
+    });
+
+    return summary;
+}

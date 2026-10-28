@@ -749,3 +749,24 @@ canvas {
     background: var(--border);
     color: var(--text-muted);
 }
+
+.status-overdue {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.debt-details td {
+    background: #f8fafc;
+}
+
+.payment-list {
+    list-style: none;
+    margin-top: 8px;
+}
+
+.payment-list li {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 4px 0;
+}

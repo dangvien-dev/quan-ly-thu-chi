@@ -50,15 +50,22 @@ function renderAll() {
     ensureSourcesForTransactions();
 
     // A failure in one view (for example the charts) must not stop the others from rendering.
-    [renderTransactions, renderOverview, renderSources, renderCategories, renderRecurring].forEach(
-        (render) => {
-            try {
-                render();
-            } catch (error) {
-                console.error(`Lỗi khi hiển thị (${render.name}):`, error);
-            }
-        },
-    );
+    const views = [
+        renderTransactions,
+        renderOverview,
+        renderSources,
+        renderCategories,
+        renderRecurring,
+        renderDebts,
+    ];
+
+    views.forEach((render) => {
+        try {
+            render();
+        } catch (error) {
+            console.error(`Lỗi khi hiển thị (${render.name}):`, error);
+        }
+    });
 }
 
 function initializeApp() {
@@ -82,6 +89,7 @@ function initializeApp() {
 
     initTransactionFilters();
     initRecurring();
+    initDebts();
     initModalShortcuts();
     window.addEventListener('online', resumeSync);
 
@@ -91,6 +99,7 @@ function initializeApp() {
     renderAll();
     renderQuickChips();
     generateRecurringTransactions();
+    remindOverdueDebts();
     syncFromGoogleSheet();
 }
 

@@ -280,9 +280,50 @@
 
             <!-- TAB 5: VAY NỢ -->
             <section id="tab-debts" class="view-section">
-                <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
-                <div class="card">
-                    <p style="color: var(--text-muted)">Tính năng đang phát triển.</p>
+                <div class="section-head">
+                    <h3>Quản Lý Khoản Vay Nợ & Công Ty</h3>
+                    <button class="btn" onclick="openDebtModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Khoản
+                    </button>
+                </div>
+                <div class="grid-cards">
+                    <div class="card">
+                        <div class="card-title">Tôi đang nợ</div>
+                        <div class="card-value expense" id="lbl-debt-owe">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Người khác nợ tôi</div>
+                        <div class="card-value income" id="lbl-debt-owed">0 đ</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Quá hạn</div>
+                        <div class="card-value" id="lbl-debt-overdue" style="font-size: 18px">
+                            Không có
+                        </div>
+                    </div>
+                </div>
+                <div class="filter-bar">
+                    <label class="check-label">
+                        <input type="checkbox" id="debt-hide-settled" checked /> Ẩn khoản đã tất
+                        toán
+                    </label>
+                </div>
+                <div class="table-container">
+                    <table class="responsive-table">
+                        <thead>
+                            <tr>
+                                <th>Đối Tác</th>
+                                <th>Loại</th>
+                                <th>Số Tiền Gốc</th>
+                                <th>Đã Thanh Toán</th>
+                                <th>Còn Lại</th>
+                                <th>Hạn</th>
+                                <th>Trạng Thái</th>
+                                <th style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="debt-table-body"></tbody>
+                    </table>
                 </div>
             </section>
 
@@ -672,6 +713,67 @@
             </div>
         </div>
 
+        <div
+            id="debtModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="debtModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="debtModalTitle">Thêm Khoản Vay Nợ</h3>
+                    <button class="close-btn" onclick="closeDebtModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="debtForm" onsubmit="handleDebtSubmit(event)">
+                    <div class="form-group">
+                        <label for="debtParty">Đối tác (người hoặc công ty)</label>
+                        <input type="text" id="debtParty" class="form-control" required />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="debtDirection">Loại</label>
+                            <select id="debtDirection" class="form-control">
+                                <option value="owe">Tôi nợ họ</option>
+                                <option value="owed">Họ nợ tôi</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="debtAmount">Số tiền gốc (VNĐ)</label>
+                            <input
+                                type="number"
+                                id="debtAmount"
+                                class="form-control"
+                                min="1"
+                                step="1"
+                                inputmode="numeric"
+                                required
+                            />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="debtDate">Ngày vay</label>
+                            <input type="date" id="debtDate" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label for="debtDue">Hạn thanh toán (tùy chọn)</label>
+                            <input type="date" id="debtDue" class="form-control" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="debtNote">Ghi chú</label>
+                        <input type="text" id="debtNote" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
         <!-- Liên kết file JavaScript riêng -->
         <script src="js/utils.js"></script>
         <script src="js/data.js"></script>
@@ -679,6 +781,7 @@
         <script src="js/categories.js"></script>
         <script src="js/budgets.js"></script>
         <script src="js/recurring.js"></script>
+        <script src="js/debts.js"></script>
         <script src="js/transactions.js"></script>
         <script src="js/sources.js"></script>
         <script src="js/charts.js"></script>

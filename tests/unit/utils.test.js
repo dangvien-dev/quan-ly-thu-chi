@@ -343,3 +343,80 @@ test.describe('giao dịch định kỳ', () => {
         assert.equal(transfer.targetSource, 'Momo');
     });
 });
+
+test.describe('vay nợ', () => {
+    const debt = (overrides) => ({
+        id: 'DB_1',
+        party: 'Anh Nam',
+        direction: 'owe',
+        amount: 1000000,
+        date: '2026-10-01',
+        dueDate: '2026-11-01',
+        payments: [],
+        ...overrides,
+    });
+    const call = (expression, value) =>
+        run(expression.replace('$', `normalizeDebt(${JSON.stringify(value)})`));
+
+    test('normalizeDebt từ chối dữ liệu hỏng và làm sạch các lần thanh toán', () => {
+        assert.equal(run(`normalizeDebt(${JSON.stringify(debt({ party: ' ' }))})`), null);
+        assert.equal(run(`normalizeDebt(${JSON.stringify(debt({ amount: 0 }))})`), null);
+
+        const normalized = plain(
+            run(
+                `normalizeDebt(${JSON.stringify(debt({ direction: 'x', payments: [{ amount: '200.000', date: '2026-10-05' }, { amount: 0 }, null] }))})`,
+            ),
+        );
+
+        assert.equal(normalized.direction, 'owe');
+        assert.equal(normalized.payments.length, 1);
+        assert.equal(normalized.payments[0].amount, 200000);
+    });
+
+    test('còn lại = gốc - đã trả, không âm', () => {
+        const paid = (amounts) =>
+            debt({
+                payments: amounts.map((amount, index) => ({
+                    id: `P${index}`,
+                    date: '2026-10-05',
+                    amount,
+                })),
+            });
+
+        assert.equal(call('debtRemaining($)', paid([])), 1000000);
+        assert.equal(call('debtRemaining($)', paid([300000, 200000])), 500000);
+        assert.equal(call('debtRemaining($)', paid([1000000])), 0);
+        assert.equal(call('debtRemaining($)', paid([900000, 900000])), 0);
+        assert.equal(call('debtPaid($)', paid([300000, 200000])), 500000);
+    });
+
+    test('trạng thái: đã tất toán, quá hạn, sắp đến hạn, đang nợ', () => {
+        const status = (overrides, today) =>
+            run(`debtStatus(normalizeDebt(${JSON.stringify(debt(overrides))}), "${today}")`);
+
+        assert.equal(status({ payments: [{ id: 'p', amount: 1000000 }] }, '2026-12-01'), 'settled');
+        assert.equal(status({}, '2026-11-02'), 'overdue');
+        assert.equal(status({}, '2026-11-01'), 'soon');
+        assert.equal(status({}, '2026-10-25'), 'soon');
+        assert.equal(status({}, '2026-10-20'), 'open');
+        assert.equal(status({ dueDate: '' }, '2030-01-01'), 'open');
+    });
+
+    test('tổng hợp theo chiều nợ và các khoản quá hạn', () => {
+        const list = [
+            debt({
+                id: 'a',
+                amount: 1000000,
+                dueDate: '2026-10-01',
+                payments: [{ id: 'p', amount: 400000 }],
+            }),
+            debt({ id: 'b', direction: 'owed', amount: 500000, dueDate: '' }),
+            debt({ id: 'c', amount: 200000, dueDate: '2026-12-31' }),
+        ];
+
+        assert.deepEqual(
+            plain(run(`summarizeDebts(normalizeDebts(${JSON.stringify(list)}), "2026-10-28")`)),
+            { owe: 800000, owed: 500000, overdueCount: 1, overdueAmount: 600000 },
+        );
+    });
+});
