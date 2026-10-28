@@ -17,11 +17,51 @@ function updateCategoriesDropdown() {
         });
 }
 
+/**
+ * Select a category in the transaction form.
+ * With keepMissing, a category that no longer exists (deleted, or synced from another device)
+ * is added as a temporary option so editing a transaction does not silently change it.
+ */
+function selectCategory(name, keepMissing = false) {
+    const select = document.getElementById('txCategory');
+
+    if (!select) return;
+
+    const exists = Array.from(select.options).some((option) => option.value === name);
+
+    if (!exists && keepMissing && name) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+    }
+
+    if (exists || (keepMissing && name)) {
+        select.value = name;
+    }
+}
+
 function handleCategorySubmit(e) {
     e.preventDefault();
 
-    const name = document.getElementById('catName').value;
+    const name = document.getElementById('catName').value.trim();
     const type = document.getElementById('catType').value;
+
+    if (!name) {
+        alert('Vui lòng nhập tên danh mục!');
+        return;
+    }
+
+    const duplicate = categories.some(
+        (category) =>
+            category.type === type &&
+            category.name.toLocaleLowerCase('vi') === name.toLocaleLowerCase('vi'),
+    );
+
+    if (duplicate) {
+        alert(`Danh mục "${name}" đã tồn tại.`);
+        return;
+    }
 
     categories.push({
         id: Date.now(),
@@ -35,14 +75,34 @@ function handleCategorySubmit(e) {
     renderCategories();
     updateCategoriesDropdown();
     closeCategoryModal();
-
-    document.getElementById('catName').value = '';
 }
 
 function deleteCategory(id) {
-    categories = categories.filter((category) => category.id !== id);
+    const category = categories.find((item) => String(item.id) === String(id));
+
+    if (!category) return;
+
+    const usedBy = transactions.filter(
+        (transaction) => transaction.category === category.name,
+    ).length;
+    const warning = usedBy
+        ? `\n\n${usedBy} giao dịch đang dùng danh mục này vẫn được giữ nguyên tên danh mục.`
+        : '';
+
+    if (!confirm(`Xóa danh mục "${category.name}"?${warning}`)) return;
+
+    categories = categories.filter((item) => item !== category);
     localStorage.setItem('fm_categories', JSON.stringify(categories));
     renderCategories();
+    updateCategoriesDropdown();
+}
+
+function handleCategoryTableClick(event) {
+    const button = event.target.closest('button[data-action="delete"]');
+
+    if (button) {
+        deleteCategory(button.dataset.id);
+    }
 }
 
 function renderCategories() {
@@ -50,18 +110,18 @@ function renderCategories() {
 
     if (!tbody) return;
 
-    tbody.innerHTML = '';
-
-    categories.forEach((category) => {
-        tbody.innerHTML += `<tr>
-            <td><i class="fa-solid ${category.icon}" style="margin-right:8px; color:var(--primary);"></i>${category.name}</td>
+    tbody.innerHTML = categories
+        .map(
+            (category) => `<tr>
+            <td><i class="fa-solid ${escapeHtml(category.icon)}" style="margin-right:8px; color:var(--primary);"></i>${escapeHtml(category.name)}</td>
             <td>${category.type === 'income' ? 'Thu Nhập' : 'Chi Tiêu'}</td>
-            <td>${category.icon}</td>
+            <td>${escapeHtml(category.icon)}</td>
             <td style="text-align:right;">
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" onclick="deleteCategory(${category.id})">
+                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" data-action="delete" data-id="${escapeHtml(category.id)}" title="Xóa">
                     <i class="fa-solid fa-trash"></i>
                 </button>
             </td>
-        </tr>`;
-    });
+        </tr>`,
+        )
+        .join('');
 }

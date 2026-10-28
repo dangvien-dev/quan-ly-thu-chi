@@ -1,41 +1,59 @@
 // Application startup, overview rendering, and the existing reset-data action.
 
-function renderOverview() {
-    let totalIncome = 0;
-    let totalExpense = 0;
+/** Total income and expense of transactions dated in the given month (YYYY-MM). */
+function summarizeMonth(monthKey) {
+    const summary = { income: 0, expense: 0 };
 
     transactions.forEach((transaction) => {
+        if (!transaction.date.startsWith(monthKey)) return;
+
         if (transaction.type === 'income') {
-            totalIncome += transaction.amount;
+            summary.income += transaction.amount;
         } else if (transaction.type === 'expense') {
-            totalExpense += transaction.amount;
+            summary.expense += transaction.amount;
         }
     });
 
-    const incomeElement = document.getElementById('lbl-total-income');
-    const expenseElement = document.getElementById('lbl-total-expense');
-    const balanceElement = document.getElementById('lbl-total-balance');
+    return summary;
+}
 
-    if (incomeElement) {
-        incomeElement.innerText = totalIncome.toLocaleString() + ' đ';
-    }
+function setMoneyLabel(elementId, amount) {
+    const element = document.getElementById(elementId);
 
-    if (expenseElement) {
-        expenseElement.innerText = totalExpense.toLocaleString() + ' đ';
+    if (element) {
+        element.innerText = formatMoney(amount);
     }
+}
 
-    if (balanceElement) {
-        balanceElement.innerText = (totalIncome - totalExpense).toLocaleString() + ' đ';
-    }
+function renderOverview() {
+    const thisMonth = summarizeMonth(currentMonthKey());
+    const balances = calculateSourceBalances();
+
+    const availableBalance = sources
+        .filter((source) => !DEBT_SOURCES.includes(source))
+        .reduce((total, source) => total + balances[source], 0);
+    const totalDebt = DEBT_SOURCES.reduce(
+        (total, source) => total + Math.max(0, -(balances[source] || 0)),
+        0,
+    );
+
+    setMoneyLabel('lbl-total-income', thisMonth.income);
+    setMoneyLabel('lbl-total-expense', thisMonth.expense);
+    setMoneyLabel('lbl-total-balance', availableBalance);
+    setMoneyLabel('lbl-total-debt', totalDebt);
 
     renderCharts();
 }
 
 function renderAll() {
-    renderTransactions();
-    renderOverview();
-    renderSources();
-    renderCategories();
+    // A failure in one view (for example the charts) must not stop the others from rendering.
+    [renderTransactions, renderOverview, renderSources, renderCategories].forEach((render) => {
+        try {
+            render();
+        } catch (error) {
+            console.error(`Lỗi khi hiển thị (${render.name}):`, error);
+        }
+    });
 }
 
 function initializeApp() {
@@ -45,25 +63,36 @@ function initializeApp() {
         urlInput.value = webAppUrl;
     }
 
-    const txDateEl = document.getElementById('txDate');
+    document
+        .getElementById('transaction-table-body')
+        .addEventListener('click', handleTransactionTableClick);
+    document
+        .getElementById('category-table-body')
+        .addEventListener('click', handleCategoryTableClick);
+    document.getElementById('sources-grid').addEventListener('click', handleSourceGridClick);
 
-    if (txDateEl) {
-        txDateEl.value = new Date().toISOString().split('T')[0];
-    }
+    initModalShortcuts();
+    window.addEventListener('online', resumeSync);
+
+    document.getElementById('txDate').value = toLocalDateString();
 
     updateCategoriesDropdown();
     renderAll();
-    syncFromGoogleSheet();
     renderQuickChips();
+    syncFromGoogleSheet();
 }
 
 function resetAllData() {
-    if (!confirm('Xóa toàn bộ dữ liệu?')) return;
+    const confirmed = confirm(
+        'Xóa toàn bộ giao dịch? Nếu đã bật đồng bộ, dữ liệu trên Google Sheets cũng bị xóa. Hãy "Sao lưu dữ liệu" trước nếu cần giữ lại.',
+    );
+
+    if (!confirmed) return;
 
     transactions = [];
     saveDataLocally();
     renderAll();
-    syncToGoogleSheet();
+    syncToGoogleSheet('replace');
 }
 
 window.addEventListener('load', initializeApp);

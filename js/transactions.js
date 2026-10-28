@@ -9,14 +9,17 @@ function handleFormSubmit(e) {
     const targetSource =
         type === 'transfer' ? document.getElementById('txTargetSource').value : null;
     const category =
-        type === 'transfer'
-            ? 'Chuyển tiền nội bộ'
-            : document.getElementById('txCategory').value;
-    const amount = parseFloat(document.getElementById('txAmount').value) || 0;
-    const note = document.getElementById('txNote').value || '';
+        type === 'transfer' ? 'Chuyển tiền nội bộ' : document.getElementById('txCategory').value;
+    const amount = Math.round(parseFloat(document.getElementById('txAmount').value)) || 0;
+    const note = document.getElementById('txNote').value.trim();
 
     if (!dateInput || amount <= 0) {
         alert('Vui lòng nhập ngày và số tiền hợp lệ!');
+        return;
+    }
+
+    if (type === 'transfer' && source === targetSource) {
+        alert('Nguồn chuyển và nguồn nhận phải khác nhau!');
         return;
     }
 
@@ -35,13 +38,6 @@ function handleFormSubmit(e) {
                   }
                 : transaction,
         );
-        editingId = null;
-
-        const modalTitle = document.querySelector('#transactionModal .modal-header h3');
-
-        if (modalTitle) {
-            modalTitle.innerText = 'Thêm Giao Dịch';
-        }
     } else {
         const newTransaction = {
             id: 'TX_' + Date.now(),
@@ -60,14 +56,6 @@ function handleFormSubmit(e) {
     saveDataLocally();
     renderAll();
     closeModal();
-
-    const form = document.getElementById('transactionForm');
-
-    if (form) {
-        form.reset();
-    }
-
-    document.getElementById('txDate').value = new Date().toISOString().split('T')[0];
     syncToGoogleSheet();
 }
 
@@ -78,19 +66,17 @@ function editTransaction(id) {
 
     editingId = id;
     setTxType(transaction.type);
-    document.getElementById('txDate').value = transaction.date
-        ? transaction.date.split('T')[0]
-        : '';
+    document.getElementById('txDate').value = transaction.date;
     document.getElementById('txSource').value = transaction.source;
 
-    if (transaction.type === 'transfer' && transaction.targetSource) {
+    if (transaction.type === 'transfer') {
         const targetEl = document.getElementById('txTargetSource');
 
-        if (targetEl) {
+        if (targetEl && transaction.targetSource) {
             targetEl.value = transaction.targetSource;
         }
     } else {
-        document.getElementById('txCategory').value = transaction.category;
+        selectCategory(transaction.category, true);
     }
 
     document.getElementById('txAmount').value = transaction.amount;
@@ -109,9 +95,63 @@ function deleteTransaction(id) {
     if (!confirm('Xóa giao dịch này?')) return;
 
     transactions = transactions.filter((transaction) => transaction.id !== id);
+    rememberDeletedIds([id]);
     saveDataLocally();
     renderAll();
     syncToGoogleSheet();
+}
+
+function handleTransactionTableClick(event) {
+    const button = event.target.closest('button[data-action]');
+
+    if (!button) return;
+
+    if (button.dataset.action === 'edit') {
+        editTransaction(button.dataset.id);
+    } else if (button.dataset.action === 'delete') {
+        deleteTransaction(button.dataset.id);
+    }
+}
+
+function renderTransactionRow(transaction) {
+    let typeLabel = 'Chi';
+    let colorStyle = 'var(--danger)';
+    let sign = '-';
+
+    if (transaction.type === 'income') {
+        typeLabel = 'Thu';
+        colorStyle = 'var(--success)';
+        sign = '+';
+    } else if (transaction.type === 'transfer') {
+        typeLabel = 'Chuyển';
+        colorStyle = 'var(--warning)';
+        sign = '⟷';
+    }
+
+    // Rows synced from a Sheet without a "targetSource" column cannot say where a transfer went.
+    const target = transaction.targetSource || '⚠ chưa rõ nguồn nhận';
+    const sourceDisplay =
+        transaction.type === 'transfer'
+            ? `${escapeHtml(transaction.source)} ➔ ${escapeHtml(target)}`
+            : escapeHtml(transaction.source);
+    const id = escapeHtml(transaction.id);
+
+    return `<tr>
+            <td>${escapeHtml(transaction.date)}</td>
+            <td><b>${sourceDisplay}</b></td>
+            <td>${escapeHtml(transaction.category)}</td>
+            <td><span style="color:${colorStyle}; font-weight:600;">${typeLabel}</span></td>
+            <td style="font-weight:700; color:${colorStyle};">${sign}${formatMoney(transaction.amount)}</td>
+            <td>${escapeHtml(transaction.note)}</td>
+            <td style="text-align:right; white-space:nowrap;">
+                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" data-action="edit" data-id="${id}" title="Sửa">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" data-action="delete" data-id="${id}" title="Xóa">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </td>
+        </tr>`;
 }
 
 function renderTransactions() {
@@ -121,11 +161,9 @@ function renderTransactions() {
     if (!tbody || !filterElement) return;
 
     const filter = filterElement.value;
-    tbody.innerHTML = '';
-
-    const filtered = transactions.filter(
-        (transaction) => filter === 'ALL' || transaction.type === filter,
-    );
+    const filtered = transactions
+        .filter((transaction) => filter === 'ALL' || transaction.type === filter)
+        .sort(compareNewestFirst);
 
     if (filtered.length === 0) {
         tbody.innerHTML =
@@ -133,42 +171,5 @@ function renderTransactions() {
         return;
     }
 
-    filtered.forEach((transaction) => {
-        let typeLabel = 'Chi';
-        let colorStyle = 'var(--danger)';
-        let sign = '-';
-
-        if (transaction.type === 'income') {
-            typeLabel = 'Thu';
-            colorStyle = 'var(--success)';
-            sign = '+';
-        } else if (transaction.type === 'transfer') {
-            typeLabel = 'Chuyển';
-            colorStyle = 'var(--warning)';
-            sign = '⟷';
-        }
-
-        const cleanDate = transaction.date ? transaction.date.split('T')[0] : '';
-        const sourceDisplay =
-            transaction.type === 'transfer'
-                ? `${transaction.source} ➔ ${transaction.targetSource}`
-                : transaction.source;
-
-        tbody.innerHTML += `<tr>
-            <td>${cleanDate}</td>
-            <td><b>${sourceDisplay}</b></td>
-            <td>${transaction.category || ''}</td>
-            <td><span style="color:${colorStyle}; font-weight:600;">${typeLabel}</span></td>
-            <td style="font-weight:700; color:${colorStyle};">${sign}${transaction.amount.toLocaleString()} đ</td>
-            <td>${transaction.note || ''}</td>
-            <td style="text-align:right; white-space:nowrap;">
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" onclick="editTransaction('${transaction.id}')">
-                    <i class="fa-solid fa-pen"></i>
-                </button>
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" onclick="deleteTransaction('${transaction.id}')">
-                    <i class="fa-solid fa-trash"></i>
-                </button>
-            </td>
-        </tr>`;
-    });
+    tbody.innerHTML = filtered.map(renderTransactionRow).join('');
 }

@@ -1,5 +1,14 @@
 // UI navigation, modal controls, transaction type controls, and quick-entry chips.
 
+const TAB_TITLES = {
+    overview: 'Tổng Quan Dòng Tiền',
+    transactions: 'Sổ Giao Dịch',
+    sources: 'Nguồn Tiền & Tài Khoản',
+    categories: 'Danh Mục Thu / Chi',
+    debts: 'Vay Nợ & Công Ty',
+    settings: 'Cài Đặt & Dữ Liệu',
+};
+
 // --- QUICK-ENTRY CHIPS ---
 function renderQuickChips() {
     const formContainer = document.querySelector('#transactionForm');
@@ -25,11 +34,11 @@ function quickFill(note, amount, category) {
     setTxType('expense');
     document.getElementById('txAmount').value = amount;
     document.getElementById('txNote').value = note;
-    document.getElementById('txCategory').value = category;
+    selectCategory(category);
 }
 
 // --- TAB NAVIGATION ---
-function switchTab(tabId, triggerElement) {
+function switchTab(tabId) {
     const tab = document.getElementById('tab-' + tabId);
 
     if (!tab) {
@@ -42,8 +51,14 @@ function switchTab(tabId, triggerElement) {
     });
 
     document.querySelectorAll('aside .menu li, .mobile-nav-item').forEach((item) => {
-        item.classList.toggle('active', item === triggerElement);
+        item.classList.toggle('active', item.dataset.tab === tabId);
     });
+
+    const pageTitle = document.getElementById('page-title');
+
+    if (pageTitle && TAB_TITLES[tabId]) {
+        pageTitle.innerText = TAB_TITLES[tabId];
+    }
 }
 
 // --- TRANSACTION TYPE AND TRANSFERS ---
@@ -71,7 +86,7 @@ function setTxType(type) {
         targetGroup.innerHTML = `
             <label>Chuyển Đến Nguồn (Nhận)</label>
             <select id="txTargetSource" class="form-control">
-                ${sources.map((source) => `<option value="${source}">${source}</option>`).join('')}
+                ${sources.map((source) => `<option value="${escapeHtml(source)}">${escapeHtml(source)}</option>`).join('')}
             </select>
         `;
 
@@ -85,8 +100,14 @@ function setTxType(type) {
 
     targetGroup.style.display = type === 'transfer' ? 'block' : 'none';
 
+    // Transfers have no category. A hidden required select with no options would silently
+    // block the form from submitting, so it must be disabled rather than just hidden.
     const categorySelect = document.getElementById('txCategory');
     const categoryGroup = categorySelect ? categorySelect.closest('.form-group') : null;
+
+    if (categorySelect) {
+        categorySelect.disabled = type === 'transfer';
+    }
 
     if (categoryGroup) {
         categoryGroup.style.display = type === 'transfer' ? 'none' : 'block';
@@ -94,13 +115,35 @@ function setTxType(type) {
 }
 
 // --- MODAL CONTROLS ---
+function resetTransactionForm() {
+    editingId = null;
+
+    const form = document.getElementById('transactionForm');
+    const modalTitle = document.querySelector('#transactionModal .modal-header h3');
+
+    if (form) {
+        form.reset();
+    }
+
+    if (modalTitle) {
+        modalTitle.innerText = 'Thêm Giao Dịch';
+    }
+
+    setTxType('expense');
+}
+
 function openModal() {
+    if (!editingId) {
+        document.getElementById('txDate').value = toLocalDateString();
+    }
+
     document.getElementById('transactionModal').classList.add('open');
 }
 
 function closeModal() {
     document.getElementById('transactionModal').classList.remove('open');
-    editingId = null;
+    resetTransactionForm();
+    document.getElementById('txDate').value = toLocalDateString();
 }
 
 function openCategoryModal() {
@@ -109,4 +152,19 @@ function openCategoryModal() {
 
 function closeCategoryModal() {
     document.getElementById('categoryModal').classList.remove('open');
+    document.getElementById('catName').value = '';
+}
+
+function initModalShortcuts() {
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+
+        if (document.getElementById('transactionModal').classList.contains('open')) {
+            closeModal();
+        }
+
+        if (document.getElementById('categoryModal').classList.contains('open')) {
+            closeCategoryModal();
+        }
+    });
 }

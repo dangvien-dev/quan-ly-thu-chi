@@ -6,7 +6,6 @@ const BACKUP_STORAGE_KEYS = {
     transactions: 'fm_transactions',
     categories: 'fm_categories',
     initialBalances: 'fm_initial_balances',
-    scriptUrl: 'fm_script_url',
 };
 
 function exportBackup() {
@@ -17,9 +16,7 @@ function exportBackup() {
         data: {
             transactions,
             categories,
-            initialBalances: JSON.parse(
-                localStorage.getItem(BACKUP_STORAGE_KEYS.initialBalances) || '{}',
-            ),
+            initialBalances: getInitialBalances(),
             scriptUrl: webAppUrl,
         },
     };
@@ -70,40 +67,56 @@ async function importBackup(file) {
     }
 
     const confirmed = confirm(
-        'Khôi phục bản sao lưu sẽ thay thế giao dịch, danh mục, số dư ban đầu và URL Google Apps Script hiện tại. Bạn có muốn tiếp tục?',
+        'Khôi phục bản sao lưu sẽ thay thế giao dịch, danh mục, số dư ban đầu và URL Google Apps Script hiện tại. Nếu bản sao lưu có URL Google Sheets, dữ liệu trên Sheet cũng sẽ được thay bằng bản sao lưu. Bạn có muốn tiếp tục?',
     );
 
     if (!confirmed) return;
 
+    const restoredTransactions = normalizeTransactions(backup.data.transactions);
+    const restoredCategories = backup.data.categories.filter(
+        (category) =>
+            category &&
+            category.name &&
+            (category.type === 'income' || category.type === 'expense'),
+    );
+    const skippedCount = backup.data.transactions.length - restoredTransactions.length;
+
     try {
         localStorage.setItem(
             BACKUP_STORAGE_KEYS.transactions,
-            JSON.stringify(backup.data.transactions),
+            JSON.stringify(restoredTransactions),
         );
-        localStorage.setItem(
-            BACKUP_STORAGE_KEYS.categories,
-            JSON.stringify(backup.data.categories),
-        );
+        localStorage.setItem(BACKUP_STORAGE_KEYS.categories, JSON.stringify(restoredCategories));
         localStorage.setItem(
             BACKUP_STORAGE_KEYS.initialBalances,
             JSON.stringify(backup.data.initialBalances),
         );
-        localStorage.setItem(BACKUP_STORAGE_KEYS.scriptUrl, backup.data.scriptUrl);
 
-        transactions = backup.data.transactions;
-        categories = backup.data.categories;
-        webAppUrl = backup.data.scriptUrl;
+        transactions = restoredTransactions;
+        categories = restoredCategories;
 
         const urlInput = document.getElementById('setting-script-url');
 
         if (urlInput) {
-            urlInput.value = webAppUrl;
+            urlInput.value = backup.data.scriptUrl;
         }
 
         updateCategoriesDropdown();
         renderAll();
 
-        alert('Đã khôi phục dữ liệu từ bản sao lưu. Google Sheets chưa được đồng bộ tự động.');
+        // With a Sheet configured, the restored list becomes the Sheet's content as well. The flag
+        // is only set here; setScriptUrl() reads the new Sheet first and then uploads the list.
+        if (backup.data.scriptUrl) {
+            setSyncDirty('replace');
+        }
+
+        setScriptUrl(backup.data.scriptUrl);
+
+        alert(
+            'Đã khôi phục dữ liệu từ bản sao lưu.' +
+                (skippedCount ? ` Bỏ qua ${skippedCount} dòng giao dịch không hợp lệ.` : '') +
+                (backup.data.scriptUrl ? ' Đang đồng bộ lên Google Sheets.' : ''),
+        );
     } catch (error) {
         console.error('Không thể khôi phục bản sao lưu:', error);
         alert('Không thể lưu dữ liệu khôi phục vào trình duyệt. Hãy kiểm tra dung lượng lưu trữ.');

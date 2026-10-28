@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinManager - Quản Lý Dòng Tiền Cá Nhân</title>
     <!-- Thư viện ngoài -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Liên kết file CSS riêng -->
     <link rel="stylesheet" href="style.css">
@@ -16,12 +16,12 @@
     <aside>
         <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
         <ul class="menu">
-            <li class="active" onclick="switchTab('overview', this)"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
-            <li onclick="switchTab('transactions', this)"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
-            <li onclick="switchTab('sources', this)"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
-            <li onclick="switchTab('categories', this)"><i class="fa-solid fa-tags"></i> Danh Mục</li>
-            <li onclick="switchTab('debts', this)"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
-            <li onclick="switchTab('settings', this)"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
+            <li class="active" data-tab="overview" onclick="switchTab('overview')"><i class="fa-solid fa-chart-pie"></i> Tổng Quan</li>
+            <li data-tab="transactions" onclick="switchTab('transactions')"><i class="fa-solid fa-list-ul"></i> Sổ Giao Dịch</li>
+            <li data-tab="sources" onclick="switchTab('sources')"><i class="fa-solid fa-vault"></i> Nguồn Tiền</li>
+            <li data-tab="categories" onclick="switchTab('categories')"><i class="fa-solid fa-tags"></i> Danh Mục</li>
+            <li data-tab="debts" onclick="switchTab('debts')"><i class="fa-solid fa-hand-holding-dollar"></i> Vay Nợ & Cty</li>
+            <li data-tab="settings" onclick="switchTab('settings')"><i class="fa-solid fa-gear"></i> Cài Đặt & Dữ Liệu</li>
         </ul>
     </aside>
 
@@ -47,8 +47,8 @@
                 <div class="card"><div class="card-title">Dư Nợ Tín Dụng / SPay</div><div class="card-value expense" id="lbl-total-debt">0 đ</div></div>
             </div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
-                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Tỷ Trọng Chi Tiêu</h3><div style="height: 240px;"><canvas id="expenseCategoryChart"></canvas></div></div>
-                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Biểu Đồ Thu / Chi</h3><div style="height: 240px;"><canvas id="monthlyChart"></canvas></div></div>
+                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Tỷ Trọng Chi Tiêu Tháng Này</h3><div style="height: 240px;"><canvas id="expenseCategoryChart"></canvas></div></div>
+                <div class="card"><h3 style="font-size: 16px; margin-bottom: 15px;">Thu / Chi 6 Tháng Gần Đây</h3><div style="height: 240px;"><canvas id="monthlyChart"></canvas></div></div>
             </div>
         </section>
 
@@ -125,7 +125,7 @@
 <input
     type="file"
     accept=".json"
-    onchange="this.files.length && importBackup(this.files[0])">
+    onchange="if (this.files.length) { importBackup(this.files[0]); this.value = ''; }">
                 
             </div>
             <div class="card" style="border-color: var(--danger);">
@@ -137,23 +137,23 @@
 
     <!-- Mobile Navigation -->
     <nav class="mobile-nav">
-        <button class="mobile-nav-item active" onclick="switchTab('overview', this)">
+        <button class="mobile-nav-item active" data-tab="overview" onclick="switchTab('overview')">
             <i class="fa-solid fa-chart-pie"></i><span>Tổng quan</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('transactions', this)">
+        <button class="mobile-nav-item" data-tab="transactions" onclick="switchTab('transactions')">
             <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('sources', this)">
+        <button class="mobile-nav-item" data-tab="sources" onclick="switchTab('sources')">
             <i class="fa-solid fa-vault"></i><span>Nguồn</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('categories', this)">
+        <button class="mobile-nav-item" data-tab="categories" onclick="switchTab('categories')">
             <i class="fa-solid fa-tags"></i><span>Danh mục</span>
         </button>
         
-        <button class="mobile-nav-item" onclick="switchTab('settings', this)">
+        <button class="mobile-nav-item" data-tab="settings" onclick="switchTab('settings')">
             <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
         </button>
     </nav>
@@ -189,7 +189,8 @@
                            id="txAmount"
                            class="form-control"
                            min="1"
-                           step="1000"
+                           step="1"
+                           inputmode="numeric"
                            required>
                 </div>
                 
@@ -211,6 +212,7 @@
     </div>
 
     <!-- Liên kết file JavaScript riêng -->
+    <script src="js/utils.js"></script>
     <script src="js/data.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/categories.js"></script>
