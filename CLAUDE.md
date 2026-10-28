@@ -6,7 +6,7 @@ File này được Claude Code tự đọc ở đầu mỗi phiên. Giữ nó ng
 
 - Chủ repo: Nguyễn Đăng Viên (vienkendo@gmail.com), chuyên gia IT độc lập, thích tự động hoá, ghét việc lặp lại. **Luôn trả lời bằng tiếng Việt**; giữ nguyên thuật ngữ kỹ thuật, tên file, lệnh, API, Git/GitHub bằng English.
 - App thu chi cá nhân, web tĩnh (HTML/CSS/JS thuần, không build), dữ liệu ở `localStorage`, đồng bộ tùy chọn với Google Sheets qua Google Apps Script.
-- Sheet thật của chủ repo: `DataThuChi_CaNhan`, tab `Transactions`, cột `id,date,type,source,category,amount,note` (chưa có `targetSource`). Ngày trong Sheet là UTC (`2026-10-26T17:00:00.000Z` = 27/10 giờ VN).
+- Sheet thật của chủ repo: `DataThuChi_CaNhan`, tab `Transactions`, cột `id,date,type,source,category,amount,note` (chưa có `targetSource`). Ngày trong Sheet là UTC (`2026-10-26T17:00:00.000Z` = 27/10 giờ VN). Cột ngày của script cũ nên được chủ repo đặt định dạng `dd/mm/yyyy` bằng tay trong Sheet (script v2 tự đặt).
 - **Apps Script thật của chủ repo** (chủ repo gửi ngày 28/10/2026) được giữ nguyên văn ở `tests/gas/fixtures/user-script.gs`; test e2e chạy đúng script này trong sandbox. Đặc điểm cần nhớ:
     - `doGet` trả mảng giao dịch (7 cột, ngày ra dạng ISO UTC); `?action=save&data=<json>` ghi bằng GET (cách duy nhất từng chạy thật trên trình duyệt của chủ repo vì CORS; giới hạn độ dài URL, và script `decodeURIComponent` lần thứ hai nên dữ liệu có `%` sẽ lỗi).
     - `doPost` chỉ hiểu body `{"transactions": [...]}`. Nó **xóa Sheet trước khi đọc body**, nên mọi body khác (ví dụ `{"action":"save","data":[...]}`) làm mất toàn bộ dữ liệu mà vẫn trả HTTP 200. Lỗi kiểu `{"status":"error","message":...}` cũng trả 200.
@@ -53,6 +53,9 @@ Chart.js và Font Awesome nằm trong `vendor/` (không dùng CDN). Mỗi file n
 - Prettier theo `.prettierrc.json` (4 space, single quote, `;`, trailing comma, width 100). Comment code bằng English, chuỗi giao diện bằng tiếng Việt.
 - Không nội suy dữ liệu người dùng vào `innerHTML` mà không qua `escapeHtml`; không dùng `onclick="fn('${data}')"` — dùng `data-*` + event delegation.
 - Ngày luôn là chuỗi `YYYY-MM-DD` theo giờ địa phương. Không dùng `toISOString().split('T')[0]` cho ngày hiển thị/nhập (UTC lệch ngày).
+- Hiển thị ngày luôn qua `formatDateDisplay` (`dd/mm/yyyy`); dữ liệu lưu, `<input type="date">` và so sánh vẫn là ISO `YYYY-MM-DD`. Không tự ghép chuỗi ngày kiểu khác.
+- Ô nhập tiền là `<input type="text" data-money="positive|signed">` (tự thêm dấu `.` hàng nghìn khi gõ, `initMoneyInputs` gắn ở `initializeApp`). Đọc/ghi bằng `readMoneyInput(id)` / `setMoneyInput(id, value)` (trong `js/ui.js`), không dùng `.value`/`valueAsNumber`; logic thuần nằm ở `formatMoneyDigits`, `parseMoneyText` (`js/utils.js`). Ô tiền mới phải thêm `data-money` và test trong `tests/e2e/money.spec.js`.
+- Sổ giao dịch trên điện thoại (≤768px) là danh sách một dòng (`<table class="responsive-table compact-rows">`): `td.cell-title` (ẩn trên desktop) chứa nút `.row-toggle` (`aria-expanded`); chạm dòng hoặc nút để mở chi tiết + nút sửa/xóa; trạng thái mở nằm ở `expandedTransactionIds` nên sống qua `renderAll`. Các bảng khác vẫn là thẻ có nhãn.
 - Mỗi view render độc lập trong `renderAll()` (một view lỗi không được chặn view khác). Chart.js/CDN có thể không tải được.
 - Tiền là số nguyên VND; hiển thị bằng `formatMoney`.
 - Trợ năng (có test axe `tests/e2e/a11y.spec.js`, WCAG 2 A/AA): bảng dùng `class="responsive-table"` và `data-label` ở mỗi `td` (thành thẻ ở ≤768px); nút chỉ có icon phải có `aria-label`; hộp thoại mở/đóng bằng `openDialog/closeDialog` (đưa focus vào, trả focus, Esc, giữ Tab trong hộp thoại) và có `role="dialog" aria-modal aria-labelledby`; mọi ô nhập có `<label for>`. Giữ `--success/--danger/--warning` ở sắc đậm (đã chọn để đạt tương phản 4,5:1; màu biểu đồ ở `js/charts.js` là hex riêng).
@@ -84,11 +87,14 @@ npm run format:check   # Prettier (npm run format để sửa)
 
 ## Trạng thái (cập nhật 28/10/2026)
 
-PR #3 (`claude/hopeful-einstein-l7hu3u` → `main`) gồm, theo thứ tự commit: sửa lỗi gốc (chuyển tiền không lưu được, `step` số tiền, ngày lệch múi giờ, sync mất dữ liệu, XSS, số liệu Tổng quan, localStorage hỏng/CDN lỗi) → PWA + vendor thư viện + test/CI trong repo → **sửa giao thức sync cho khớp script thật** → quản lý nguồn tiền → lọc/tìm kiếm/CSV → ngân sách → định kỳ → vay nợ → đồng bộ v2 → mobile + trợ năng. Toàn bộ test (162 e2e, 51 unit) pass trên bản clone sạch.
+PR #3 (`claude/hopeful-einstein-l7hu3u` → `main`, đã merge, merge commit `88df733`) gồm: sửa lỗi gốc (chuyển tiền không lưu được, `step` số tiền, ngày lệch múi giờ, sync mất dữ liệu, XSS, số liệu Tổng quan, localStorage hỏng/CDN lỗi) → PWA + vendor thư viện + test/CI trong repo → **sửa giao thức sync cho khớp script thật** → quản lý nguồn tiền → lọc/tìm kiếm/CSV → ngân sách → định kỳ → vay nợ → đồng bộ v2 → mobile + trợ năng.
+
+Đợt tiếp theo (cùng branch, PR mới sau PR #3): ngày hiển thị `dd/mm/yyyy` (cột ngày của `Code.gs` v2 cũng `dd/mm/yyyy`), ô tiền có dấu phân cách hàng nghìn khi gõ, sổ giao dịch trên điện thoại gọn một dòng/giao dịch (chạm để mở chi tiết). Toàn bộ test (195 e2e, 58 unit) pass.
 
 Việc chủ repo cần làm / quyết định:
 
-- Xem và merge PR #3. Sau khi merge, bật GitHub Pages (hoặc host tĩnh bất kỳ) nếu muốn dùng PWA trên điện thoại (service worker cần https).
+- Xem và merge PR của đợt `dd/mm/yyyy` + ô tiền + dòng gọn; GitHub Pages chỉ cập nhật sau khi merge (service worker có thể cần tải lại 1-2 lần để lấy bản mới).
+- Sheet đang dùng script cũ: chọn cột `date` > Format > Number > Custom date and time > `dd/mm/yyyy` để cột ngày trong Sheet cũng đọc theo dd/mm/yyyy.
 - Tùy chọn: nâng cấp Apps Script lên `apps-script/Code.gs` (xem README "Nâng cấp lên v2") để đồng bộ danh mục/nguồn/ngân sách/định kỳ/vay nợ và bật `FM_TOKEN`. **Chưa ai chạy `Code.gs` trên Google thật** — sau khi deploy, thử thêm/sửa/xóa một giao dịch và mở app trên máy thứ hai.
 - Xác nhận cách POST `text/plain` đọc được phản hồi trên Web App thật (nếu không, app tự dự phòng bằng GET khi dữ liệu nhỏ).
 - Nếu "Nợ Công Ty" thực ra là công ty nợ chủ repo: đổi loại nguồn đó sang "Khác".

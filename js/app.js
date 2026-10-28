@@ -89,6 +89,7 @@ function initializeApp() {
         .map(([kind, { label }]) => `<option value="${kind}">${label}</option>`)
         .join('');
 
+    initMoneyInputs();
     initTransactionFilters();
     initRecurring();
     initDebts();

@@ -170,7 +170,7 @@ test.describe('CSV', () => {
         );
 
         assert.ok(csv.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú\r\n'));
-        assert.ok(csv.includes('2026-10-27,Chi,Tiền Mặt,,Ăn uống,17000,Cafe\r\n'));
+        assert.ok(csv.includes('27/10/2026,Chi,Tiền Mặt,,Ăn uống,17000,Cafe\r\n'));
     });
 
     test('escape dấu phẩy, nháy kép, xuống dòng', () => {
@@ -418,5 +418,79 @@ test.describe('vay nợ', () => {
             plain(run(`summarizeDebts(normalizeDebts(${JSON.stringify(list)}), "2026-10-28")`)),
             { owe: 800000, owed: 500000, overdueCount: 1, overdueAmount: 600000 },
         );
+    });
+});
+
+test.describe('hiển thị ngày và ô nhập tiền', () => {
+    test('formatDateDisplay đổi YYYY-MM-DD sang DD/MM/YYYY, giữ nguyên giá trị lạ', () => {
+        assert.equal(run('formatDateDisplay("2026-10-28")'), '28/10/2026');
+        assert.equal(run('formatDateDisplay("2026-01-05")'), '05/01/2026');
+        assert.equal(run('formatDateDisplay("")'), '');
+        assert.equal(run('formatDateDisplay(null)'), '');
+        assert.equal(run('formatDateDisplay("hôm nay")'), 'hôm nay');
+    });
+
+    test('formatMoneyDigits nhóm hàng nghìn bằng dấu chấm và bỏ ký tự lạ', () => {
+        const format = (text, signed = false) =>
+            run(`formatMoneyDigits(${JSON.stringify(text)}, ${signed})`);
+
+        assert.equal(format('1234567'), '1.234.567');
+        assert.equal(format('1.234.567'), '1.234.567');
+        assert.equal(format('1234'), '1.234');
+        assert.equal(format('999'), '999');
+        assert.equal(format('abc12x3'), '123');
+        assert.equal(format(''), '');
+        assert.equal(format('abc'), '');
+        assert.equal(format('0'), '0');
+        assert.equal(format('0012'), '12');
+        assert.equal(format('1 000 000'), '1.000.000');
+    });
+
+    test('formatMoneyDigits: dấu trừ chỉ được giữ ở ô cho phép số âm', () => {
+        const format = (text, signed) =>
+            run(`formatMoneyDigits(${JSON.stringify(text)}, ${signed})`);
+
+        assert.equal(format('-5000', true), '-5.000');
+        assert.equal(format('-5000', false), '5.000');
+        assert.equal(format('-', true), '-');
+        assert.equal(format('-', false), '');
+        assert.equal(format('5-000', true), '5.000');
+    });
+
+    test('formatMoneyDigits giới hạn 15 chữ số để không mất độ chính xác', () => {
+        assert.equal(run('formatMoneyDigits("123456789012345678901")'), '123.456.789.012.345');
+    });
+
+    test('parseMoneyText đọc lại số đã nhóm, trả NaN khi rỗng hoặc không phải số', () => {
+        const parse = (text) => run(`parseMoneyText(${JSON.stringify(text)})`);
+
+        assert.equal(parse('1.500.000'), 1500000);
+        assert.equal(parse('-20.000'), -20000);
+        assert.equal(parse('17000'), 17000);
+        assert.equal(parse('0'), 0);
+        assert.ok(Number.isNaN(parse('')));
+        assert.ok(Number.isNaN(parse('-')));
+        assert.ok(Number.isNaN(parse('abc')));
+        assert.ok(Number.isNaN(parse(null)));
+    });
+
+    test('formatMoneyDigits và parseMoneyText là hai chiều của nhau', () => {
+        for (const value of [0, 7, 999, 1000, 17000, 224500, 15000000, 999999999999]) {
+            assert.equal(run(`parseMoneyText(formatMoneyDigits(String(${value})))`), value);
+        }
+    });
+
+    test('tìm kiếm khớp ngày đang hiển thị (28/10) và ngày đầy đủ', () => {
+        const list = [tx({ id: 'a', date: '2026-10-28' }), tx({ id: 'b', date: '2026-09-05' })];
+        const search = (text) =>
+            plain(
+                run(
+                    `filterTransactions(${JSON.stringify(list)}, { search: ${JSON.stringify(text)} })`,
+                ),
+            ).map((item) => item.id);
+
+        assert.deepEqual(search('28/10'), ['a']);
+        assert.deepEqual(search('05/09/2026'), ['b']);
+        assert.deepEqual(search('2026-10-28'), ['a']);
     });
 });

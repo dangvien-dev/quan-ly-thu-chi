@@ -208,7 +208,7 @@
                 </div>
                 <div id="transaction-summary" class="filter-summary" aria-live="polite"></div>
                 <div class="table-container">
-                    <table class="responsive-table">
+                    <table class="responsive-table compact-rows">
                         <thead>
                             <tr>
                                 <th scope="col">Ngày</th>
@@ -529,13 +529,14 @@
                     <div class="form-group">
                         <label for="txAmount">Số Tiền (VNĐ)</label>
                         <input
-                            type="number"
+                            type="text"
                             id="txAmount"
                             class="form-control"
-                            min="1"
-                            step="1"
-                            inputmode="numeric"
                             required
+                            inputmode="numeric"
+                            autocomplete="off"
+                            data-money="positive"
+                            placeholder="0"
                         />
                     </div>
 
@@ -614,12 +615,13 @@
                         <div class="form-group">
                             <label for="srcCreditLimit">Hạn mức (VNĐ)</label>
                             <input
-                                type="number"
+                                type="text"
                                 id="srcCreditLimit"
                                 class="form-control"
-                                min="0"
-                                step="1"
                                 inputmode="numeric"
+                                autocomplete="off"
+                                data-money="positive"
+                                placeholder="0"
                             />
                         </div>
                         <div class="form-row">
@@ -650,11 +652,13 @@
                     <div class="form-group">
                         <label for="srcInitialBalance">Số dư ban đầu (nợ thì nhập số âm)</label>
                         <input
-                            type="number"
+                            type="text"
                             id="srcInitialBalance"
                             class="form-control"
-                            step="1"
-                            inputmode="numeric"
+                            inputmode="text"
+                            autocomplete="off"
+                            data-money="signed"
+                            placeholder="0"
                         />
                     </div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">
@@ -701,13 +705,14 @@
                         <div class="form-group">
                             <label for="rcAmount">Số tiền (VNĐ)</label>
                             <input
-                                type="number"
+                                type="text"
                                 id="rcAmount"
                                 class="form-control"
-                                min="1"
-                                step="1"
-                                inputmode="numeric"
                                 required
+                                inputmode="numeric"
+                                autocomplete="off"
+                                data-money="positive"
+                                placeholder="0"
                             />
                         </div>
                     </div>
@@ -812,13 +817,14 @@
                         <div class="form-group">
                             <label for="debtAmount">Số tiền gốc (VNĐ)</label>
                             <input
-                                type="number"
+                                type="text"
                                 id="debtAmount"
                                 class="form-control"
-                                min="1"
-                                step="1"
-                                inputmode="numeric"
                                 required
+                                inputmode="numeric"
+                                autocomplete="off"
+                                data-money="positive"
+                                placeholder="0"
                             />
                         </div>
                     </div>

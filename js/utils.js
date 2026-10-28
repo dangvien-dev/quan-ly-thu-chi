@@ -256,6 +256,7 @@ function transactionSearchText(transaction) {
             transaction.source,
             transaction.targetSource,
             transaction.date,
+            formatDateDisplay(transaction.date),
             transaction.amount,
             formatMoney(transaction.amount),
         ].join(' '),
@@ -314,7 +315,7 @@ function csvCell(value, { isText = true } = {}) {
 function buildTransactionsCsv(list) {
     const lines = [CSV_HEADER.map((name) => csvCell(name))].concat(
         list.map((transaction) => [
-            csvCell(transaction.date),
+            csvCell(formatDateDisplay(transaction.date)),
             csvCell(CSV_TYPE_LABELS[transaction.type]),
             csvCell(transaction.source),
             csvCell(transaction.targetSource),
@@ -604,4 +605,37 @@ function summarizeDebts(list, todayKey) {
     });
 
     return summary;
+}
+
+// --- DISPLAY FORMATS AND MONEY FIELDS ---
+
+/** YYYY-MM-DD -> DD/MM/YYYY for display; anything else is returned unchanged. */
+function formatDateDisplay(dateKey) {
+    const text = String(dateKey ?? '');
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : text;
+}
+
+/**
+ * Group the digits typed in a money field: "1234567" -> "1.234.567". Everything that is not a
+ * digit is dropped; a leading "-" is kept only when negative numbers are allowed.
+ */
+function formatMoneyDigits(text, allowNegative = false) {
+    const negative = allowNegative && /^\s*-/.test(String(text ?? ''));
+    const digits = String(text ?? '')
+        .replace(/\D/g, '')
+        .replace(/^0+(?=\d)/, '')
+        .slice(0, 15);
+
+    if (!digits) return negative ? '-' : '';
+
+    return (negative ? '-' : '') + digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/** The number in a money field ("1.500.000", "-20.000"); NaN when empty or not a number. */
+function parseMoneyText(text) {
+    const cleaned = String(text ?? '').replace(/[.,\s]/g, '');
+
+    return /^-?\d+$/.test(cleaned) ? Number(cleaned) : NaN;
 }

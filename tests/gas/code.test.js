@@ -91,7 +91,7 @@ test.describe('yêu cầu cũ (tương thích với client và script ban đầu
         assert.equal(formats[1], '@', 'id là text');
         assert.equal(formats[7], '@', 'note là text, không bị hiểu thành công thức');
         assert.equal(formats[8], '@', 'targetSource là text');
-        assert.equal(formats[2], 'yyyy-mm-dd');
+        assert.equal(formats[2], 'dd/mm/yyyy', 'cột ngày hiển thị dd/mm/yyyy');
     });
 
     test('REGRESSION: body sai định dạng không bao giờ xóa Sheet (sự cố 28/10/2026)', () => {

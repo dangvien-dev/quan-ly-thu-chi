@@ -5,6 +5,8 @@
 ## Tính năng
 
 - **Giao dịch**: thu / chi / chuyển tiền giữa các nguồn; lọc theo tháng, loại, danh mục, nguồn; tìm kiếm không dấu; xem thêm theo trang; xuất CSV (UTF-8, mở được trong Excel).
+- **Điện thoại**: mỗi giao dịch là một dòng (ngày · ghi chú · số tiền, viền màu theo loại thu / chi / chuyển); chạm vào dòng để xem nguồn tiền, danh mục và nút sửa / xóa.
+- **Nhập liệu dễ đọc**: ngày hiển thị `dd/mm/yyyy` ở mọi nơi (kể cả CSV); các ô tiền tự thêm dấu chấm ngăn cách hàng nghìn khi gõ (`1500000` → `1.500.000`).
 - **Nguồn tiền**: tiền mặt, ngân hàng, ví điện tử, thẻ tín dụng / trả sau (hạn mức, ngày chốt sao kê, hạn thanh toán), khoản nợ; lưu trữ, đổi tên (cập nhật mọi giao dịch).
 - **Tổng quan**: thu / chi tháng này, số dư khả dụng, dư nợ, biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.
 - **Ngân sách** theo danh mục chi, cảnh báo khi vượt 80% và 100%.
@@ -48,6 +50,15 @@ npm run format:check
 CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR. Test e2e không dùng mạng: mọi request ra ngoài đều bị chặn, và Google Apps Script được thay bằng chính mã Apps Script chạy trong sandbox trên Sheet giả.
 
 ## Đồng bộ Google Sheets
+
+### Định dạng ngày trên Google Sheet
+
+Ứng dụng luôn lưu ngày dạng `YYYY-MM-DD` và chỉ hiển thị `dd/mm/yyyy`, nên Sheet không bắt buộc phải đổi. Để cột ngày trong Sheet cũng hiện `dd/mm/yyyy`:
+
+- **Script v2 (`apps-script/Code.gs`)**: tự đặt định dạng `dd/mm/yyyy` cho cột `date` mỗi lần ghi.
+- **Script cũ**: chọn cả cột `date` (cột B) > Format > Number > Custom date and time > chọn `dd/mm/yyyy` > Apply. Chỉ cần làm một lần; ứng dụng vẫn đọc đúng cả giá trị ngày kiểu UTC (`2026-10-26T17:00:00.000Z` = 27/10 giờ Việt Nam).
+
+Ô chọn ngày của trình duyệt hiện theo ngôn ngữ của thiết bị (điện thoại đặt tiếng Việt thì là `dd/mm/yyyy`). File CSV xuất ra cũng dùng `dd/mm/yyyy`: Excel đặt vùng Việt Nam hiểu đúng; nếu mở bằng Excel vùng Mỹ thì cột ngày có thể bị đọc nhầm tháng và ngày.
 
 Ứng dụng tự nhận ra loại Apps Script đang dùng và không ghi gì trước khi đã đọc xong:
 

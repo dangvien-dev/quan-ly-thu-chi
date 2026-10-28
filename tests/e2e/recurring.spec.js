@@ -79,7 +79,7 @@ test.describe('Giao dịch định kỳ', () => {
         expect(saved.rule.last).toBe('2026-10-05');
         await expect(page.locator('#toast-container')).toContainText('Đã tạo 3 giao dịch định kỳ');
         await expect(page.locator('#recurring-table-body')).toContainText('Hằng tháng, ngày 5');
-        await expect(page.locator('#recurring-table-body')).toContainText('Lần tới: 2026-11-05');
+        await expect(page.locator('#recurring-table-body')).toContainText('Lần tới: 05/11/2026');
 
         await goTab(page, 'sources');
         await expect(
@@ -174,7 +174,7 @@ test.describe('Giao dịch định kỳ', () => {
         // Resumes from today: 28/10 is not the 5th, so nothing is created yet.
         expect(await page.evaluate(() => transactions.length)).toBe(0);
         await expect(page.locator('#recurring-table-body')).toContainText('Đang chạy');
-        await expect(page.locator('#recurring-table-body')).toContainText('Lần tới: 2026-11-05');
+        await expect(page.locator('#recurring-table-body')).toContainText('Lần tới: 05/11/2026');
     });
 
     test('quy tắc chuyển tiền tạo giao dịch chuyển với nguồn nhận và cập nhật cả hai số dư', async ({

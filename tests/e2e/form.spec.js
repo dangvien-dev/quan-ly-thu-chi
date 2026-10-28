@@ -141,7 +141,7 @@ test.describe('Ngày từ Google Sheet', () => {
 
         await goTransactions(page);
         await expect(page.locator('#transaction-table-body tr').first()).toContainText(
-            '2026-10-27',
+            '27/10/2026',
         );
 
         await page.click('#transaction-table-body button[data-action=edit]');

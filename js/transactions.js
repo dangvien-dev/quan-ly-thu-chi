@@ -10,7 +10,7 @@ function handleFormSubmit(e) {
         type === 'transfer' ? document.getElementById('txTargetSource').value : null;
     const category =
         type === 'transfer' ? TRANSFER_CATEGORY : document.getElementById('txCategory').value;
-    const amount = Math.round(parseFloat(document.getElementById('txAmount').value)) || 0;
+    const amount = readMoneyInput('txAmount') || 0;
     const note = document.getElementById('txNote').value.trim();
 
     if (!dateInput || amount <= 0) {
@@ -86,7 +86,7 @@ function editTransaction(id) {
         selectCategory(transaction.category, true);
     }
 
-    document.getElementById('txAmount').value = transaction.amount;
+    setMoneyInput('txAmount', transaction.amount);
     document.getElementById('txNote').value = transaction.note || '';
 
     const modalTitle = document.querySelector('#transactionModal .modal-header h3');
@@ -108,12 +108,39 @@ function deleteTransaction(id) {
     syncToGoogleSheet();
 }
 
+// On phones a transaction is one line; tapping it opens its details (and the edit / delete buttons).
+const expandedTransactionIds = new Set();
+
+function isPhoneLayout() {
+    return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function toggleTransactionDetails(row) {
+    const id = row.dataset.id;
+    const expanded = !expandedTransactionIds.has(id);
+
+    if (expanded) expandedTransactionIds.add(id);
+    else expandedTransactionIds.delete(id);
+
+    row.classList.toggle('expanded', expanded);
+    row.querySelector('.row-toggle').setAttribute('aria-expanded', String(expanded));
+}
+
 function handleTransactionTableClick(event) {
     const button = event.target.closest('button[data-action]');
 
-    if (!button) return;
+    if (!button) {
+        // Anywhere else on a phone row works as a bigger tap target for the toggle button.
+        const row = event.target.closest('tr[data-id]');
 
-    if (button.dataset.action === 'edit') {
+        if (row && isPhoneLayout()) toggleTransactionDetails(row);
+
+        return;
+    }
+
+    if (button.dataset.action === 'toggle') {
+        toggleTransactionDetails(button.closest('tr'));
+    } else if (button.dataset.action === 'edit') {
         editTransaction(button.dataset.id);
     } else if (button.dataset.action === 'delete') {
         deleteTransaction(button.dataset.id);
@@ -137,24 +164,28 @@ function renderTransactionRow(transaction) {
 
     // Rows synced from a Sheet without a "targetSource" column cannot say where a transfer went.
     const target = transaction.targetSource || '⚠ chưa rõ nguồn nhận';
-    const sourceDisplay =
-        transaction.type === 'transfer'
-            ? `${escapeHtml(transaction.source)} ➔ ${escapeHtml(target)}`
-            : escapeHtml(transaction.source);
+    const sourceText =
+        transaction.type === 'transfer' ? `${transaction.source} ➔ ${target}` : transaction.source;
     const id = escapeHtml(transaction.id);
+    const date = escapeHtml(formatDateDisplay(transaction.date));
+    const expanded = expandedTransactionIds.has(transaction.id);
+    // The one-line phone row shows the note, or what the money was for when there is none.
+    const title =
+        transaction.type === 'transfer' ? sourceText : transaction.note || transaction.category;
 
-    return `<tr>
-            <td data-label="Ngày">${escapeHtml(transaction.date)}</td>
-            <td data-label="Nguồn tiền"><b>${sourceDisplay}</b></td>
+    return `<tr data-id="${id}" class="${expanded ? 'expanded' : ''}" style="--row-color:${colorStyle}">
+            <td data-label="Ngày">${date}</td>
+            <td class="cell-title"><button type="button" class="row-toggle" data-action="toggle" data-id="${id}" aria-expanded="${expanded}"><span class="row-title-text">${escapeHtml(title)}</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button></td>
+            <td data-label="Nguồn tiền"><b>${escapeHtml(sourceText)}</b></td>
             <td data-label="Danh mục">${escapeHtml(transaction.category)}</td>
             <td data-label="Loại"><span style="color:${colorStyle}; font-weight:600;">${typeLabel}</span></td>
             <td data-label="Số tiền" style="font-weight:700; color:${colorStyle};">${sign}${formatMoney(transaction.amount)}</td>
             <td data-label="Mô tả">${escapeHtml(transaction.note)}</td>
             <td class="row-actions" style="text-align:right; white-space:nowrap;">
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" data-action="edit" data-id="${id}" title="Sửa" aria-label="Sửa giao dịch ${escapeHtml(transaction.date)} ${formatMoney(transaction.amount)}">
+                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" data-action="edit" data-id="${id}" title="Sửa" aria-label="Sửa giao dịch ${date} ${formatMoney(transaction.amount)}">
                     <i class="fa-solid fa-pen"></i>
                 </button>
-                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" data-action="delete" data-id="${id}" title="Xóa" aria-label="Xóa giao dịch ${escapeHtml(transaction.date)} ${formatMoney(transaction.amount)}">
+                <button class="btn btn-outline" style="padding:4px 8px; font-size:12px;" data-action="delete" data-id="${id}" title="Xóa" aria-label="Xóa giao dịch ${date} ${formatMoney(transaction.amount)}">
                     <i class="fa-solid fa-trash"></i>
                 </button>
             </td>
