@@ -65,7 +65,7 @@ test.describe('Ngày dd/mm/yyyy', () => {
             seed: seed([tx({ id: 'TX_1', date: '2026-10-05', note: 'cafe' })]),
         });
 
-        await goTransactions(page);
+        await goTab(page, 'settings');
 
         const [download] = await Promise.all([
             page.waitForEvent('download'),

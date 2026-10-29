@@ -65,7 +65,11 @@ aside {
     margin-bottom: 6px;
     color: #94a3b8;
     font-weight: 500;
-    transition: all 0.2s;
+    /* Not "all": a transition on visibility would keep the items of the phone menu unfocusable
+       for a moment after it opens. */
+    transition:
+        background-color 0.2s,
+        color 0.2s;
 }
 .menu li:hover,
 .menu li.active {
@@ -91,14 +95,6 @@ header {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 30px;
-}
-
-@media (max-width: 768px) {
-    header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 12px;
-    }
 }
 
 .header-title h1 {
@@ -368,11 +364,13 @@ th {
     width: 100%;
     background: #ffffff;
     border-top: 1px solid var(--border);
-    justify-content: space-around;
-    padding: 10px 0;
+    align-items: center;
+    padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
     z-index: 99;
 }
 .mobile-nav-item {
+    flex: 1 1 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -389,23 +387,31 @@ th {
 .mobile-nav-item.active i {
     color: var(--primary);
 }
+/* The add button sits in the middle of the bottom bar, raised by about a quarter of its height.
+   Its white ring covers the bar's top border there, so the bump reads as part of the bar. */
+.mobile-nav-add {
+    flex: 0 0 80px;
+    height: 44px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
 .floating-add-btn {
-    display: none;
-    position: fixed;
-    bottom: 75px;
-    right: 20px;
-    width: 56px;
-    height: 56px;
+    flex: none;
+    box-sizing: border-box;
+    width: 68px;
+    height: 68px;
     background: var(--primary);
     color: white;
+    border: 6px solid #ffffff;
     border-radius: 50%;
+    display: flex;
     justify-content: center;
     align-items: center;
     font-size: 24px;
-    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+    box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.1);
     cursor: pointer;
-    z-index: 100;
-    border: none;
+    transform: translateY(-14px);
 }
 .sync-badge {
     display: inline-flex;
@@ -449,17 +455,14 @@ th {
 }
 
 .floating-add-btn {
-    transition: all 0.2s ease;
+    transition: background 0.2s ease;
 }
 
 .floating-add-btn:hover {
-    transform: scale(1.05);
+    background: var(--primary-hover);
 }
 
 @media (max-width: 768px) {
-    aside {
-        display: none;
-    }
     main {
         margin-left: 0;
         max-width: 100%;
@@ -467,9 +470,6 @@ th {
         padding-bottom: 90px;
     }
     .mobile-nav {
-        display: flex;
-    }
-    .floating-add-btn {
         display: flex;
     }
 }
@@ -1025,7 +1025,7 @@ main:focus {
     }
 }
 
-/* --- Phone layout: tables become cards, the bottom bar scrolls --- */
+/* --- Phone layout: tables become cards --- */
 @media (max-width: 768px) {
     .table-container {
         overflow-x: visible;
@@ -1097,22 +1097,8 @@ main:focus {
         content: none;
     }
 
-    .mobile-nav {
-        justify-content: flex-start;
-        gap: 4px;
-        padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .mobile-nav::-webkit-scrollbar {
-        display: none;
-    }
-
     .mobile-nav-item {
-        flex: 0 0 auto;
-        min-width: 68px;
-        padding: 2px 6px;
+        padding: 2px 4px;
     }
 
     .filter-item {
@@ -1120,7 +1106,7 @@ main:focus {
     }
 
     #toast-container {
-        bottom: 150px;
+        bottom: calc(100px + env(safe-area-inset-bottom));
         right: 12px;
     }
 }
@@ -1257,5 +1243,137 @@ main:focus {
         display: block;
         cursor: default;
         border-left-color: transparent;
+    }
+}
+
+/* --- Phone: menu button, and the sidebar as a drawer from the left --- */
+.menu-toggle,
+.drawer-close,
+.drawer-backdrop {
+    display: none;
+}
+
+.header-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+@media (max-width: 768px) {
+    header {
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+
+    .menu-toggle {
+        flex: none;
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        width: 42px;
+        height: 42px;
+        background: var(--bg-card);
+        color: var(--text-main);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 18px;
+        cursor: pointer;
+    }
+
+    .header-title {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .header-title h1 {
+        font-size: 20px;
+        line-height: 1.25;
+    }
+
+    .header-title p {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .header-actions {
+        flex: none;
+        max-width: 38%;
+    }
+
+    .header-add {
+        display: none;
+    }
+
+    .sync-badge {
+        font-size: 11px;
+        line-height: 1.25;
+        padding: 4px 10px;
+        border-radius: 14px;
+    }
+
+    aside {
+        top: 0;
+        bottom: 0;
+        height: auto;
+        width: min(300px, 84vw);
+        z-index: 1100;
+        transform: translateX(-100%);
+        visibility: hidden;
+        /* Hide from keyboard and screen readers only once it has slid out. */
+        transition:
+            transform 0.25s ease,
+            visibility 0s linear 0.25s;
+    }
+
+    body.menu-open aside {
+        transform: none;
+        visibility: visible;
+        box-shadow: 8px 0 24px rgba(0, 0, 0, 0.3);
+        transition:
+            transform 0.25s ease,
+            visibility 0s;
+    }
+
+    body.menu-open {
+        overflow: hidden;
+    }
+
+    .drawer-close {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        margin-left: auto;
+        width: 36px;
+        height: 36px;
+        background: none;
+        border: 0;
+        border-radius: 8px;
+        color: #cbd5e1;
+        font-size: 18px;
+        cursor: pointer;
+    }
+
+    .drawer-close i {
+        color: inherit;
+        font-size: inherit;
+    }
+
+    .drawer-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 1090;
+        background: rgba(15, 23, 42, 0.5);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+    }
+
+    body.menu-open .drawer-backdrop {
+        opacity: 1;
+        pointer-events: auto;
     }
 }

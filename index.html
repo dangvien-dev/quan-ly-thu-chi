@@ -16,9 +16,19 @@
     </head>
     <body>
         <a class="skip-link" href="#main-content">Bỏ qua điều hướng</a>
-        <!-- Sidebar Desktop -->
-        <aside>
-            <div class="brand"><i class="fa-solid fa-wallet"></i><span>FinManager</span></div>
+        <!-- Sidebar on desktop; on a phone it is the menu that slides in from the left -->
+        <aside id="sidebar">
+            <div class="brand">
+                <i class="fa-solid fa-wallet"></i><span>FinManager</span>
+                <button
+                    type="button"
+                    class="drawer-close"
+                    aria-label="Đóng menu"
+                    onclick="closeMenu()"
+                >
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
             <nav aria-label="Điều hướng chính">
                 <ul class="menu">
                     <li class="active" data-tab="overview">
@@ -65,18 +75,31 @@
             </nav>
         </aside>
 
+        <div class="drawer-backdrop" aria-hidden="true" onclick="closeMenu()"></div>
+
         <!-- Main Content -->
         <main id="main-content" tabindex="-1">
             <header>
+                <button
+                    type="button"
+                    class="menu-toggle"
+                    id="menu-toggle"
+                    aria-label="Mở menu"
+                    aria-expanded="false"
+                    aria-controls="sidebar"
+                    onclick="toggleMenu()"
+                >
+                    <i class="fa-solid fa-bars" aria-hidden="true"></i>
+                </button>
                 <div class="header-title">
                     <h1 id="page-title">Tổng Quan Dòng Tiền</h1>
                     <p id="current-date-label">Theo dõi tài chính cá nhân</p>
                 </div>
-                <div style="display: flex; gap: 12px; align-items: center">
+                <div class="header-actions">
                     <div id="sync-status" class="sync-badge" role="status" aria-live="polite">
                         <i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng
                     </div>
-                    <button class="btn" onclick="openModal()">
+                    <button class="btn header-add" onclick="openModal()">
                         <i class="fa-solid fa-plus"></i> Nhập Giao Dịch
                     </button>
                 </div>
@@ -159,9 +182,6 @@
             <section id="tab-transactions" class="view-section">
                 <div class="section-head">
                     <h3>Lịch Sử Giao Dịch</h3>
-                    <button class="btn btn-outline" onclick="exportTransactionsCsv()">
-                        <i class="fa-solid fa-file-csv"></i> Xuất CSV
-                    </button>
                 </div>
                 <div class="filter-bar" role="search">
                     <div class="filter-item">
@@ -406,7 +426,24 @@
 
                     <hr style="margin: 20px 0" />
 
-                    <h3>Sao lưu & Khôi phục dữ liệu</h3>
+                    <h3 style="margin-bottom: 12px">Xuất giao dịch ra file CSV</h3>
+                    <div class="form-group">
+                        <label for="csv-scope">Phạm vi xuất</label>
+                        <select id="csv-scope" class="form-control" aria-describedby="csv-hint">
+                            <option value="all">Tất cả giao dịch</option>
+                            <option value="filtered">Theo bộ lọc đang chọn ở Sổ Giao Dịch</option>
+                        </select>
+                        <p id="csv-hint" class="hint">
+                            File mở được bằng Excel (UTF-8). Ngày ghi dạng dd/mm/yyyy.
+                        </p>
+                    </div>
+                    <button class="btn" onclick="exportTransactionsCsv()">
+                        <i class="fa-solid fa-file-csv"></i> Xuất CSV
+                    </button>
+
+                    <hr style="margin: 20px 0" />
+
+                    <h3 style="margin-bottom: 12px">Sao lưu & Khôi phục dữ liệu</h3>
 
                     <button class="btn" onclick="exportBackup()">
                         <i class="fa-solid fa-download"></i>
@@ -436,7 +473,7 @@
             </section>
         </main>
 
-        <!-- Mobile Navigation -->
+        <!-- Phone bottom bar: four pages and the add button in the middle (the rest are in the menu) -->
         <nav class="mobile-nav" aria-label="Điều hướng nhanh">
             <button
                 class="mobile-nav-item active"
@@ -455,35 +492,25 @@
                 <i class="fa-solid fa-list-ul"></i><span>Sổ GD</span>
             </button>
 
+            <div class="mobile-nav-add">
+                <button
+                    class="floating-add-btn"
+                    title="Thêm giao dịch"
+                    aria-label="Thêm giao dịch"
+                    onclick="openModal()"
+                >
+                    <i class="fa-solid fa-plus" aria-hidden="true"></i>
+                </button>
+            </div>
+
             <button class="mobile-nav-item" data-tab="sources" onclick="switchTab('sources')">
                 <i class="fa-solid fa-vault"></i><span>Nguồn</span>
-            </button>
-
-            <button class="mobile-nav-item" data-tab="categories" onclick="switchTab('categories')">
-                <i class="fa-solid fa-tags"></i><span>Danh mục</span>
-            </button>
-
-            <button class="mobile-nav-item" data-tab="recurring" onclick="switchTab('recurring')">
-                <i class="fa-solid fa-repeat"></i><span>Định kỳ</span>
             </button>
 
             <button class="mobile-nav-item" data-tab="debts" onclick="switchTab('debts')">
                 <i class="fa-solid fa-hand-holding-dollar"></i><span>Vay nợ</span>
             </button>
-
-            <button class="mobile-nav-item" data-tab="settings" onclick="switchTab('settings')">
-                <i class="fa-solid fa-gear"></i><span>Cài đặt</span>
-            </button>
         </nav>
-
-        <button
-            class="floating-add-btn"
-            title="Thêm giao dịch"
-            aria-label="Thêm giao dịch"
-            onclick="openModal()"
-        >
-            <i class="fa-solid fa-plus"></i>
-        </button>
 
         <!-- Modals -->
         <div

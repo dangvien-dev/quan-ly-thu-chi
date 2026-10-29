@@ -253,18 +253,24 @@ test.describe('Giao diện điện thoại (390 × 844)', () => {
         expect(card).toEqual({ headerHidden: 'none', rowDisplay: 'block', label: '"Còn lại"' });
     });
 
-    test('thanh điều hướng dưới cuộn được và với tới tab Vay nợ và Định kỳ', async ({ app }) => {
+    test('thanh dưới có 4 trang, các trang còn lại (Danh mục, Định kỳ, Cài đặt) với tới được qua menu trái', async ({
+        app,
+    }) => {
         const { page } = await app(phone);
 
-        await page.locator('.mobile-nav-item[data-tab="debts"]').click();
+        await expect(page.locator('.mobile-nav-item')).toHaveCount(4);
 
-        await expect(page.locator('#tab-debts')).toHaveClass(/active/);
-        await expect(page.locator('.mobile-nav-item[data-tab="debts"]')).toHaveAttribute(
-            'aria-current',
-            'page',
-        );
-        await page.locator('.mobile-nav-item[data-tab="recurring"]').click();
-        await expect(page.locator('#tab-recurring')).toHaveClass(/active/);
+        for (const [tab, title] of [
+            ['categories', 'Danh Mục Thu / Chi'],
+            ['recurring', 'Giao Dịch Định Kỳ'],
+            ['settings', 'Cài Đặt & Dữ Liệu'],
+        ]) {
+            await page.click('#menu-toggle');
+            await page.click(`aside [data-tab="${tab}"] button`);
+
+            await expect(page.locator(`#tab-${tab}`)).toHaveClass(/active/);
+            await expect(page.locator('#page-title')).toHaveText(title);
+        }
     });
 
     test('hộp thoại nằm gọn trong màn hình điện thoại và nút lưu bấm được', async ({ app }) => {

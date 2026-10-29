@@ -1,7 +1,7 @@
 // Transactions tab: filters, search, paging, summary and CSV export.
 
 const fs = require('fs');
-const { test, expect, tx, goTransactions } = require('./helpers');
+const { test, expect, tx, goTab, goTransactions } = require('./helpers');
 
 const seed = (rows) => ({ fm_transactions: JSON.stringify(rows) });
 const NOW = '2026-10-28T03:00:00Z';
@@ -199,8 +199,52 @@ test.describe('Phân trang', () => {
     });
 });
 
-test.describe('Xuất CSV', () => {
-    test('xuất đúng danh sách đang lọc, UTF-8 BOM, chặn công thức', async ({ app }) => {
+test.describe('Xuất CSV (trong Cài đặt)', () => {
+    const exportCsv = async (page) => {
+        const [download] = await Promise.all([
+            page.waitForEvent('download'),
+            page.click('button:has-text("Xuất CSV")'),
+        ]);
+
+        return { download, content: fs.readFileSync(await download.path(), 'utf8') };
+    };
+
+    test('Sổ Giao Dịch không còn nút Xuất CSV; nút nằm ở Cài đặt với ô chọn phạm vi', async ({
+        app,
+    }) => {
+        const { page } = await app({ seed: seed(sample) });
+
+        await goTransactions(page);
+        await expect(page.locator('#tab-transactions button:has-text("Xuất CSV")')).toHaveCount(0);
+
+        await goTab(page, 'settings');
+        await expect(page.locator('#tab-settings button:has-text("Xuất CSV")')).toBeVisible();
+        await expect(page.locator('#csv-scope')).toHaveValue('all');
+    });
+
+    test('mặc định xuất tất cả giao dịch (mới nhất trước), bỏ qua bộ lọc đang chọn', async ({
+        app,
+    }) => {
+        const { page } = await app({ seed: seed(sample) });
+
+        await goTransactions(page);
+        await page.selectOption('#filter-type', 'income');
+        await goTab(page, 'settings');
+
+        const { download, content } = await exportCsv(page);
+        const lines = content.trim().split('\r\n');
+
+        expect(download.suggestedFilename()).toMatch(
+            /^finmanager-giao-dich-\d{4}-\d{2}-\d{2}\.csv$/,
+        );
+        expect(lines).toHaveLength(5); // header + all 4 transactions
+        expect(lines[1]).toContain('20/10/2026'); // newest first
+        expect(lines[4]).toContain('30/09/2026');
+    });
+
+    test('phạm vi "Theo bộ lọc": đúng danh sách đang lọc, UTF-8 BOM, chặn công thức', async ({
+        app,
+    }) => {
         const rows = [
             ...sample,
             tx({ id: 'e', date: '2026-10-25', note: '=HYPERLINK("http://x")', amount: 1000 }),
@@ -210,16 +254,11 @@ test.describe('Xuất CSV', () => {
         await goTransactions(page);
         await page.fill('#filter-month', '2026-10');
         await page.selectOption('#filter-type', 'expense');
+        await goTab(page, 'settings');
+        await page.selectOption('#csv-scope', 'filtered');
 
-        const [download] = await Promise.all([
-            page.waitForEvent('download'),
-            page.click('button:has-text("Xuất CSV")'),
-        ]);
-        const content = fs.readFileSync(await download.path(), 'utf8');
+        const { content } = await exportCsv(page);
 
-        expect(download.suggestedFilename()).toMatch(
-            /^finmanager-giao-dich-\d{4}-\d{2}-\d{2}\.csv$/,
-        );
         expect(
             content.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú'),
         ).toBe(true);
@@ -232,10 +271,24 @@ test.describe('Xuất CSV', () => {
         expect(lines.join('\n')).toContain(`"'=HYPERLINK(""http://x"")"`);
     });
 
+    test('phạm vi "Theo bộ lọc" mà không có giao dịch nào khớp thì báo, không tải file', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ seed: seed(sample) });
+
+        await goTransactions(page);
+        await page.fill('#filter-search', 'không có gì khớp');
+        await goTab(page, 'settings');
+        await page.selectOption('#csv-scope', 'filtered');
+        await page.click('button:has-text("Xuất CSV")');
+
+        expect(state.alerts).toEqual(['Không có giao dịch nào để xuất.']);
+    });
+
     test('báo khi không có gì để xuất', async ({ app }) => {
         const { page, state } = await app();
 
-        await goTransactions(page);
+        await goTab(page, 'settings');
         await page.click('button:has-text("Xuất CSV")');
 
         expect(state.alerts).toEqual(['Không có giao dịch nào để xuất.']);
