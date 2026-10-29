@@ -21,17 +21,17 @@ const insideMenu = (page) =>
     page.evaluate(() => document.getElementById('sidebar').contains(document.activeElement));
 
 test.describe('Thanh dưới trên điện thoại', () => {
-    test('có đúng 4 trang theo thứ tự Tổng quan, Sổ GD, Nguồn, Danh mục', async ({ app }) => {
+    test('có đúng 4 trang theo thứ tự Tổng quan, Sổ GD, Nguồn, Vay nợ', async ({ app }) => {
         const { page } = await app(phone);
         const items = page.locator('.mobile-nav-item');
 
         await expect(items).toHaveCount(4);
-        await expect(items.locator('span')).toHaveText(['Tổng quan', 'Sổ GD', 'Nguồn', 'Danh mục']);
+        await expect(items.locator('span')).toHaveText(['Tổng quan', 'Sổ GD', 'Nguồn', 'Vay nợ']);
         expect(await items.evaluateAll((nodes) => nodes.map((node) => node.dataset.tab))).toEqual([
             'overview',
             'transactions',
             'sources',
-            'categories',
+            'debts',
         ]);
     });
 
@@ -166,7 +166,7 @@ test.describe('Nút thêm ở giữa thanh dưới', () => {
         await expect(page.locator('#transactionModal')).toHaveClass(/open/);
     });
 
-    test('thứ tự Tab đi đúng thứ tự nhìn thấy: Tổng quan, Sổ GD, nút thêm, Nguồn, Danh mục', async ({
+    test('thứ tự Tab đi đúng thứ tự nhìn thấy: Tổng quan, Sổ GD, nút thêm, Nguồn, Vay nợ', async ({
         app,
     }) => {
         const { page } = await app(phone);
@@ -185,7 +185,7 @@ test.describe('Nút thêm ở giữa thanh dưới', () => {
             await page.keyboard.press('Tab');
         }
 
-        expect(order).toEqual(['Tổng quan', 'Sổ GD', 'Thêm giao dịch', 'Nguồn', 'Danh mục']);
+        expect(order).toEqual(['Tổng quan', 'Sổ GD', 'Thêm giao dịch', 'Nguồn', 'Vay nợ']);
     });
 });
 

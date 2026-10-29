@@ -253,7 +253,7 @@ test.describe('Giao diện điện thoại (390 × 844)', () => {
         expect(card).toEqual({ headerHidden: 'none', rowDisplay: 'block', label: '"Còn lại"' });
     });
 
-    test('thanh dưới có 4 trang, các trang còn lại (Định kỳ, Vay nợ, Cài đặt) với tới được qua menu trái', async ({
+    test('thanh dưới có 4 trang, các trang còn lại (Danh mục, Định kỳ, Cài đặt) với tới được qua menu trái', async ({
         app,
     }) => {
         const { page } = await app(phone);
@@ -261,8 +261,8 @@ test.describe('Giao diện điện thoại (390 × 844)', () => {
         await expect(page.locator('.mobile-nav-item')).toHaveCount(4);
 
         for (const [tab, title] of [
+            ['categories', 'Danh Mục Thu / Chi'],
             ['recurring', 'Giao Dịch Định Kỳ'],
-            ['debts', 'Vay Nợ & Công Ty'],
             ['settings', 'Cài Đặt & Dữ Liệu'],
         ]) {
             await page.click('#menu-toggle');
