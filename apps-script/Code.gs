@@ -13,9 +13,9 @@
  * Sheets (created on first use)
  *  - "Transactions": id, date, type, source, category, amount, note, targetSource, updatedAt.
  *    Existing columns keep their place; missing ones are appended. The sheet is fully managed
- *    by the app.
+ *    by the app. The date column holds real dates and is displayed as dd/mm/yyyy.
  *  - "Meta": key, value (JSON), updatedAt - categories, sources, opening balances, budgets,
- *    recurring rules and debts.
+ *    salary plan, recurring rules and debts.
  *
  * Requests
  *  v2 (FinManager with sync v2)
@@ -222,7 +222,7 @@ function writeTransactions_(list) {
         if (TEXT_COLUMNS.indexOf(name) !== -1) {
             column.setNumberFormat('@');
         } else if (name === 'date') {
-            column.setNumberFormat('yyyy-mm-dd');
+            column.setNumberFormat('dd/mm/yyyy');
         }
     });
 

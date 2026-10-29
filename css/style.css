@@ -679,6 +679,194 @@ canvas {
     color: var(--danger);
 }
 
+/* --- Spending against salary --- */
+.salary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.salary-header h3 {
+    flex: 1;
+    min-width: 0;
+}
+
+.salary-header .btn {
+    flex: none;
+}
+
+/* A hint under an input inside a form group (the base .hint is for hints after a whole field). */
+.form-group .hint {
+    margin: 6px 0 0;
+}
+
+.salary-empty {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.salary-percent {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.salary-percent b {
+    font-size: 28px;
+    color: var(--text-main);
+    margin-right: 4px;
+}
+
+.level-2 .salary-percent b {
+    color: var(--danger);
+}
+
+.salary-track {
+    position: relative;
+}
+
+.salary-track .progress {
+    height: 12px;
+}
+
+/* A tick on the bar at the warning percent. */
+.salary-marker {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--text-main);
+    opacity: 0.55;
+}
+
+.salary-detail {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.salary-message {
+    margin-top: 6px;
+    font-size: 14px;
+}
+
+.level-1 .salary-message {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.level-2 .salary-message {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+/* Salary groups (personal / work / saving ...) */
+.salary-groups {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.salary-groups-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.salary-groups-head h4 {
+    font-size: 15px;
+}
+
+.salary-group {
+    margin-bottom: 14px;
+}
+
+.salary-group:last-child {
+    margin-bottom: 0;
+}
+
+.salary-group-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.salary-group-name {
+    font-weight: 600;
+}
+
+.salary-group-amount {
+    color: var(--text-muted);
+}
+
+.salary-group-note {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.level-1 .salary-group-status {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.level-2 .salary-group-status {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.allocation-group {
+    padding: 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.allocation-group .form-group {
+    margin-bottom: 10px;
+}
+
+.allocation-group-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.allocation-tools {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.allocation-total {
+    margin: 12px 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.allocation-total.over {
+    color: var(--danger);
+}
+
+.allocation-title {
+    margin-top: 16px;
+    font-size: 15px;
+}
+
+.allocation-category {
+    margin-bottom: 10px;
+}
+
 #toast-container {
     position: fixed;
     right: 16px;
@@ -934,5 +1122,140 @@ main:focus {
     #toast-container {
         bottom: 150px;
         right: 12px;
+    }
+}
+
+/* --- Transactions on a phone: one line each, tap for details --- */
+.cell-title {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .compact-rows tbody tr {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas: 'date title amount';
+        align-items: center;
+        column-gap: 10px;
+        padding: 6px 10px;
+        border-left: 3px solid var(--row-color, var(--border));
+        cursor: pointer;
+    }
+
+    .compact-rows td {
+        display: block;
+        padding: 0;
+        text-align: left;
+    }
+
+    .compact-rows td::before {
+        content: none;
+    }
+
+    .compact-rows td[data-label='Ngày'] {
+        grid-area: date;
+        font-size: 12px;
+        color: var(--text-muted);
+        white-space: nowrap;
+    }
+
+    .compact-rows td.cell-title {
+        display: block;
+        grid-area: title;
+        min-width: 0;
+    }
+
+    .compact-rows td[data-label='Số tiền'] {
+        grid-area: amount;
+        font-size: 14px;
+        white-space: nowrap;
+        text-align: right;
+    }
+
+    .row-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        min-height: 40px;
+        padding: 0;
+        background: none;
+        border: 0;
+        color: var(--text-main);
+        font: inherit;
+        font-size: 14px;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .row-title-text {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .row-toggle i {
+        font-size: 11px;
+        color: var(--text-muted);
+        transition: transform 0.15s ease;
+    }
+
+    .compact-rows tr.expanded .row-toggle i {
+        transform: rotate(180deg);
+    }
+
+    /* Details and actions appear under the line once it is open. */
+    .compact-rows td[data-label='Nguồn tiền'],
+    .compact-rows td[data-label='Danh mục'],
+    .compact-rows td[data-label='Loại'],
+    .compact-rows td[data-label='Mô tả'],
+    .compact-rows td.row-actions {
+        display: none;
+        grid-column: 1 / -1;
+    }
+
+    .compact-rows tr.expanded td[data-label='Nguồn tiền'],
+    .compact-rows tr.expanded td[data-label='Danh mục'],
+    .compact-rows tr.expanded td[data-label='Loại'],
+    .compact-rows tr.expanded td[data-label='Mô tả'] {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding-top: 4px;
+        font-size: 13px;
+        text-align: right;
+    }
+
+    .compact-rows tr.expanded td[data-label='Nguồn tiền']::before,
+    .compact-rows tr.expanded td[data-label='Danh mục']::before,
+    .compact-rows tr.expanded td[data-label='Loại']::before,
+    .compact-rows tr.expanded td[data-label='Mô tả']::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
+        color: var(--text-muted);
+        font-weight: 600;
+        font-size: 12px;
+        text-align: left;
+    }
+
+    .compact-rows tr.expanded td.row-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding-top: 8px;
+    }
+
+    .compact-rows td.row-actions .btn {
+        min-width: 44px;
+        min-height: 36px;
+        margin: 0;
+    }
+
+    .compact-rows tr.empty-row {
+        display: block;
+        cursor: default;
+        border-left-color: transparent;
     }
 }

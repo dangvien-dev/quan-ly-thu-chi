@@ -5,9 +5,13 @@
 ## Tính năng
 
 - **Giao dịch**: thu / chi / chuyển tiền giữa các nguồn; lọc theo tháng, loại, danh mục, nguồn; tìm kiếm không dấu; xem thêm theo trang; xuất CSV (UTF-8, mở được trong Excel).
+- **Điện thoại**: mỗi giao dịch là một dòng (ngày · ghi chú · số tiền, viền màu theo loại thu / chi / chuyển); chạm vào dòng để xem nguồn tiền, danh mục và nút sửa / xóa.
+- **Nhập liệu dễ đọc**: ngày hiển thị `dd/mm/yyyy` ở mọi nơi (kể cả CSV); các ô tiền tự thêm dấu chấm ngăn cách hàng nghìn khi gõ (`1500000` → `1.500.000`).
 - **Nguồn tiền**: tiền mặt, ngân hàng, ví điện tử, thẻ tín dụng / trả sau (hạn mức, ngày chốt sao kê, hạn thanh toán), khoản nợ; lưu trữ, đổi tên (cập nhật mọi giao dịch).
 - **Tổng quan**: thu / chi tháng này, số dư khả dụng, dư nợ, biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.
 - **Ngân sách** theo danh mục chi, cảnh báo khi vượt 80% và 100%.
+- **Chi tiêu trên lương**: đặt lương hằng tháng và mức cảnh báo (mặc định 80%); thẻ trên Tổng quan cho biết đã chi bao nhiêu % lương, còn lại bao nhiêu, đổi màu xanh / vàng / đỏ, và báo ngay khi một khoản chi làm chạm mốc cảnh báo hoặc hết lương. Chỉ tính khoản chi của tháng hiện tại (thu nhập và chuyển tiền không tính).
+- **Chia lương theo nhóm** (ví dụ tiêu dùng cá nhân 50%, công việc 30%, tiết kiệm 20% — mẫu có sẵn, đổi tên / % / thêm bớt tối đa 8 nhóm): mỗi danh mục chi thuộc một nhóm; nhóm chi có hạn mức = % × lương và đổi màu / báo khi sắp hết; nhóm tiết kiệm là phần còn lại sau khi chi, báo khi chi lấn vào mục tiêu tiết kiệm.
 - **Giao dịch định kỳ** (hằng tháng / hằng tuần): tự tạo khi đến hạn, không tạo trùng.
 - **Sổ vay nợ**: khoản mình nợ và khoản người khác nợ mình, thanh toán từng phần, nhắc khoản quá hạn.
 - **Sao lưu / khôi phục** JSON, **đồng bộ Google Sheets**, **PWA offline**.
@@ -16,24 +20,24 @@ Chạy thử: `npm run serve` rồi mở http://127.0.0.1:4173/ (hoặc host th�
 
 ## Cấu trúc
 
-| File                                  | Vai trò                                                                                               |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `index.html`, `css/style.css`         | Giao diện                                                                                             |
-| `js/utils.js`                         | Hàm thuần dùng chung: escape HTML, định dạng, ngày, chuẩn hoá dữ liệu, lọc, CSV, lịch định kỳ, vay nợ |
-| `js/data.js`                          | State dùng chung, đọc / ghi `localStorage` an toàn, dữ liệu "meta" (`saveMeta`)                       |
-| `js/ui.js`                            | Chuyển tab, hộp thoại, loại giao dịch, thông báo (toast)                                              |
-| `js/categories.js`, `js/budgets.js`   | Danh mục và ngân sách                                                                                 |
-| `js/recurring.js`, `js/debts.js`      | Giao dịch định kỳ và sổ vay nợ                                                                        |
-| `js/transactions.js`, `js/sources.js` | Giao dịch (bộ lọc, xuất CSV) và nguồn tiền                                                            |
-| `js/charts.js`                        | Biểu đồ Chart.js                                                                                      |
-| `js/sync.js`                          | Đồng bộ Google Sheets                                                                                 |
-| `js/backup.js`                        | Sao lưu / khôi phục JSON                                                                              |
-| `js/app.js`                           | Khởi tạo, tổng quan, xóa dữ liệu                                                                      |
-| `js/pwa.js`, `sw.js`, `manifest.json` | PWA: cài đặt và chạy offline                                                                          |
-| `vendor/`                             | Chart.js 4.4.1 (MIT) và Font Awesome Free 6.4.0 (đi kèm giấy phép)                                    |
-| `apps-script/Code.gs`                 | Mã Google Apps Script (giao thức v2)                                                                  |
-| `tests/`                              | Test e2e (Playwright) và test đơn vị / Apps Script (`node:test`)                                      |
-| `CLAUDE.md`                           | Bộ nhớ dự án cho các phiên làm việc với Claude Code                                                   |
+| File                                                | Vai trò                                                                                               |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `index.html`, `css/style.css`                       | Giao diện                                                                                             |
+| `js/utils.js`                                       | Hàm thuần dùng chung: escape HTML, định dạng, ngày, chuẩn hoá dữ liệu, lọc, CSV, lịch định kỳ, vay nợ |
+| `js/data.js`                                        | State dùng chung, đọc / ghi `localStorage` an toàn, dữ liệu "meta" (`saveMeta`)                       |
+| `js/ui.js`                                          | Chuyển tab, hộp thoại, loại giao dịch, thông báo (toast)                                              |
+| `js/categories.js`, `js/budgets.js`, `js/salary.js` | Danh mục, ngân sách và chi tiêu trên lương                                                            |
+| `js/recurring.js`, `js/debts.js`                    | Giao dịch định kỳ và sổ vay nợ                                                                        |
+| `js/transactions.js`, `js/sources.js`               | Giao dịch (bộ lọc, xuất CSV) và nguồn tiền                                                            |
+| `js/charts.js`                                      | Biểu đồ Chart.js                                                                                      |
+| `js/sync.js`                                        | Đồng bộ Google Sheets                                                                                 |
+| `js/backup.js`                                      | Sao lưu / khôi phục JSON                                                                              |
+| `js/app.js`                                         | Khởi tạo, tổng quan, xóa dữ liệu                                                                      |
+| `js/pwa.js`, `sw.js`, `manifest.json`               | PWA: cài đặt và chạy offline                                                                          |
+| `vendor/`                                           | Chart.js 4.4.1 (MIT) và Font Awesome Free 6.4.0 (đi kèm giấy phép)                                    |
+| `apps-script/Code.gs`                               | Mã Google Apps Script (giao thức v2)                                                                  |
+| `tests/`                                            | Test e2e (Playwright) và test đơn vị / Apps Script (`node:test`)                                      |
+| `CLAUDE.md`                                         | Bộ nhớ dự án cho các phiên làm việc với Claude Code                                                   |
 
 ## Kiểm thử
 
@@ -48,6 +52,15 @@ npm run format:check
 CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR. Test e2e không dùng mạng: mọi request ra ngoài đều bị chặn, và Google Apps Script được thay bằng chính mã Apps Script chạy trong sandbox trên Sheet giả.
 
 ## Đồng bộ Google Sheets
+
+### Định dạng ngày trên Google Sheet
+
+Ứng dụng luôn lưu ngày dạng `YYYY-MM-DD` và chỉ hiển thị `dd/mm/yyyy`, nên Sheet không bắt buộc phải đổi. Để cột ngày trong Sheet cũng hiện `dd/mm/yyyy`:
+
+- **Script v2 (`apps-script/Code.gs`)**: tự đặt định dạng `dd/mm/yyyy` cho cột `date` mỗi lần ghi.
+- **Script cũ**: chọn cả cột `date` (cột B) > Format > Number > Custom date and time > chọn `dd/mm/yyyy` > Apply. Chỉ cần làm một lần; ứng dụng vẫn đọc đúng cả giá trị ngày kiểu UTC (`2026-10-26T17:00:00.000Z` = 27/10 giờ Việt Nam).
+
+Ô chọn ngày của trình duyệt hiện theo ngôn ngữ của thiết bị (điện thoại đặt tiếng Việt thì là `dd/mm/yyyy`). File CSV xuất ra cũng dùng `dd/mm/yyyy`: Excel đặt vùng Việt Nam hiểu đúng; nếu mở bằng Excel vùng Mỹ thì cột ngày có thể bị đọc nhầm tháng và ngày.
 
 Ứng dụng tự nhận ra loại Apps Script đang dùng và không ghi gì trước khi đã đọc xong:
 

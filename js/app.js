@@ -53,6 +53,7 @@ function renderAll() {
     const views = [
         renderTransactions,
         renderOverview,
+        renderSalary,
         renderSources,
         renderCategories,
         renderRecurring,
@@ -89,9 +90,11 @@ function initializeApp() {
         .map(([kind, { label }]) => `<option value="${kind}">${label}</option>`)
         .join('');
 
+    initMoneyInputs();
     initTransactionFilters();
     initRecurring();
     initDebts();
+    initSalary();
     initModalShortcuts();
     window.addEventListener('online', resumeSync);
 

@@ -102,6 +102,21 @@
                         <div class="card-value expense" id="lbl-total-debt">0 đ</div>
                     </div>
                 </div>
+                <div class="card" id="salary-section" style="margin-bottom: 20px">
+                    <div class="salary-header">
+                        <h3 style="font-size: 16px">Chi Tiêu Trên Lương Tháng Này</h3>
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            id="salary-edit-btn"
+                            onclick="openSalaryModal()"
+                        >
+                            <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                            <span id="salary-edit-label">Đặt mức lương</span>
+                        </button>
+                    </div>
+                    <div id="salary-body"></div>
+                </div>
                 <div
                     style="
                         display: grid;
@@ -208,7 +223,7 @@
                 </div>
                 <div id="transaction-summary" class="filter-summary" aria-live="polite"></div>
                 <div class="table-container">
-                    <table class="responsive-table">
+                    <table class="responsive-table compact-rows">
                         <thead>
                             <tr>
                                 <th scope="col">Ngày</th>
@@ -529,13 +544,14 @@
                     <div class="form-group">
                         <label for="txAmount">Số Tiền (VNĐ)</label>
                         <input
-                            type="number"
+                            type="text"
                             id="txAmount"
                             class="form-control"
-                            min="1"
-                            step="1"
-                            inputmode="numeric"
                             required
+                            inputmode="numeric"
+                            autocomplete="off"
+                            data-money="positive"
+                            placeholder="0"
                         />
                     </div>
 
@@ -614,12 +630,13 @@
                         <div class="form-group">
                             <label for="srcCreditLimit">Hạn mức (VNĐ)</label>
                             <input
-                                type="number"
+                                type="text"
                                 id="srcCreditLimit"
                                 class="form-control"
-                                min="0"
-                                step="1"
                                 inputmode="numeric"
+                                autocomplete="off"
+                                data-money="positive"
+                                placeholder="0"
                             />
                         </div>
                         <div class="form-row">
@@ -650,11 +667,13 @@
                     <div class="form-group">
                         <label for="srcInitialBalance">Số dư ban đầu (nợ thì nhập số âm)</label>
                         <input
-                            type="number"
+                            type="text"
                             id="srcInitialBalance"
                             class="form-control"
-                            step="1"
-                            inputmode="numeric"
+                            inputmode="text"
+                            autocomplete="off"
+                            data-money="signed"
+                            placeholder="0"
                         />
                     </div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">
@@ -701,13 +720,14 @@
                         <div class="form-group">
                             <label for="rcAmount">Số tiền (VNĐ)</label>
                             <input
-                                type="number"
+                                type="text"
                                 id="rcAmount"
                                 class="form-control"
-                                min="1"
-                                step="1"
-                                inputmode="numeric"
                                 required
+                                inputmode="numeric"
+                                autocomplete="off"
+                                data-money="positive"
+                                placeholder="0"
                             />
                         </div>
                     </div>
@@ -783,6 +803,107 @@
         </div>
 
         <div
+            id="salaryModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="salaryModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="salaryModalTitle">Mức Lương Và Cảnh Báo</h3>
+                    <button class="close-btn" onclick="closeSalaryModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="salaryForm" onsubmit="handleSalarySubmit(event)">
+                    <div class="form-group">
+                        <label for="salaryAmount">Lương hằng tháng (VNĐ)</label>
+                        <input
+                            type="text"
+                            id="salaryAmount"
+                            class="form-control"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            data-money="positive"
+                            placeholder="0"
+                            aria-describedby="salaryAmountHint"
+                        />
+                        <p id="salaryAmountHint" class="hint">
+                            Để trống hoặc 0 để tắt tính năng này.
+                        </p>
+                    </div>
+                    <div class="form-group">
+                        <label for="salaryWarn">Cảnh báo khi đã chi (% lương)</label>
+                        <input
+                            type="number"
+                            id="salaryWarn"
+                            class="form-control"
+                            required
+                            min="1"
+                            max="100"
+                            step="1"
+                            inputmode="numeric"
+                            aria-describedby="salaryWarnHint"
+                        />
+                        <p id="salaryWarnHint" class="hint">
+                            Khi chi tiêu tháng này chạm mốc này ứng dụng báo "sắp hết lương"; chạm
+                            100% thì báo đã chi hết lương.
+                        </p>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
+            id="allocationModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="allocationModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="allocationModalTitle">Chia Lương Theo Nhóm</h3>
+                    <button class="close-btn" onclick="closeAllocationModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="allocationForm" onsubmit="handleAllocationSubmit(event)">
+                    <p class="hint" style="margin-top: 0">
+                        Chia lương thành các nhóm theo %, ví dụ tiêu dùng cá nhân, công việc, tiết
+                        kiệm. Mỗi nhóm chi có hạn mức bằng % nhân với lương. Nhóm tiết kiệm là phần
+                        còn lại sau khi chi.
+                    </p>
+                    <div id="allocationGroups"></div>
+                    <div class="allocation-tools">
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            id="allocationAdd"
+                            data-action="add-group"
+                        >
+                            Thêm nhóm
+                        </button>
+                        <button type="button" class="btn btn-outline" data-action="reset-groups">
+                            Mẫu 50 / 30 / 20
+                        </button>
+                    </div>
+                    <p id="allocationTotal" class="allocation-total"></p>
+                    <h4 class="allocation-title">Danh mục chi thuộc nhóm nào?</h4>
+                    <p class="hint">Danh mục chưa chọn tính vào nhóm chi đầu tiên.</p>
+                    <div id="allocationCategories"></div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
             id="debtModal"
             class="modal"
             role="dialog"
@@ -812,13 +933,14 @@
                         <div class="form-group">
                             <label for="debtAmount">Số tiền gốc (VNĐ)</label>
                             <input
-                                type="number"
+                                type="text"
                                 id="debtAmount"
                                 class="form-control"
-                                min="1"
-                                step="1"
-                                inputmode="numeric"
                                 required
+                                inputmode="numeric"
+                                autocomplete="off"
+                                data-money="positive"
+                                placeholder="0"
                             />
                         </div>
                     </div>
@@ -849,6 +971,7 @@
         <script src="js/ui.js"></script>
         <script src="js/categories.js"></script>
         <script src="js/budgets.js"></script>
+        <script src="js/salary.js"></script>
         <script src="js/recurring.js"></script>
         <script src="js/debts.js"></script>
         <script src="js/transactions.js"></script>

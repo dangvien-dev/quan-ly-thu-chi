@@ -256,6 +256,7 @@ function transactionSearchText(transaction) {
             transaction.source,
             transaction.targetSource,
             transaction.date,
+            formatDateDisplay(transaction.date),
             transaction.amount,
             formatMoney(transaction.amount),
         ].join(' '),
@@ -314,7 +315,7 @@ function csvCell(value, { isText = true } = {}) {
 function buildTransactionsCsv(list) {
     const lines = [CSV_HEADER.map((name) => csvCell(name))].concat(
         list.map((transaction) => [
-            csvCell(transaction.date),
+            csvCell(formatDateDisplay(transaction.date)),
             csvCell(CSV_TYPE_LABELS[transaction.type]),
             csvCell(transaction.source),
             csvCell(transaction.targetSource),
@@ -367,6 +368,184 @@ function computeBudgetStatus(list, budgetMap, monthKey) {
             ratio: (spent[category] || 0) / limit,
         }))
         .sort((a, b) => b.ratio - a.ratio);
+}
+
+// --- SALARY ---
+
+const DEFAULT_SALARY_WARN_PERCENT = 80;
+const MAX_SALARY_GROUPS = 8;
+const DEFAULT_SALARY_GROUPS = [
+    { id: 'personal', name: 'Tiêu dùng cá nhân', percent: 50, saving: false },
+    { id: 'work', name: 'Công việc', percent: 30, saving: false },
+    { id: 'saving', name: 'Tiết kiệm', percent: 20, saving: true },
+];
+
+/**
+ * The groups a salary is split into: [{ id, name, percent 0-100, saving }]. A "saving" group is
+ * what is left of the salary after spending (at most one); the others are spending limits.
+ * Returns null when the input is not a list.
+ */
+function normalizeSalaryGroups(value) {
+    if (!Array.isArray(value)) return null;
+
+    const seen = new Set();
+    let hasSaving = false;
+
+    return value
+        .map((raw) => {
+            if (!raw || typeof raw !== 'object') return null;
+
+            const id = String(raw.id ?? '').trim();
+            const name = String(raw.name ?? '')
+                .trim()
+                .slice(0, 40);
+            const percent = Math.round(Number(raw.percent));
+
+            if (!id || !name || seen.has(id) || !(percent >= 0 && percent <= 100)) return null;
+
+            const saving = raw.saving === true && !hasSaving;
+
+            seen.add(id);
+            hasSaving = hasSaving || saving;
+
+            return { id, name, percent, saving };
+        })
+        .filter(Boolean)
+        .slice(0, MAX_SALARY_GROUPS);
+}
+
+/**
+ * { amount: monthly salary in VND (0 = not set), warnPercent: 1-100, groups, assign } where
+ * assign maps an expense category name to the id of the spending group it counts toward.
+ * Returns null when the input is not an object.
+ */
+function normalizeSalaryPlan(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+    const amount = Math.round(Number(value.amount));
+    const warnPercent = Math.round(Number(value.warnPercent));
+    const groups =
+        normalizeSalaryGroups(value.groups) ?? DEFAULT_SALARY_GROUPS.map((group) => ({ ...group }));
+    const spendingIds = new Set(groups.filter((group) => !group.saving).map((group) => group.id));
+    const assign =
+        value.assign && typeof value.assign === 'object' && !Array.isArray(value.assign)
+            ? Object.entries(value.assign)
+                  .map(([category, groupId]) => [category, String(groupId)])
+                  .filter(([category, groupId]) => category && spendingIds.has(groupId))
+            : [];
+
+    return {
+        amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
+        warnPercent:
+            warnPercent >= 1 && warnPercent <= 100 ? warnPercent : DEFAULT_SALARY_WARN_PERCENT,
+        groups,
+        assign: Object.fromEntries(assign),
+    };
+}
+
+/** 0 = within the salary, 1 = reached the warning percent, 2 = at or over the whole salary. */
+function salaryLevel(ratio, warnPercent) {
+    if (ratio >= 1) return 2;
+
+    return ratio >= warnPercent / 100 ? 1 : 0;
+}
+
+const isExpenseInMonth = (transaction, monthKey) =>
+    transaction.type === 'expense' && transaction.date.startsWith(monthKey);
+
+/** The month's (YYYY-MM) expenses against the salary; null when no salary is set. */
+function computeSalaryStatus(list, plan, monthKey) {
+    if (!plan || !(plan.amount > 0)) return null;
+
+    const spent = list.reduce(
+        (total, transaction) =>
+            isExpenseInMonth(transaction, monthKey) ? total + transaction.amount : total,
+        0,
+    );
+    const ratio = spent / plan.amount;
+
+    return {
+        salary: plan.amount,
+        warnPercent: plan.warnPercent,
+        spent,
+        remaining: plan.amount - spent,
+        ratio,
+        // Rounded down so "80%" never shows before the warning level is actually reached.
+        percent: Math.floor((spent * 100) / plan.amount),
+        level: salaryLevel(ratio, plan.warnPercent),
+    };
+}
+
+/** The spending group an expense category counts toward: the assigned one, else the first. */
+function salaryGroupFor(plan, category) {
+    const spending = plan.groups.filter((group) => !group.saving);
+    const assigned = Object.hasOwn(plan.assign, category) ? plan.assign[category] : '';
+
+    return spending.find((group) => group.id === assigned) || spending[0] || null;
+}
+
+/**
+ * How the month's spending sits in each salary group; null without a salary or groups.
+ * A spending group has cap = percent of the salary and a level from spent / cap. The saving
+ * group is what remains of the salary: it reaches its target while spending stays within
+ * (salary - target), and its level follows how close total spending is to that limit.
+ */
+function computeSalaryAllocation(list, plan, monthKey) {
+    if (!plan || !(plan.amount > 0) || plan.groups.length === 0) return null;
+
+    const spentBy = new Map(plan.groups.map((group) => [group.id, 0]));
+    let totalSpent = 0;
+
+    list.forEach((transaction) => {
+        if (!isExpenseInMonth(transaction, monthKey)) return;
+
+        const group = salaryGroupFor(plan, transaction.category);
+
+        totalSpent += transaction.amount;
+
+        if (group) spentBy.set(group.id, spentBy.get(group.id) + transaction.amount);
+    });
+
+    const share = (amount) => Math.floor((amount * 100) / plan.amount);
+    const groups = plan.groups.map((group) => {
+        const cap = Math.round((plan.amount * group.percent) / 100);
+
+        if (group.saving) {
+            const kept = Math.max(0, plan.amount - totalSpent);
+            const limit = plan.amount - cap;
+            const ratio = limit > 0 ? totalSpent / limit : totalSpent > 0 ? Infinity : 0;
+            const reached = kept >= cap;
+
+            return {
+                ...group,
+                cap,
+                kept,
+                reached,
+                percentOfSalary: share(kept),
+                level: reached ? Math.min(salaryLevel(ratio, plan.warnPercent), 1) : 2,
+            };
+        }
+
+        const spent = spentBy.get(group.id);
+        const ratio = cap > 0 ? spent / cap : spent > 0 ? Infinity : 0;
+
+        return {
+            ...group,
+            cap,
+            spent,
+            ratio,
+            remaining: cap - spent,
+            percentOfSalary: share(spent),
+            usedPercent: cap > 0 ? Math.floor((spent * 100) / cap) : spent > 0 ? 100 : 0,
+            level: salaryLevel(ratio, plan.warnPercent),
+        };
+    });
+
+    return {
+        groups,
+        totalSpent,
+        totalPercent: plan.groups.reduce((total, group) => total + group.percent, 0),
+    };
 }
 
 // --- RECURRING TRANSACTIONS ---
@@ -604,4 +783,37 @@ function summarizeDebts(list, todayKey) {
     });
 
     return summary;
+}
+
+// --- DISPLAY FORMATS AND MONEY FIELDS ---
+
+/** YYYY-MM-DD -> DD/MM/YYYY for display; anything else is returned unchanged. */
+function formatDateDisplay(dateKey) {
+    const text = String(dateKey ?? '');
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : text;
+}
+
+/**
+ * Group the digits typed in a money field: "1234567" -> "1.234.567". Everything that is not a
+ * digit is dropped; a leading "-" is kept only when negative numbers are allowed.
+ */
+function formatMoneyDigits(text, allowNegative = false) {
+    const negative = allowNegative && /^\s*-/.test(String(text ?? ''));
+    const digits = String(text ?? '')
+        .replace(/\D/g, '')
+        .replace(/^0+(?=\d)/, '')
+        .slice(0, 15);
+
+    if (!digits) return negative ? '-' : '';
+
+    return (negative ? '-' : '') + digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/** The number in a money field ("1.500.000", "-20.000"); NaN when empty or not a number. */
+function parseMoneyText(text) {
+    const cleaned = String(text ?? '').replace(/[.,\s]/g, '');
+
+    return /^-?\d+$/.test(cleaned) ? Number(cleaned) : NaN;
 }

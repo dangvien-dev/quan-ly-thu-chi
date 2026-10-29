@@ -1,7 +1,6 @@
 // Keyboard use, accessible names, automatic accessibility scan, and the phone layout.
 
-const AxeBuilder = require('@axe-core/playwright').default;
-const { test, expect, tx, goTab, wait } = require('./helpers');
+const { test, expect, tx, goTab, wait, scanA11y } = require('./helpers');
 
 const TABS = [
     'overview',
@@ -81,11 +80,8 @@ test.describe('Quét trợ năng tự động (axe, WCAG 2 A/AA)', () => {
             const { page } = await app(fullSeed);
 
             await goTab(page, tab);
-            await wait(200);
 
-            const results = await new AxeBuilder({ page })
-                .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-                .analyze();
+            const results = await scanA11y(page);
 
             expect(violationsOf(results)).toEqual([]);
         });
@@ -102,11 +98,8 @@ test.describe('Quét trợ năng tự động (axe, WCAG 2 A/AA)', () => {
             const { page } = await app(fullSeed);
 
             await page.evaluate(modal[1]);
-            await wait(200);
 
-            const results = await new AxeBuilder({ page })
-                .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-                .analyze();
+            const results = await scanA11y(page);
 
             expect(violationsOf(results)).toEqual([]);
         });
@@ -178,7 +171,7 @@ test.describe('Bàn phím', () => {
         await page.locator('.chip', { hasText: 'Cafe sáng' }).focus();
         await page.keyboard.press('Enter');
 
-        await expect(page.locator('#txAmount')).toHaveValue('20000');
+        await expect(page.locator('#txAmount')).toHaveValue('20.000');
         await expect(page.locator('#txNote')).toHaveValue('Cafe sáng');
     });
 
@@ -239,24 +232,25 @@ test.describe('Giao diện điện thoại (390 × 844)', () => {
         });
     }
 
-    test('bảng hiển thị dạng thẻ có nhãn từng trường', async ({ app }) => {
+    test('các bảng khác hiển thị dạng thẻ có nhãn từng trường (sổ giao dịch là danh sách 1 dòng)', async ({
+        app,
+    }) => {
         const { page } = await app(phone);
 
-        await page.evaluate(() => switchTab('transactions'));
+        await page.evaluate(() => switchTab('debts'));
 
         const card = await page.evaluate(() => {
-            const row = document.querySelector('#transaction-table-body tr');
-            const cell = row.querySelector('td[data-label="Số tiền"]');
+            const row = document.querySelector('#debt-table-body tr');
+            const cell = row.querySelector('td[data-label="Còn lại"]');
 
             return {
-                headerHidden: getComputedStyle(document.querySelector('#tab-transactions thead'))
-                    .display,
+                headerHidden: getComputedStyle(document.querySelector('#tab-debts thead')).display,
                 rowDisplay: getComputedStyle(row).display,
                 label: getComputedStyle(cell, '::before').content,
             };
         });
 
-        expect(card).toEqual({ headerHidden: 'none', rowDisplay: 'block', label: '"Số tiền"' });
+        expect(card).toEqual({ headerHidden: 'none', rowDisplay: 'block', label: '"Còn lại"' });
     });
 
     test('thanh điều hướng dưới cuộn được và với tới tab Vay nợ và Định kỳ', async ({ app }) => {

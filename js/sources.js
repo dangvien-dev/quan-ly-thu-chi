@@ -212,14 +212,11 @@ function openSourceModal(name = null) {
         : 'Thêm Nguồn Tiền';
     document.getElementById('srcName').value = source ? source.name : '';
     document.getElementById('srcKind').value = source ? source.kind : 'bank';
-    document.getElementById('srcCreditLimit').value =
-        source && source.creditLimit ? source.creditLimit : '';
+    setMoneyInput('srcCreditLimit', source && source.creditLimit ? source.creditLimit : '');
     document.getElementById('srcStatementDay').value =
         source && source.statementDay ? source.statementDay : '';
     document.getElementById('srcDueDay').value = source && source.dueDay ? source.dueDay : '';
-    document.getElementById('srcInitialBalance').value = source
-        ? Number(initialBalances[source.name]) || 0
-        : '';
+    setMoneyInput('srcInitialBalance', source ? Number(initialBalances[source.name]) || 0 : '');
     updateSourceFormVisibility();
     openDialog('sourceModal', 'srcName');
 }
@@ -266,7 +263,7 @@ function handleSourceSubmit(event) {
 
     const name = document.getElementById('srcName').value.trim();
     const kind = document.getElementById('srcKind').value;
-    const openingBalance = document.getElementById('srcInitialBalance').value;
+    const openingBalance = readMoneyInput('srcInitialBalance');
     const existing = editingSourceName ? findSource(editingSourceName) : null;
 
     if (!name) {
@@ -288,7 +285,7 @@ function handleSourceSubmit(event) {
     const updated = normalizeSource({
         name,
         kind,
-        creditLimit: document.getElementById('srcCreditLimit').value,
+        creditLimit: readMoneyInput('srcCreditLimit'),
         statementDay: document.getElementById('srcStatementDay').value,
         dueDay: document.getElementById('srcDueDay').value,
         archived: existing ? existing.archived : false,
@@ -318,8 +315,8 @@ function handleSourceSubmit(event) {
         sources.push(updated);
     }
 
-    if (openingBalance !== '') {
-        initialBalances[name] = Number(openingBalance) || 0;
+    if (!Number.isNaN(openingBalance)) {
+        initialBalances[name] = openingBalance;
     }
 
     saveMeta('sources');

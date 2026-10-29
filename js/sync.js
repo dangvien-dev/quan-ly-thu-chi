@@ -11,7 +11,7 @@
 //    only transactions are synchronized (the whole list is rewritten).
 //
 //  - v2: apps-script/Code.gs. Rows are sent one by one (upserts/deletes with updatedAt, the
-//    newest wins) together with the "meta" values (categories, sources, budgets, ...), and every
+//    newest wins) together with the "meta" values (categories, sources, budgets, salary, ...), and every
 //    reply is the full server state, which is merged back. An optional token protects the URL.
 //
 // To keep data safe in both:

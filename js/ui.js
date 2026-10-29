@@ -33,7 +33,7 @@ function renderQuickChips() {
 
 function quickFill(note, amount, category) {
     setTxType('expense');
-    document.getElementById('txAmount').value = amount;
+    setMoneyInput('txAmount', amount);
     document.getElementById('txNote').value = note;
     selectCategory(category);
 }
@@ -315,4 +315,55 @@ function showToast(message, kind = 'info', durationMs = 7000) {
     }
 
     setTimeout(() => toast.remove(), durationMs);
+}
+
+// --- MONEY FIELDS ---
+// Money inputs are text fields (data-money="positive" | "signed") that show thousands separators
+// while typing: "1500000" becomes "1.500.000". Use setMoneyInput / readMoneyInput, never .value.
+
+function setMoneyInput(id, value) {
+    const input = document.getElementById(id);
+    const number = Number(value);
+
+    if (!input) return;
+
+    input.value =
+        value === '' || value === null || value === undefined || !Number.isFinite(number)
+            ? ''
+            : formatMoneyDigits(String(Math.round(number)), input.dataset.money === 'signed');
+}
+
+function readMoneyInput(id) {
+    return parseMoneyText(document.getElementById(id).value);
+}
+
+/** Reformat on every keystroke and keep the caret after the same number of digits. */
+function attachMoneyInput(input) {
+    const allowNegative = input.dataset.money === 'signed';
+
+    input.addEventListener('input', () => {
+        const typed = input.value;
+        const caret = input.selectionStart ?? typed.length;
+        const formatted = formatMoneyDigits(typed, allowNegative);
+
+        if (formatted === typed) return;
+
+        // Characters that count: digits, and the leading minus sign.
+        let significantBeforeCaret = typed.slice(0, caret).replace(/[^\d-]/g, '').length;
+        let position = 0;
+
+        input.value = formatted;
+
+        while (position < formatted.length && significantBeforeCaret > 0) {
+            if (/[\d-]/.test(formatted[position])) significantBeforeCaret--;
+
+            position++;
+        }
+
+        input.setSelectionRange(position, position);
+    });
+}
+
+function initMoneyInputs() {
+    document.querySelectorAll('input[data-money]').forEach(attachMoneyInput);
 }

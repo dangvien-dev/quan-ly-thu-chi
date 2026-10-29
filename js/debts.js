@@ -6,12 +6,6 @@ const DEBT_REMINDER_KEY = 'fm_debt_reminder_day';
 
 const DEBT_DIRECTION_LABELS = { owe: 'Tôi nợ', owed: 'Họ nợ tôi' };
 
-function parseMoneyInput(text) {
-    const cleaned = String(text ?? '').replace(/[.,\s]/g, '');
-
-    return cleaned === '' ? NaN : Number(cleaned);
-}
-
 // --- RENDERING ---
 function debtStatusBadge(debt, today) {
     const status = debtStatus(debt, today);
@@ -35,7 +29,7 @@ function renderDebtDetails(debt) {
         ? debt.payments
               .map(
                   (payment) => `<li>
-                    <span>${escapeHtml(payment.date)}</span>
+                    <span>${escapeHtml(formatDateDisplay(payment.date))}</span>
                     <b>${formatMoney(payment.amount)}</b>
                     <button class="btn btn-outline btn-small" data-action="delete-payment" data-id="${id}" data-payment="${escapeHtml(payment.id)}" title="Xóa lần thanh toán này" aria-label="Xóa lần thanh toán ${formatMoney(payment.amount)}">
                         <i class="fa-solid fa-trash"></i>
@@ -47,7 +41,7 @@ function renderDebtDetails(debt) {
 
     return `<tr class="debt-details">
         <td colspan="8">
-            <div class="source-meta">Ngày vay: ${escapeHtml(debt.date || '—')}${debt.note ? ` · ${escapeHtml(debt.note)}` : ''}</div>
+            <div class="source-meta">Ngày vay: ${escapeHtml(debt.date ? formatDateDisplay(debt.date) : '—')}${debt.note ? ` · ${escapeHtml(debt.note)}` : ''}</div>
             <ul class="payment-list">${payments}</ul>
         </td>
     </tr>`;
@@ -92,7 +86,7 @@ function renderDebts() {
             <td data-label="Số tiền gốc">${formatMoney(debt.amount)}</td>
             <td data-label="Đã thanh toán">${formatMoney(debtPaid(debt))}</td>
             <td data-label="Còn lại" style="font-weight:700; color:${color};">${formatMoney(debtRemaining(debt))}</td>
-            <td data-label="Hạn">${escapeHtml(debt.dueDate || '—')}</td>
+            <td data-label="Hạn">${escapeHtml(debt.dueDate ? formatDateDisplay(debt.dueDate) : '—')}</td>
             <td data-label="Trạng thái">${debtStatusBadge(debt, today)}</td>
             <td class="row-actions" style="text-align:right; white-space:nowrap;">
                 ${settled ? '' : `<button class="btn btn-outline btn-small" data-action="pay" data-id="${id}" title="${payLabel}" aria-label="${payLabel} ${escapeHtml(debt.party)}"><i class="fa-solid fa-coins"></i></button>`}
@@ -149,7 +143,7 @@ function addDebtPayment(id) {
 
     if (input === null) return;
 
-    const amount = parseMoneyInput(input);
+    const amount = parseMoneyText(input);
 
     if (!(amount > 0)) {
         alert('Số tiền không hợp lệ!');
@@ -197,7 +191,7 @@ function openDebtModal(id = null) {
         : 'Thêm Khoản Vay Nợ';
     document.getElementById('debtParty').value = debt ? debt.party : '';
     document.getElementById('debtDirection').value = debt ? debt.direction : 'owe';
-    document.getElementById('debtAmount').value = debt ? debt.amount : '';
+    setMoneyInput('debtAmount', debt ? debt.amount : '');
     document.getElementById('debtDate').value = debt ? debt.date : toLocalDateString();
     document.getElementById('debtDue').value = debt ? debt.dueDate : '';
     document.getElementById('debtNote').value = debt ? debt.note : '';
@@ -217,7 +211,7 @@ function handleDebtSubmit(event) {
         id: existing ? existing.id : `DB_${Date.now()}`,
         party: document.getElementById('debtParty').value,
         direction: document.getElementById('debtDirection').value,
-        amount: document.getElementById('debtAmount').value,
+        amount: readMoneyInput('debtAmount'),
         date: document.getElementById('debtDate').value,
         dueDate: document.getElementById('debtDue').value,
         note: document.getElementById('debtNote').value.trim(),

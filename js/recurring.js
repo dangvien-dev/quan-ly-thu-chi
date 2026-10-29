@@ -126,14 +126,14 @@ function renderRecurring() {
                 rule.type === 'transfer'
                     ? `${escapeHtml(rule.source)} ➔ ${escapeHtml(rule.targetSource)}`
                     : escapeHtml(rule.source);
-            const period = `${escapeHtml(rule.startDate)} → ${escapeHtml(rule.endDate || 'không giới hạn')}`;
+            const period = `${escapeHtml(formatDateDisplay(rule.startDate))} → ${escapeHtml(rule.endDate ? formatDateDisplay(rule.endDate) : 'không giới hạn')}`;
 
             return `<tr>
             <td data-label="Tên"><b>${escapeHtml(rule.name)}</b>${rule.category && rule.type !== 'transfer' ? `<div class="source-meta">${escapeHtml(rule.category)}</div>` : ''}</td>
             <td data-label="Loại"><span style="color:${color}; font-weight:600;">${typeLabel}</span></td>
             <td data-label="Nguồn tiền">${sourceText}</td>
             <td data-label="Số tiền" style="font-weight:700; color:${color};">${formatMoney(rule.amount)}</td>
-            <td data-label="Lịch">${escapeHtml(describeRecurringSchedule(rule))}${next ? `<div class="source-meta">Lần tới: ${escapeHtml(next)}</div>` : ''}</td>
+            <td data-label="Lịch">${escapeHtml(describeRecurringSchedule(rule))}${next ? `<div class="source-meta">Lần tới: ${escapeHtml(formatDateDisplay(next))}</div>` : ''}</td>
             <td data-label="Hiệu lực">${period}</td>
             <td data-label="Trạng thái"><span class="status-badge ${status.className}">${status.label}</span></td>
             <td class="row-actions" style="text-align:right; white-space:nowrap;">
@@ -225,7 +225,7 @@ function openRecurringModal(id = null) {
         selectValue('rcCategory', rule.category, true);
     }
 
-    document.getElementById('rcAmount').value = rule ? rule.amount : '';
+    setMoneyInput('rcAmount', rule ? rule.amount : '');
     document.getElementById('rcMonthDay').value =
         rule && rule.frequency === 'monthly' ? rule.day : 1;
     document.getElementById('rcWeekDay').value = rule && rule.frequency === 'weekly' ? rule.day : 1;
@@ -256,7 +256,7 @@ function handleRecurringSubmit(event) {
         source: document.getElementById('rcSource').value,
         targetSource: document.getElementById('rcTarget').value,
         category: document.getElementById('rcCategory').value,
-        amount: document.getElementById('rcAmount').value,
+        amount: readMoneyInput('rcAmount'),
         note: document.getElementById('rcNote').value.trim(),
         frequency: weekly ? 'weekly' : 'monthly',
         day: document.getElementById(weekly ? 'rcWeekDay' : 'rcMonthDay').value,
@@ -287,7 +287,7 @@ function handleRecurringSubmit(event) {
     if (
         backfill > 0 &&
         !confirm(
-            `Ngày bắt đầu nằm trong quá khứ: sẽ tạo ngay ${backfill} giao dịch bù từ ${rule.startDate} đến hôm nay. Tiếp tục?`,
+            `Ngày bắt đầu nằm trong quá khứ: sẽ tạo ngay ${backfill} giao dịch bù từ ${formatDateDisplay(rule.startDate)} đến hôm nay. Tiếp tục?`,
         )
     ) {
         return;

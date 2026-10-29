@@ -76,6 +76,11 @@ const META_DEFS = {
         fallback: () => ({}),
         normalize: normalizeBudgets,
     },
+    salary: {
+        storage: 'fm_salary',
+        fallback: () => normalizeSalaryPlan({}),
+        normalize: normalizeSalaryPlan,
+    },
     recurring: {
         storage: 'fm_recurring',
         fallback: () => [],
@@ -102,6 +107,7 @@ let categories = loadMeta('categories');
 let sources = loadMeta('sources');
 let initialBalances = loadMeta('initialBalances');
 let budgets = loadMeta('budgets');
+let salaryPlan = loadMeta('salary');
 let recurring = loadMeta('recurring');
 let debts = loadMeta('debts');
 let webAppUrl = readStoredText('fm_script_url');
@@ -115,6 +121,7 @@ const META_ACCESSORS = {
     sources: { get: () => sources, set: (value) => (sources = value) },
     initialBalances: { get: () => initialBalances, set: (value) => (initialBalances = value) },
     budgets: { get: () => budgets, set: (value) => (budgets = value) },
+    salary: { get: () => salaryPlan, set: (value) => (salaryPlan = value) },
     recurring: { get: () => recurring, set: (value) => (recurring = value) },
     debts: { get: () => debts, set: (value) => (debts = value) },
 };
