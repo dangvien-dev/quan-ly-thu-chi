@@ -1,7 +1,6 @@
 // Keyboard use, accessible names, automatic accessibility scan, and the phone layout.
 
-const AxeBuilder = require('@axe-core/playwright').default;
-const { test, expect, tx, goTab, wait } = require('./helpers');
+const { test, expect, tx, goTab, wait, scanA11y } = require('./helpers');
 
 const TABS = [
     'overview',
@@ -81,11 +80,8 @@ test.describe('Quét trợ năng tự động (axe, WCAG 2 A/AA)', () => {
             const { page } = await app(fullSeed);
 
             await goTab(page, tab);
-            await wait(200);
 
-            const results = await new AxeBuilder({ page })
-                .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-                .analyze();
+            const results = await scanA11y(page);
 
             expect(violationsOf(results)).toEqual([]);
         });
@@ -102,11 +98,8 @@ test.describe('Quét trợ năng tự động (axe, WCAG 2 A/AA)', () => {
             const { page } = await app(fullSeed);
 
             await page.evaluate(modal[1]);
-            await wait(200);
 
-            const results = await new AxeBuilder({ page })
-                .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-                .analyze();
+            const results = await scanA11y(page);
 
             expect(violationsOf(results)).toEqual([]);
         });

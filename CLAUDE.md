@@ -83,6 +83,7 @@ npm run format:check   # Prettier (npm run format để sửa)
 ```
 
 - Test e2e chạy hoàn toàn không cần mạng: mọi request tới host ngoài bị chặn và ghi vào `state.external` (phải rỗng); `script.google.com` được trả lời bởi script thật của chủ repo chạy trong sandbox (`tests/e2e/helpers.js`).
+- Quét axe luôn qua `scanA11y(page, include?)` trong `tests/e2e/helpers.js` (tự chờ mọi animation/transition CSS xong qua `settle`): quét lúc tab đang `fadeIn` 0,3s hoặc hộp thoại đang chuyển cảnh thì axe báo `color-contrast` giả, chỉ lộ ra trên CI chậm (PR #4 đỏ vì vậy). Đừng thay bằng `wait(ms)` cố định.
 - Khi dùng `page.clock.setFixedTime` thì animation Chart.js bị đóng băng (chỉ kiểm tra dữ liệu, đừng chụp ảnh biểu đồ).
 - Sandbox không tải được CDN; mọi thư viện đã nằm trong `vendor/`. `npm` registry thì dùng được.
 - Sandbox Apps Script chỉ là mock của Sheets/ContentService — script chạy đúng trong mock chưa chứng minh chạy y hệt trên Google.

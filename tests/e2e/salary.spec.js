@@ -1,8 +1,7 @@
 // Spending against the monthly salary: overview card, settings dialog, alerts, sync and backup.
 
 const fs = require('fs');
-const AxeBuilder = require('@axe-core/playwright').default;
-const { test, expect, tx, newServer, wait } = require('./helpers');
+const { test, expect, tx, newServer, wait, scanA11y } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z';
 const SALARY = 20000000;
@@ -415,10 +414,7 @@ test.describe('Trợ năng và điện thoại', () => {
     ]) {
         test(`thẻ lương (${name}) không có vi phạm axe`, async ({ app }) => {
             const { page } = await app(withSalary(plan, rows));
-            const results = await new AxeBuilder({ page })
-                .include('#salary-section')
-                .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-                .analyze();
+            const results = await scanA11y(page, '#salary-section');
 
             expect(results.violations.map((violation) => violation.id)).toEqual([]);
         });
@@ -429,9 +425,7 @@ test.describe('Trợ năng và điện thoại', () => {
 
         await page.click('#salary-edit-btn');
 
-        const results = await new AxeBuilder({ page })
-            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-            .analyze();
+        const results = await scanA11y(page);
 
         expect(results.violations.map((violation) => violation.id)).toEqual([]);
 

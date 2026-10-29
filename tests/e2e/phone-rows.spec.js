@@ -1,7 +1,6 @@
 // Transactions on a phone: one line each, tap a line to open its details and edit / delete buttons.
 
-const AxeBuilder = require('@axe-core/playwright').default;
-const { test, expect, tx } = require('./helpers');
+const { test, expect, tx, scanA11y } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z';
 const phone = { width: 390, height: 844 };
@@ -255,9 +254,7 @@ test.describe('Sổ giao dịch trên điện thoại: mỗi giao dịch một d
         await row(page, 'TX_1').locator('.row-toggle').click();
         await row(page, 'TX_3').locator('.row-toggle').click();
 
-        const results = await new AxeBuilder({ page })
-            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-            .analyze();
+        const results = await scanA11y(page);
 
         expect(results.violations.map((violation) => violation.id)).toEqual([]);
     });

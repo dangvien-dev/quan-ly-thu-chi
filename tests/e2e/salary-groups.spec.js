@@ -1,8 +1,7 @@
 // Splitting the salary into groups (personal, work, saving ...): card rows, dialog, alerts, sync.
 
 const fs = require('fs');
-const AxeBuilder = require('@axe-core/playwright').default;
-const { test, expect, tx, newServer, wait } = require('./helpers');
+const { test, expect, tx, newServer, wait, scanA11y } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z';
 const SALARY = 10000000;
@@ -517,10 +516,7 @@ test.describe('Đồng bộ, sao lưu và trợ năng của nhóm', () => {
     ]) {
         test(`các nhóm trên thẻ (${name}) không có vi phạm axe`, async ({ app }) => {
             const { page } = await app(withPlan(plan(), rows));
-            const results = await new AxeBuilder({ page })
-                .include('#salary-section')
-                .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-                .analyze();
+            const results = await scanA11y(page, '#salary-section');
 
             expect(results.violations.map((violation) => violation.id)).toEqual([]);
         });
@@ -533,9 +529,7 @@ test.describe('Đồng bộ, sao lưu và trợ năng của nhóm', () => {
 
         await open(page);
 
-        const results = await new AxeBuilder({ page })
-            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-            .analyze();
+        const results = await scanA11y(page);
 
         expect(results.violations.map((violation) => violation.id)).toEqual([]);
 

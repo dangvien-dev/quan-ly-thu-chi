@@ -7,6 +7,7 @@
 // one). Several apps can share one server to act as several devices.
 
 const { test: base, expect } = require('@playwright/test');
+const AxeBuilder = require('@axe-core/playwright').default;
 const { createGas, gridFromRows, USER_SCRIPT_FILE, CODE_FILE } = require('../gas/sandbox');
 
 const BASE_URL = `http://127.0.0.1:${process.env.PORT || 4173}`;
@@ -207,6 +208,37 @@ const test = base.extend({
     },
 });
 
+/**
+ * Wait until every finite CSS animation / transition has finished. axe reads colours as they are
+ * at that moment, so a scan during the 0.3s tab fade-in or the dialog transition can report a
+ * false "color-contrast" (it showed up on the slower CI runner).
+ */
+const settle = (page) =>
+    page.evaluate(() =>
+        Promise.race([
+            Promise.all(
+                document
+                    .getAnimations()
+                    .filter(
+                        (animation) => animation.effect.getComputedTiming().iterations !== Infinity,
+                    )
+                    .map((animation) => animation.finished.catch(() => {})),
+            ),
+            new Promise((resolve) => setTimeout(resolve, 3000)),
+        ]),
+    );
+
+/** WCAG 2 A/AA scan of the page (or of one part of it) once animations have finished. */
+async function scanA11y(page, include) {
+    await settle(page);
+
+    const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']);
+
+    if (include) builder.include(include);
+
+    return builder.analyze();
+}
+
 const goTab = (page, tab) => page.click(`aside .menu li[data-tab="${tab}"]`);
 const goTransactions = (page) => goTab(page, 'transactions');
 
@@ -238,6 +270,8 @@ module.exports = {
     digits,
     tx,
     syncedSeed,
+    settle,
+    scanA11y,
     goTab,
     goTransactions,
     addExpense,
