@@ -182,9 +182,6 @@
             <section id="tab-transactions" class="view-section">
                 <div class="section-head">
                     <h3>Lịch Sử Giao Dịch</h3>
-                    <button class="btn btn-outline" onclick="exportTransactionsCsv()">
-                        <i class="fa-solid fa-file-csv"></i> Xuất CSV
-                    </button>
                 </div>
                 <div class="filter-bar" role="search">
                     <div class="filter-item">
@@ -429,7 +426,24 @@
 
                     <hr style="margin: 20px 0" />
 
-                    <h3>Sao lưu & Khôi phục dữ liệu</h3>
+                    <h3 style="margin-bottom: 12px">Xuất giao dịch ra file CSV</h3>
+                    <div class="form-group">
+                        <label for="csv-scope">Phạm vi xuất</label>
+                        <select id="csv-scope" class="form-control" aria-describedby="csv-hint">
+                            <option value="all">Tất cả giao dịch</option>
+                            <option value="filtered">Theo bộ lọc đang chọn ở Sổ Giao Dịch</option>
+                        </select>
+                        <p id="csv-hint" class="hint">
+                            File mở được bằng Excel (UTF-8). Ngày ghi dạng dd/mm/yyyy.
+                        </p>
+                    </div>
+                    <button class="btn" onclick="exportTransactionsCsv()">
+                        <i class="fa-solid fa-file-csv"></i> Xuất CSV
+                    </button>
+
+                    <hr style="margin: 20px 0" />
+
+                    <h3 style="margin-bottom: 12px">Sao lưu & Khôi phục dữ liệu</h3>
 
                     <button class="btn" onclick="exportBackup()">
                         <i class="fa-solid fa-download"></i>

@@ -333,8 +333,13 @@ function shiftFilterMonth(step) {
     handleTransactionFilterChange();
 }
 
+/** Export from Cài đặt: every transaction, or only those the Sổ Giao Dịch filters show. */
 function exportTransactionsCsv() {
-    const list = getFilteredTransactions();
+    const scope = document.getElementById('csv-scope');
+    const list =
+        scope && scope.value === 'filtered'
+            ? getFilteredTransactions()
+            : [...transactions].sort(compareNewestFirst);
 
     if (list.length === 0) {
         alert('Không có giao dịch nào để xuất.');
