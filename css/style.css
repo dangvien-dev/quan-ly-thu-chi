@@ -145,14 +145,13 @@ header {
     display: block;
     animation: fadeIn 0.3s ease-in-out;
 }
+/* Fade only: sliding the page by a few pixels made it look like it jumped. */
 @keyframes fadeIn {
     from {
         opacity: 0;
-        transform: translateY(5px);
     }
     to {
         opacity: 1;
-        transform: translateY(0);
     }
 }
 
@@ -1260,10 +1259,13 @@ main:focus {
 }
 
 @media (max-width: 768px) {
+    /* A fixed height: titles and the sync label differ in length from page to page, and a header
+       that changes height makes the whole page jump when switching tabs. */
     header {
         flex-direction: row;
         align-items: center;
         gap: 10px;
+        height: 56px;
         margin-bottom: 16px;
     }
 
@@ -1287,15 +1289,19 @@ main:focus {
         min-width: 0;
     }
 
+    /* At most two lines; the static subtitle is dropped to leave the room. */
     .header-title h1 {
-        font-size: 20px;
-        line-height: 1.25;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        overflow: hidden;
+        font-size: 18px;
+        line-height: 1.2;
     }
 
     .header-title p {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        display: none;
     }
 
     .header-actions {

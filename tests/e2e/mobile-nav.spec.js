@@ -1,7 +1,7 @@
 // Phone navigation: a bottom bar with four pages and the add button in the middle, and the other
 // pages in the menu that slides in from the left (the sidebar).
 
-const { test, expect, tx, scanA11y } = require('./helpers');
+const { test, expect, tx, scanA11y, settle } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z';
 const phone = { now: NOW, viewport: { width: 390, height: 844 } };
@@ -396,5 +396,100 @@ test.describe('Trợ năng và bố cục', () => {
         const nav = await page.locator('.mobile-nav').boundingBox();
 
         expect(last.y + last.height).toBeLessThanOrEqual(nav.y);
+    });
+});
+
+test.describe('Đầu trang trên điện thoại có chiều cao cố định', () => {
+    test('đổi qua lại giữa 7 trang: đầu trang luôn cao như nhau, nội dung luôn bắt đầu cùng một chỗ', async ({
+        app,
+    }) => {
+        const { page } = await app(phone);
+        const measured = [];
+
+        for (const [tab] of [...PAGES, ...PAGES.slice().reverse()]) {
+            await page.evaluate((name) => switchTab(name), tab);
+            await settle(page);
+
+            measured.push({
+                tab,
+                header: (await page.locator('header').boundingBox()).height,
+                top: (await page.locator(`#tab-${tab}`).boundingBox()).y,
+            });
+        }
+
+        expect(new Set(measured.map((item) => item.header)).size).toBe(1);
+        expect(new Set(measured.map((item) => item.top)).size).toBe(1);
+        expect(measured[0].header).toBe(56);
+    });
+
+    test('nhãn đồng bộ dài hay ngắn cũng không làm đổi chiều cao đầu trang', async ({ app }) => {
+        const { page } = await app(phone);
+        const heights = new Set();
+        const states = await page.evaluate(() => Object.keys(SYNC_BADGES));
+
+        for (const state of states) {
+            await page.evaluate((name) => setSyncBadge(name, ''), state);
+            heights.add((await page.locator('header').boundingBox()).height);
+
+            const badge = await page.locator('#sync-status').boundingBox();
+
+            expect(badge.x + badge.width).toBeLessThanOrEqual(390);
+            expect(badge.height).toBeLessThanOrEqual(56);
+        }
+
+        expect(states.length).toBeGreaterThanOrEqual(6);
+        expect([...heights]).toEqual([56]);
+    });
+
+    test('mọi tiêu đề trang vừa trong đầu trang (tối đa 2 dòng), không tràn ra ngoài', async ({
+        app,
+    }) => {
+        const { page } = await app(phone);
+
+        for (const [tab] of PAGES) {
+            await page.evaluate((name) => switchTab(name), tab);
+
+            const sizes = await page.evaluate(() => {
+                const title = document.getElementById('page-title');
+                const header = document.querySelector('header').getBoundingClientRect();
+                const box = title.getBoundingClientRect();
+                const line = parseFloat(getComputedStyle(title).lineHeight);
+
+                return {
+                    lines: Math.round(box.height / line),
+                    inside: box.top >= header.top && box.bottom <= header.bottom,
+                    clipped: title.scrollHeight > title.clientHeight + 1,
+                };
+            });
+
+            expect(sizes.lines, tab).toBeLessThanOrEqual(2);
+            expect(sizes.inside, tab).toBe(true);
+            expect(sizes.clipped, tab).toBe(false);
+        }
+    });
+
+    test('dòng phụ tĩnh ẩn trên điện thoại, vẫn hiện trên máy tính', async ({ app }) => {
+        const mobile = await app(phone);
+        const wide = await app(desktop);
+
+        await expect(mobile.page.locator('#current-date-label')).toBeHidden();
+        await expect(wide.page.locator('#current-date-label')).toBeVisible();
+    });
+
+    test('đổi trang chỉ mờ dần, không trượt lên xuống', async ({ app }) => {
+        const { page } = await app(phone);
+
+        await page.evaluate(() => switchTab('sources'));
+
+        const properties = await page.evaluate(() =>
+            document
+                .getAnimations()
+                .filter((animation) => animation.animationName === 'fadeIn')
+                .flatMap((animation) => animation.effect.getKeyframes())
+                .flatMap((frame) => Object.keys(frame)),
+        );
+
+        expect(properties).toContain('opacity');
+        expect(properties).not.toContain('transform');
     });
 });
