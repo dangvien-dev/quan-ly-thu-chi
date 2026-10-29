@@ -53,6 +53,7 @@ function renderAll() {
     const views = [
         renderTransactions,
         renderOverview,
+        renderSalary,
         renderSources,
         renderCategories,
         renderRecurring,

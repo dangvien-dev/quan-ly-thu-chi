@@ -370,6 +370,59 @@ function computeBudgetStatus(list, budgetMap, monthKey) {
         .sort((a, b) => b.ratio - a.ratio);
 }
 
+// --- SALARY ---
+
+const DEFAULT_SALARY_WARN_PERCENT = 80;
+
+/**
+ * { amount: monthly salary in VND (0 = not set), warnPercent: 1-100 }.
+ * Returns null when the input is not an object.
+ */
+function normalizeSalaryPlan(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+    const amount = Math.round(Number(value.amount));
+    const warnPercent = Math.round(Number(value.warnPercent));
+
+    return {
+        amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
+        warnPercent:
+            warnPercent >= 1 && warnPercent <= 100 ? warnPercent : DEFAULT_SALARY_WARN_PERCENT,
+    };
+}
+
+/** 0 = within the salary, 1 = reached the warning percent, 2 = at or over the whole salary. */
+function salaryLevel(ratio, warnPercent) {
+    if (ratio >= 1) return 2;
+
+    return ratio >= warnPercent / 100 ? 1 : 0;
+}
+
+/** The month's (YYYY-MM) expenses against the salary; null when no salary is set. */
+function computeSalaryStatus(list, plan, monthKey) {
+    if (!plan || !(plan.amount > 0)) return null;
+
+    const spent = list.reduce(
+        (total, transaction) =>
+            transaction.type === 'expense' && transaction.date.startsWith(monthKey)
+                ? total + transaction.amount
+                : total,
+        0,
+    );
+    const ratio = spent / plan.amount;
+
+    return {
+        salary: plan.amount,
+        warnPercent: plan.warnPercent,
+        spent,
+        remaining: plan.amount - spent,
+        ratio,
+        // Rounded down so "80%" never shows before the warning level is actually reached.
+        percent: Math.floor((spent * 100) / plan.amount),
+        level: salaryLevel(ratio, plan.warnPercent),
+    };
+}
+
 // --- RECURRING TRANSACTIONS ---
 
 const MAX_RECURRING_PER_RUN = 400;

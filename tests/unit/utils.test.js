@@ -494,3 +494,86 @@ test.describe('hiển thị ngày và ô nhập tiền', () => {
         assert.deepEqual(search('2026-10-28'), ['a']);
     });
 });
+
+test.describe('lương và cảnh báo chi tiêu', () => {
+    const status = (list, plan, month = '2026-10') =>
+        plain(
+            run(
+                `computeSalaryStatus(${JSON.stringify(list)}, ${JSON.stringify(plan)}, ${JSON.stringify(month)})`,
+            ),
+        );
+
+    test('normalizeSalaryPlan: làm tròn lương, mức cảnh báo ngoài 1-100 về 80, từ chối không phải object', () => {
+        assert.deepEqual(plain(run('normalizeSalaryPlan({amount:"15000000.4",warnPercent:70})')), {
+            amount: 15000000,
+            warnPercent: 70,
+        });
+        assert.deepEqual(plain(run('normalizeSalaryPlan({amount:-5,warnPercent:0})')), {
+            amount: 0,
+            warnPercent: 80,
+        });
+        assert.deepEqual(plain(run('normalizeSalaryPlan({amount:"abc",warnPercent:101})')), {
+            amount: 0,
+            warnPercent: 80,
+        });
+        assert.deepEqual(plain(run('normalizeSalaryPlan({})')), { amount: 0, warnPercent: 80 });
+        assert.equal(run('normalizeSalaryPlan(null)'), null);
+        assert.equal(run('normalizeSalaryPlan([1])'), null);
+        assert.equal(run('normalizeSalaryPlan("x")'), null);
+    });
+
+    test('salaryLevel: 0 dưới mốc, 1 từ mốc cảnh báo, 2 từ 100%', () => {
+        assert.equal(run('salaryLevel(0.79, 80)'), 0);
+        assert.equal(run('salaryLevel(0.8, 80)'), 1);
+        assert.equal(run('salaryLevel(0.999, 80)'), 1);
+        assert.equal(run('salaryLevel(1, 80)'), 2);
+        assert.equal(run('salaryLevel(3, 80)'), 2);
+        assert.equal(run('salaryLevel(0.7, 70)'), 1);
+        assert.equal(run('salaryLevel(0.5, 100)'), 0); // warn percent 100: only "over" remains
+        assert.equal(run('salaryLevel(1, 100)'), 2);
+    });
+
+    test('computeSalaryStatus: null khi chưa đặt lương', () => {
+        assert.equal(run('computeSalaryStatus([], {amount:0,warnPercent:80}, "2026-10")'), null);
+        assert.equal(run('computeSalaryStatus([], null, "2026-10")'), null);
+    });
+
+    test('computeSalaryStatus: chỉ cộng chi của tháng, bỏ thu / chuyển / tháng khác', () => {
+        const result = status(
+            [
+                tx({ amount: 300000 }),
+                tx({ amount: 200000, date: '2026-10-01' }),
+                tx({ amount: 900000, date: '2026-09-30' }),
+                tx({ amount: 500000, type: 'income' }),
+                tx({ amount: 400000, type: 'transfer', targetSource: 'X' }),
+            ],
+            { amount: 1000000, warnPercent: 80 },
+        );
+
+        assert.deepEqual(result, {
+            salary: 1000000,
+            warnPercent: 80,
+            spent: 500000,
+            remaining: 500000,
+            ratio: 0.5,
+            percent: 50,
+            level: 0,
+        });
+    });
+
+    test('computeSalaryStatus: phần trăm làm tròn xuống, không hiện 80% khi chưa tới mốc', () => {
+        const at = (spent) => status([tx({ amount: spent })], { amount: 1000000, warnPercent: 80 });
+
+        assert.equal(at(799999).percent, 79);
+        assert.equal(at(799999).level, 0);
+        assert.equal(at(800000).percent, 80);
+        assert.equal(at(800000).level, 1);
+        assert.equal(at(999999).percent, 99);
+        assert.equal(at(1000000).percent, 100);
+        assert.equal(at(1000000).level, 2);
+        assert.equal(at(1250000).percent, 125);
+        assert.equal(at(1250000).remaining, -250000);
+        // 29% must not become 28% through floating point (0.29 * 100 = 28.999...).
+        assert.equal(status([tx({ amount: 29 })], { amount: 100, warnPercent: 80 }).percent, 29);
+    });
+});

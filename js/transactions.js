@@ -66,7 +66,10 @@ function handleFormSubmit(e) {
     syncToGoogleSheet();
 
     if (!wasEditing) {
-        notifyBudget(transactions.find((transaction) => transaction.id === savedId));
+        const saved = transactions.find((transaction) => transaction.id === savedId);
+
+        notifyBudget(saved);
+        notifySalary(saved);
     }
 }
 

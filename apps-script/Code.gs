@@ -15,7 +15,7 @@
  *    Existing columns keep their place; missing ones are appended. The sheet is fully managed
  *    by the app. The date column holds real dates and is displayed as dd/mm/yyyy.
  *  - "Meta": key, value (JSON), updatedAt - categories, sources, opening balances, budgets,
- *    recurring rules and debts.
+ *    salary plan, recurring rules and debts.
  *
  * Requests
  *  v2 (FinManager with sync v2)

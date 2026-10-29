@@ -679,6 +679,90 @@ canvas {
     color: var(--danger);
 }
 
+/* --- Spending against salary --- */
+.salary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.salary-header h3 {
+    flex: 1;
+    min-width: 0;
+}
+
+.salary-header .btn {
+    flex: none;
+}
+
+/* A hint under an input inside a form group (the base .hint is for hints after a whole field). */
+.form-group .hint {
+    margin: 6px 0 0;
+}
+
+.salary-empty {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.salary-percent {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.salary-percent b {
+    font-size: 28px;
+    color: var(--text-main);
+    margin-right: 4px;
+}
+
+.level-2 .salary-percent b {
+    color: var(--danger);
+}
+
+.salary-track {
+    position: relative;
+}
+
+.salary-track .progress {
+    height: 12px;
+}
+
+/* A tick on the bar at the warning percent. */
+.salary-marker {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--text-main);
+    opacity: 0.55;
+}
+
+.salary-detail {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.salary-message {
+    margin-top: 6px;
+    font-size: 14px;
+}
+
+.level-1 .salary-message {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.level-2 .salary-message {
+    color: var(--danger);
+    font-weight: 600;
+}
+
 #toast-container {
     position: fixed;
     right: 16px;
