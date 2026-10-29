@@ -5,7 +5,7 @@
 ## Tính năng
 
 - **Giao dịch**: thu / chi / chuyển tiền giữa các nguồn; lọc theo tháng, loại, danh mục, nguồn; tìm kiếm không dấu; xem thêm theo trang; xuất CSV (UTF-8, mở được trong Excel).
-- **Điện thoại**: mỗi giao dịch là một dòng (ngày · ghi chú · số tiền, viền màu theo loại thu / chi / chuyển); chạm vào dòng để xem nguồn tiền, danh mục và nút sửa / xóa.
+- **Điện thoại**: thanh dưới gọn 4 mục (Tổng quan, Sổ GD, Nguồn, Danh mục) với nút `+` thêm giao dịch tròn nhô lên ở giữa; các trang còn lại (Định kỳ, Vay nợ, Cài đặt…) nằm trong menu trái mở bằng nút ☰ ở đầu trang. Mỗi giao dịch là một dòng (ngày · ghi chú · số tiền, viền màu theo loại thu / chi / chuyển); chạm vào dòng để xem nguồn tiền, danh mục và nút sửa / xóa.
 - **Nhập liệu dễ đọc**: ngày hiển thị `dd/mm/yyyy` ở mọi nơi (kể cả CSV); các ô tiền tự thêm dấu chấm ngăn cách hàng nghìn khi gõ (`1500000` → `1.500.000`).
 - **Nguồn tiền**: tiền mặt, ngân hàng, ví điện tử, thẻ tín dụng / trả sau (hạn mức, ngày chốt sao kê, hạn thanh toán), khoản nợ; lưu trữ, đổi tên (cập nhật mọi giao dịch).
 - **Tổng quan**: thu / chi tháng này, số dư khả dụng, dư nợ, biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.

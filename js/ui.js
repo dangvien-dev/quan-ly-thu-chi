@@ -68,6 +68,55 @@ function switchTab(tabId) {
     if (pageTitle && TAB_TITLES[tabId]) {
         pageTitle.innerText = TAB_TITLES[tabId];
     }
+
+    // Choosing a page from the phone menu closes it and moves on to the page.
+    closeMenu({ focusMain: true });
+}
+
+// --- PHONE MENU ---
+// On a phone the sidebar is a drawer: the menu button in the header opens it, and Esc, the
+// backdrop, the close button or choosing a page close it.
+function isMenuOpen() {
+    return document.body.classList.contains('menu-open');
+}
+
+function setMenuOpen(open) {
+    document.body.classList.toggle('menu-open', open);
+
+    const toggle = document.getElementById('menu-toggle');
+
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', open ? 'Đóng menu' : 'Mở menu');
+    }
+}
+
+function openMenu() {
+    if (isMenuOpen()) return;
+
+    setMenuOpen(true);
+
+    const current = document.querySelector('aside .menu li.active .menu-link');
+
+    (current || document.querySelector('aside .menu-link')).focus();
+}
+
+/** Close the menu; focus goes back to the menu button, or to the page after choosing one. */
+function closeMenu({ focusMain = false } = {}) {
+    if (!isMenuOpen()) return;
+
+    setMenuOpen(false);
+
+    const target = focusMain
+        ? document.getElementById('main-content')
+        : document.getElementById('menu-toggle');
+
+    if (target) target.focus();
+}
+
+function toggleMenu() {
+    if (isMenuOpen()) closeMenu();
+    else openMenu();
 }
 
 // --- TRANSACTION TYPE AND TRANSFERS ---
@@ -237,7 +286,9 @@ const FOCUSABLE_SELECTOR =
 
 /** Keep Tab inside the open dialog (and bring focus in if it is outside). */
 function trapDialogFocus(event) {
-    const dialog = document.querySelector('.modal.open');
+    const dialog =
+        document.querySelector('.modal.open') ||
+        (isMenuOpen() ? document.getElementById('sidebar') : null);
 
     if (!dialog) return;
 
@@ -270,7 +321,13 @@ function initModalShortcuts() {
             const closeButton = document.querySelector('.modal.open .close-btn');
 
             if (closeButton) closeButton.click();
+            else closeMenu();
         }
+    });
+
+    // Growing past the phone width (rotating a tablet) must not leave the menu "open".
+    window.matchMedia('(max-width: 768px)').addEventListener('change', (event) => {
+        if (!event.matches) setMenuOpen(false);
     });
 }
 
