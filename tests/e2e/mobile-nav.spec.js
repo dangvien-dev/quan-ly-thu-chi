@@ -1,7 +1,7 @@
 // Phone navigation: a bottom bar with four pages and the add button in the middle, and the other
 // pages in the menu that slides in from the left (the sidebar).
 
-const { test, expect, tx, scanA11y, settle } = require('./helpers');
+const { test, expect, tx, newServer, scanA11y, settle } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z';
 const phone = { now: NOW, viewport: { width: 390, height: 844 } };
@@ -439,6 +439,54 @@ test.describe('Đầu trang trên điện thoại có chiều cao cố định',
 
         expect(states.length).toBeGreaterThanOrEqual(6);
         expect([...heights]).toEqual([56]);
+    });
+
+    test('nhãn đồng bộ có độ rộng cố định (không co lại khi đang tải), tiêu đề không đổi cách xuống dòng', async ({
+        app,
+    }) => {
+        const { page } = await app(phone);
+        const states = await page.evaluate(() => Object.keys(SYNC_BADGES));
+        const widths = new Set();
+        const titles = new Set();
+
+        for (const state of states) {
+            await page.evaluate((name) => setSyncBadge(name, ''), state);
+
+            const badge = await page.locator('#sync-status').boundingBox();
+            const title = await page.locator('#page-title').boundingBox();
+
+            widths.add(badge.width);
+            titles.add(`${title.width}x${title.height}`);
+        }
+
+        // The label before the app has set any state ("Sẵn sàng") is covered as well.
+        await page.evaluate(() => {
+            document.getElementById('sync-status').innerHTML =
+                '<i class="fa-solid fa-cloud-arrow-up"></i> Sẵn sàng';
+        });
+        widths.add((await page.locator('#sync-status').boundingBox()).width);
+
+        expect(states).toContain('loading');
+        expect([...widths]).toEqual([136]);
+        expect(titles.size).toBe(1);
+    });
+
+    test('tải lại trang (nhãn đang "Đang tải...") thì đầu trang đã có đúng kích thước cuối cùng', async ({
+        app,
+    }) => {
+        const server = newServer('v2');
+        const { page } = await app({ ...phone, server, getDelay: 400, settle: 0 });
+        const early = await page.evaluate(() => ({
+            badge: document.getElementById('sync-status').getBoundingClientRect().width,
+            label: document.getElementById('sync-status').innerText.trim(),
+        }));
+
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu', { timeout: 8000 });
+
+        const final = (await page.locator('#sync-status').boundingBox()).width;
+
+        expect(early.badge).toBe(136);
+        expect(final).toBe(136);
     });
 
     test('mọi tiêu đề trang vừa trong đầu trang (tối đa 2 dòng), không tràn ra ngoài', async ({

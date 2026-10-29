@@ -1306,14 +1306,18 @@ main:focus {
 
     .header-actions {
         flex: none;
-        max-width: 38%;
     }
 
     .header-add {
         display: none;
     }
 
+    /* A fixed width: a short label such as "Đang tải..." must not shrink the badge, because the
+       title next to it would then get wider and wrap differently. */
     .sync-badge {
+        box-sizing: border-box;
+        width: 136px;
+        justify-content: center;
         font-size: 11px;
         line-height: 1.25;
         padding: 4px 10px;
