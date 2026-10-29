@@ -78,7 +78,7 @@ const META_DEFS = {
     },
     salary: {
         storage: 'fm_salary',
-        fallback: () => ({ amount: 0, warnPercent: DEFAULT_SALARY_WARN_PERCENT }),
+        fallback: () => normalizeSalaryPlan({}),
         normalize: normalizeSalaryPlan,
     },
     recurring: {

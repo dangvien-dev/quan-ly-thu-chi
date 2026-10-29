@@ -94,6 +94,7 @@ function initializeApp() {
     initTransactionFilters();
     initRecurring();
     initDebts();
+    initSalary();
     initModalShortcuts();
     window.addEventListener('online', resumeSync);
 

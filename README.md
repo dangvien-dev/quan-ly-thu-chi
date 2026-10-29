@@ -11,6 +11,7 @@
 - **Tổng quan**: thu / chi tháng này, số dư khả dụng, dư nợ, biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.
 - **Ngân sách** theo danh mục chi, cảnh báo khi vượt 80% và 100%.
 - **Chi tiêu trên lương**: đặt lương hằng tháng và mức cảnh báo (mặc định 80%); thẻ trên Tổng quan cho biết đã chi bao nhiêu % lương, còn lại bao nhiêu, đổi màu xanh / vàng / đỏ, và báo ngay khi một khoản chi làm chạm mốc cảnh báo hoặc hết lương. Chỉ tính khoản chi của tháng hiện tại (thu nhập và chuyển tiền không tính).
+- **Chia lương theo nhóm** (ví dụ tiêu dùng cá nhân 50%, công việc 30%, tiết kiệm 20% — mẫu có sẵn, đổi tên / % / thêm bớt tối đa 8 nhóm): mỗi danh mục chi thuộc một nhóm; nhóm chi có hạn mức = % × lương và đổi màu / báo khi sắp hết; nhóm tiết kiệm là phần còn lại sau khi chi, báo khi chi lấn vào mục tiêu tiết kiệm.
 - **Giao dịch định kỳ** (hằng tháng / hằng tuần): tự tạo khi đến hạn, không tạo trùng.
 - **Sổ vay nợ**: khoản mình nợ và khoản người khác nợ mình, thanh toán từng phần, nhắc khoản quá hạn.
 - **Sao lưu / khôi phục** JSON, **đồng bộ Google Sheets**, **PWA offline**.

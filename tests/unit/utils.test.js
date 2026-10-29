@@ -503,23 +503,80 @@ test.describe('lương và cảnh báo chi tiêu', () => {
             ),
         );
 
+    const basics = (json) => {
+        const { amount, warnPercent } = plain(run(`normalizeSalaryPlan(${json})`));
+
+        return { amount, warnPercent };
+    };
+
     test('normalizeSalaryPlan: làm tròn lương, mức cảnh báo ngoài 1-100 về 80, từ chối không phải object', () => {
-        assert.deepEqual(plain(run('normalizeSalaryPlan({amount:"15000000.4",warnPercent:70})')), {
+        assert.deepEqual(basics('{amount:"15000000.4",warnPercent:70}'), {
             amount: 15000000,
             warnPercent: 70,
         });
-        assert.deepEqual(plain(run('normalizeSalaryPlan({amount:-5,warnPercent:0})')), {
-            amount: 0,
-            warnPercent: 80,
-        });
-        assert.deepEqual(plain(run('normalizeSalaryPlan({amount:"abc",warnPercent:101})')), {
-            amount: 0,
-            warnPercent: 80,
-        });
-        assert.deepEqual(plain(run('normalizeSalaryPlan({})')), { amount: 0, warnPercent: 80 });
+        assert.deepEqual(basics('{amount:-5,warnPercent:0}'), { amount: 0, warnPercent: 80 });
+        assert.deepEqual(basics('{amount:"abc",warnPercent:101}'), { amount: 0, warnPercent: 80 });
+        assert.deepEqual(basics('{}'), { amount: 0, warnPercent: 80 });
         assert.equal(run('normalizeSalaryPlan(null)'), null);
         assert.equal(run('normalizeSalaryPlan([1])'), null);
         assert.equal(run('normalizeSalaryPlan("x")'), null);
+    });
+
+    test('normalizeSalaryPlan: thiếu nhóm thì dùng mẫu 50 / 30 / 20 (tiết kiệm là phần còn lại)', () => {
+        const plan = plain(run('normalizeSalaryPlan({amount:1000})'));
+
+        assert.deepEqual(
+            plan.groups.map((group) => [group.name, group.percent, group.saving]),
+            [
+                ['Tiêu dùng cá nhân', 50, false],
+                ['Công việc', 30, false],
+                ['Tiết kiệm', 20, true],
+            ],
+        );
+        assert.deepEqual(plan.assign, {});
+    });
+
+    test('normalizeSalaryGroups: bỏ nhóm hỏng / trùng id, chỉ một nhóm tiết kiệm, tối đa 8 nhóm', () => {
+        const groups = plain(
+            run(`normalizeSalaryGroups([
+                {id:'a',name:' Cá nhân ',percent:"40.4",saving:false},
+                {id:'a',name:'Trùng id',percent:10},
+                {id:'b',name:'',percent:10},
+                {id:'c',name:'Âm',percent:-1},
+                {id:'d',name:'Quá lớn',percent:101},
+                {id:'e',name:'Rác',percent:'abc'},
+                null,
+                {id:'f',name:'Tiết kiệm',percent:20,saving:true},
+                {id:'g',name:'Tiết kiệm 2',percent:5,saving:true}
+            ])`),
+        );
+
+        assert.deepEqual(groups, [
+            { id: 'a', name: 'Cá nhân', percent: 40, saving: false },
+            { id: 'f', name: 'Tiết kiệm', percent: 20, saving: true },
+            { id: 'g', name: 'Tiết kiệm 2', percent: 5, saving: false },
+        ]);
+        assert.equal(run('normalizeSalaryGroups("x")'), null);
+        assert.equal(
+            run(
+                `normalizeSalaryGroups(Array.from({length: 12}, (_, i) => ({id: 'g' + i, name: 'N' + i, percent: 1}))).length`,
+            ),
+            8,
+        );
+        assert.deepEqual(plain(run('normalizeSalaryGroups([])')), []);
+    });
+
+    test('normalizeSalaryPlan: assign chỉ giữ danh mục trỏ tới nhóm chi còn tồn tại', () => {
+        const plan = plain(
+            run(`normalizeSalaryPlan({
+                amount: 1000,
+                groups: [{id:'p',name:'P',percent:50},{id:'s',name:'S',percent:50,saving:true}],
+                assign: {'Ăn uống':'p','Đi lại':'s','Mua sắm':'x','':'p','__proto__':'p'}
+            })`),
+        );
+
+        assert.deepEqual(plan.assign, { 'Ăn uống': 'p' });
+        assert.deepEqual(plain(run('normalizeSalaryPlan({assign:[1]})')).assign, {});
     });
 
     test('salaryLevel: 0 dưới mốc, 1 từ mốc cảnh báo, 2 từ 100%', () => {
@@ -575,5 +632,138 @@ test.describe('lương và cảnh báo chi tiêu', () => {
         assert.equal(at(1250000).remaining, -250000);
         // 29% must not become 28% through floating point (0.29 * 100 = 28.999...).
         assert.equal(status([tx({ amount: 29 })], { amount: 100, warnPercent: 80 }).percent, 29);
+    });
+    const planJson = (extra = {}) =>
+        JSON.stringify({
+            amount: 10000000,
+            warnPercent: 80,
+            groups: [
+                { id: 'p', name: 'Cá nhân', percent: 50, saving: false },
+                { id: 'w', name: 'Công việc', percent: 30, saving: false },
+                { id: 's', name: 'Tiết kiệm', percent: 20, saving: true },
+            ],
+            assign: { 'Vật tư': 'w' },
+            ...extra,
+        });
+    const allocate = (list, extra, month = '2026-10') =>
+        plain(
+            run(
+                `computeSalaryAllocation(${JSON.stringify(list)}, normalizeSalaryPlan(${planJson(extra)}), ${JSON.stringify(month)})`,
+            ),
+        );
+    const group = (result, id) => result.groups.find((item) => item.id === id);
+
+    test('computeSalaryAllocation: null khi chưa có lương hoặc không có nhóm', () => {
+        assert.equal(allocate([], { amount: 0 }), null);
+        assert.equal(allocate([], { groups: [] }), null);
+    });
+
+    test('computeSalaryAllocation: chi vào đúng nhóm theo danh mục, chưa gán thì vào nhóm chi đầu tiên', () => {
+        const result = allocate([
+            tx({ id: '1', category: 'Ăn uống', amount: 1000000 }),
+            tx({ id: '2', category: 'Vật tư', amount: 2000000 }),
+            tx({ id: '3', category: 'Danh mục lạ', amount: 500000 }),
+            tx({ id: '4', category: 'Vật tư', amount: 9000000, date: '2026-09-30' }),
+            tx({ id: '5', category: 'Vật tư', amount: 9000000, type: 'income' }),
+        ]);
+
+        assert.equal(group(result, 'p').spent, 1500000);
+        assert.equal(group(result, 'w').spent, 2000000);
+        assert.equal(result.totalSpent, 3500000);
+        assert.equal(result.totalPercent, 100);
+    });
+
+    test('computeSalaryAllocation: hạn mức, phần trăm lương và mức cảnh báo của nhóm chi', () => {
+        const result = allocate([
+            tx({ id: '1', category: 'Vật tư', amount: 2400000 }), // 80% of the 3,000,000 cap
+            tx({ id: '2', category: 'Ăn uống', amount: 2000000 }), // 40% of 5,000,000
+        ]);
+
+        assert.deepEqual(group(result, 'w'), {
+            id: 'w',
+            name: 'Công việc',
+            percent: 30,
+            saving: false,
+            cap: 3000000,
+            spent: 2400000,
+            ratio: 0.8,
+            remaining: 600000,
+            percentOfSalary: 24,
+            usedPercent: 80,
+            level: 1,
+        });
+        assert.equal(group(result, 'p').level, 0);
+        assert.equal(group(result, 'p').percentOfSalary, 20);
+    });
+
+    test('computeSalaryAllocation: nhóm chi vượt hạn mức là mức 2; hạn mức 0 mà có chi thì cũng vượt', () => {
+        const over = allocate([tx({ category: 'Vật tư', amount: 3500000 })]);
+
+        assert.equal(group(over, 'w').level, 2);
+        assert.equal(group(over, 'w').remaining, -500000);
+        assert.equal(group(over, 'w').usedPercent, 116);
+
+        const zero = allocate([tx({ category: 'Vật tư', amount: 1 })], {
+            groups: [
+                { id: 'p', name: 'Cá nhân', percent: 100, saving: false },
+                { id: 'w', name: 'Công việc', percent: 0, saving: false },
+            ],
+        });
+
+        assert.equal(group(zero, 'w').cap, 0);
+        assert.equal(group(zero, 'w').level, 2);
+        assert.equal(group(zero, 'w').usedPercent, 100);
+        assert.equal(
+            group(allocate([], { groups: [{ id: 'p', name: 'P', percent: 0 }] }), 'p').level,
+            0,
+        );
+    });
+
+    test('computeSalaryAllocation: tiết kiệm là phần còn lại, đạt mục tiêu khi tổng chi ≤ lương - mục tiêu', () => {
+        const at = (spent) => group(allocate([tx({ amount: spent })]), 's');
+
+        // Target 2,000,000 so the spending limit is 8,000,000; warning from 80% of it (6,400,000).
+        assert.deepEqual(at(0), {
+            id: 's',
+            name: 'Tiết kiệm',
+            percent: 20,
+            saving: true,
+            cap: 2000000,
+            kept: 10000000,
+            reached: true,
+            percentOfSalary: 100,
+            level: 0,
+        });
+        assert.equal(at(6399999).level, 0);
+        assert.equal(at(6400000).level, 1);
+        assert.equal(at(8000000).reached, true); // exactly the target
+        assert.equal(at(8000000).level, 1);
+        assert.equal(at(8000001).reached, false);
+        assert.equal(at(8000001).level, 2);
+        assert.equal(at(12000000).kept, 0); // never negative
+        assert.equal(at(12000000).level, 2);
+    });
+
+    test('computeSalaryAllocation: tiết kiệm 100% lương thì mọi khoản chi đều làm hụt mục tiêu', () => {
+        const only = {
+            groups: [{ id: 's', name: 'Tiết kiệm', percent: 100, saving: true }],
+        };
+
+        assert.equal(group(allocate([], only), 's').level, 0);
+        assert.equal(group(allocate([tx({ amount: 1 })], only), 's').level, 2);
+    });
+
+    test('salaryGroupFor: nhóm được gán, không có thì nhóm chi đầu tiên, chỉ có nhóm tiết kiệm thì null', () => {
+        const plan = (json) => `normalizeSalaryPlan(${json})`;
+
+        assert.equal(run(`salaryGroupFor(${plan(planJson())}, 'Vật tư').id`), 'w');
+        assert.equal(run(`salaryGroupFor(${plan(planJson())}, 'Gì đó').id`), 'p');
+        assert.equal(run(`salaryGroupFor(${plan(planJson())}, 'constructor').id`), 'p');
+        assert.equal(
+            run(
+                `salaryGroupFor(${plan(planJson({ groups: [{ id: 's', name: 'S', percent: 100, saving: true }] }))}, 'x')`,
+            ),
+            null,
+        );
     });
 });

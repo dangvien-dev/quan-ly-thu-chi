@@ -763,6 +763,110 @@ canvas {
     font-weight: 600;
 }
 
+/* Salary groups (personal / work / saving ...) */
+.salary-groups {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.salary-groups-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.salary-groups-head h4 {
+    font-size: 15px;
+}
+
+.salary-group {
+    margin-bottom: 14px;
+}
+
+.salary-group:last-child {
+    margin-bottom: 0;
+}
+
+.salary-group-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.salary-group-name {
+    font-weight: 600;
+}
+
+.salary-group-amount {
+    color: var(--text-muted);
+}
+
+.salary-group-note {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.level-1 .salary-group-status {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.level-2 .salary-group-status {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.allocation-group {
+    padding: 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.allocation-group .form-group {
+    margin-bottom: 10px;
+}
+
+.allocation-group-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.allocation-tools {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.allocation-total {
+    margin: 12px 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.allocation-total.over {
+    color: var(--danger);
+}
+
+.allocation-title {
+    margin-top: 16px;
+    font-size: 15px;
+}
+
+.allocation-category {
+    margin-bottom: 10px;
+}
+
 #toast-container {
     position: fixed;
     right: 16px;

@@ -6,9 +6,19 @@ const { test, expect, tx, newServer, wait } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z';
 const SALARY = 20000000;
+const DEFAULT_GROUPS = [
+    { id: 'personal', name: 'Tiêu dùng cá nhân', percent: 50, saving: false },
+    { id: 'work', name: 'Công việc', percent: 30, saving: false },
+    { id: 'saving', name: 'Tiết kiệm', percent: 20, saving: true },
+];
+// Most tests are about the salary as a whole, so they start without groups (which have their own
+// alerts); the groups have their own describe blocks below.
 const withSalary = (plan, rows = []) => ({
     now: NOW,
-    seed: { fm_salary: JSON.stringify(plan), fm_transactions: JSON.stringify(rows) },
+    seed: {
+        fm_salary: JSON.stringify({ groups: [], ...plan }),
+        fm_transactions: JSON.stringify(rows),
+    },
 });
 const spend = (amount, extra = {}) =>
     tx({ id: `TX_${amount}_${extra.date || ''}`, amount, date: '2026-10-05', ...extra });
@@ -30,7 +40,7 @@ async function addExpense(page, amount, { type = 'expense', date } = {}) {
 }
 
 async function saveSalary(page, amount, warn) {
-    await page.click('#salary-section button.btn');
+    await page.click('#salary-edit-btn');
     await page.fill('#salaryAmount', '');
     await page.locator('#salaryAmount').pressSequentially(String(amount));
 
@@ -45,13 +55,13 @@ test.describe('Đặt mức lương', () => {
 
         await expect(card(page)).toContainText('Chưa đặt mức lương');
         await expect(card(page).locator('[role=progressbar]')).toHaveCount(0);
-        await expect(card(page).locator('button.btn')).toHaveText(/Đặt mức lương/);
+        await expect(page.locator('#salary-edit-btn')).toHaveText(/Đặt mức lương/);
     });
 
     test('đặt lương bằng hộp thoại: ô tiền có dấu chấm, mặc định cảnh báo 80%', async ({ app }) => {
         const { page } = await app({ now: NOW });
 
-        await page.click('#salary-section button.btn');
+        await page.click('#salary-edit-btn');
         await expect(page.locator('#salaryModal')).toHaveClass(/open/);
         await expect(page.locator('#salaryAmount')).toBeFocused();
         await expect(page.locator('#salaryWarn')).toHaveValue('80');
@@ -63,17 +73,19 @@ test.describe('Đặt mức lương', () => {
         await expect(page.locator('#salaryModal')).not.toHaveClass(/open/);
         await expect(card(page)).toContainText('0% lương đã chi');
         await expect(card(page)).toContainText('0 đ / lương 20.000.000 đ');
-        await expect(card(page).locator('button.btn')).toHaveText(/Sửa/);
-        expect(await page.evaluate(() => salaryPlan)).toEqual({ amount: SALARY, warnPercent: 80 });
-        expect(await page.evaluate(() => localStorage.getItem('fm_salary'))).toBe(
-            JSON.stringify({ amount: SALARY, warnPercent: 80 }),
+        await expect(page.locator('#salary-edit-btn')).toHaveText(/Sửa/);
+        const plan = { amount: SALARY, warnPercent: 80, groups: DEFAULT_GROUPS, assign: {} };
+
+        expect(await page.evaluate(() => salaryPlan)).toEqual(plan);
+        expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fm_salary')))).toEqual(
+            plan,
         );
     });
 
     test('mở lại hộp thoại thì có sẵn giá trị đã lưu; sửa được mức cảnh báo', async ({ app }) => {
         const { page } = await app(withSalary({ amount: SALARY, warnPercent: 70 }));
 
-        await page.click('#salary-section button.btn');
+        await page.click('#salary-edit-btn');
 
         await expect(page.locator('#salaryAmount')).toHaveValue('20.000.000');
         await expect(page.locator('#salaryWarn')).toHaveValue('70');
@@ -81,13 +93,16 @@ test.describe('Đặt mức lương', () => {
         await page.fill('#salaryWarn', '90');
         await page.click('#salaryForm button[type=submit]');
 
-        expect(await page.evaluate(() => salaryPlan)).toEqual({ amount: SALARY, warnPercent: 90 });
+        expect(await page.evaluate(() => salaryPlan)).toMatchObject({
+            amount: SALARY,
+            warnPercent: 90,
+        });
     });
 
     test('để trống hoặc 0 thì tắt tính năng', async ({ app }) => {
         const { page } = await app(withSalary({ amount: SALARY, warnPercent: 80 }));
 
-        await page.click('#salary-section button.btn');
+        await page.click('#salary-edit-btn');
         await page.fill('#salaryAmount', '');
         await page.click('#salaryForm button[type=submit]');
 
@@ -100,7 +115,7 @@ test.describe('Đặt mức lương', () => {
     }) => {
         const { page, state } = await app({ now: NOW });
 
-        await page.click('#salary-section button.btn');
+        await page.click('#salary-edit-btn');
         await page.locator('#salaryAmount').pressSequentially('1000000');
 
         for (const bad of ['0', '101', '12.5']) {
@@ -118,7 +133,7 @@ test.describe('Đặt mức lương', () => {
     test('Esc đóng hộp thoại mà không lưu', async ({ app }) => {
         const { page } = await app({ now: NOW });
 
-        await page.click('#salary-section button.btn');
+        await page.click('#salary-edit-btn');
         await page.locator('#salaryAmount').pressSequentially('5000000');
         await page.keyboard.press('Escape');
 
@@ -291,7 +306,7 @@ test.describe('Đồng bộ và sao lưu', () => {
 
         const b = await app({ server, now: NOW });
 
-        expect(await b.page.evaluate(() => salaryPlan)).toEqual({
+        expect(await b.page.evaluate(() => salaryPlan)).toMatchObject({
             amount: 15000000,
             warnPercent: 75,
         });
@@ -311,6 +326,8 @@ test.describe('Đồng bộ và sao lưu', () => {
         expect(server.get({ v: '2' }).meta.salary.value).toEqual({
             amount: SALARY,
             warnPercent: 80,
+            groups: DEFAULT_GROUPS,
+            assign: {},
         });
         expect(await page.evaluate(() => salaryPlan.amount)).toBe(SALARY);
     });
@@ -342,7 +359,12 @@ test.describe('Đồng bộ và sao lưu', () => {
         ]);
         const backup = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
 
-        expect(backup.data.salary).toEqual({ amount: SALARY, warnPercent: 65 });
+        expect(backup.data.salary).toEqual({
+            amount: SALARY,
+            warnPercent: 65,
+            groups: [],
+            assign: {},
+        });
 
         const other = await app({ now: NOW });
 
@@ -357,6 +379,8 @@ test.describe('Đồng bộ và sao lưu', () => {
         expect(await other.page.evaluate(() => salaryPlan)).toEqual({
             amount: SALARY,
             warnPercent: 65,
+            groups: [],
+            assign: {},
         });
     });
 
@@ -403,7 +427,7 @@ test.describe('Trợ năng và điện thoại', () => {
     test('hộp thoại lương không có vi phạm axe và giữ Tab trong hộp thoại', async ({ app }) => {
         const { page } = await app(withSalary({ amount: SALARY, warnPercent: 80 }));
 
-        await page.click('#salary-section button.btn');
+        await page.click('#salary-edit-btn');
 
         const results = await new AxeBuilder({ page })
             .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
@@ -421,7 +445,7 @@ test.describe('Trợ năng và điện thoại', () => {
         }
 
         await page.keyboard.press('Escape');
-        await expect(page.locator('#salary-section button.btn')).toBeFocused();
+        await expect(page.locator('#salary-edit-btn')).toBeFocused();
     });
 
     test('trên điện thoại thẻ lương không tràn ngang và hộp thoại nằm gọn màn hình', async ({
@@ -436,7 +460,7 @@ test.describe('Trợ năng và điện thoại', () => {
             await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
         ).toBe(0);
 
-        await page.click('#salary-section button.btn');
+        await page.click('#salary-edit-btn');
 
         const box = await page.locator('#salaryModal .modal-content').boundingBox();
 

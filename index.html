@@ -105,7 +105,12 @@
                 <div class="card" id="salary-section" style="margin-bottom: 20px">
                     <div class="salary-header">
                         <h3 style="font-size: 16px">Chi Tiêu Trên Lương Tháng Này</h3>
-                        <button type="button" class="btn btn-outline" onclick="openSalaryModal()">
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            id="salary-edit-btn"
+                            onclick="openSalaryModal()"
+                        >
                             <i class="fa-solid fa-sliders" aria-hidden="true"></i>
                             <span id="salary-edit-label">Đặt mức lương</span>
                         </button>
@@ -846,6 +851,51 @@
                             100% thì báo đã chi hết lương.
                         </p>
                     </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
+            id="allocationModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="allocationModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="allocationModalTitle">Chia Lương Theo Nhóm</h3>
+                    <button class="close-btn" onclick="closeAllocationModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="allocationForm" onsubmit="handleAllocationSubmit(event)">
+                    <p class="hint" style="margin-top: 0">
+                        Chia lương thành các nhóm theo %, ví dụ tiêu dùng cá nhân, công việc, tiết
+                        kiệm. Mỗi nhóm chi có hạn mức bằng % nhân với lương. Nhóm tiết kiệm là phần
+                        còn lại sau khi chi.
+                    </p>
+                    <div id="allocationGroups"></div>
+                    <div class="allocation-tools">
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            id="allocationAdd"
+                            data-action="add-group"
+                        >
+                            Thêm nhóm
+                        </button>
+                        <button type="button" class="btn btn-outline" data-action="reset-groups">
+                            Mẫu 50 / 30 / 20
+                        </button>
+                    </div>
+                    <p id="allocationTotal" class="allocation-total"></p>
+                    <h4 class="allocation-title">Danh mục chi thuộc nhóm nào?</h4>
+                    <p class="hint">Danh mục chưa chọn tính vào nhóm chi đầu tiên.</p>
+                    <div id="allocationCategories"></div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">
                         Lưu
                     </button>

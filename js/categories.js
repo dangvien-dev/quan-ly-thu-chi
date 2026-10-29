@@ -79,6 +79,11 @@ function deleteCategory(id) {
         saveMeta('budgets');
     }
 
+    if (Object.hasOwn(salaryPlan.assign, category.name)) {
+        delete salaryPlan.assign[category.name];
+        saveMeta('salary');
+    }
+
     saveMeta('categories');
     renderCategories();
     updateCategoriesDropdown();
