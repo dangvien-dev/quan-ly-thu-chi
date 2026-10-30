@@ -76,7 +76,7 @@ CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR. Test
 ### Nâng cấp lên v2
 
 1. Mở Google Sheet > Extensions > Apps Script, thay toàn bộ mã bằng nội dung `apps-script/Code.gs`.
-2. Deploy > Manage deployments > Edit > Version: New version > Deploy (URL `/exec` giữ nguyên).
+2. Deploy > Manage deployments > Edit > Version: New version > Deploy (URL `/exec` giữ nguyên). Nếu tạo **New deployment** thì URL đổi: bắt buộc chọn **Execute as: Me** và **Who has access: Anyone** (mặc định là "Chỉ mình tôi" / "Người dùng truy cập vào ứng dụng web" làm app báo `Failed to fetch` và "Dùng bản offline"), rồi dán URL mới vào **mọi** thiết bị, điện thoại trước.
 3. Khuyến nghị: Project Settings > Script properties > thêm `FM_TOKEN` với một chuỗi bí mật dài, rồi nhập cùng giá trị vào **Cài đặt & Dữ liệu > Mã bảo vệ** trên mọi thiết bị và bấm Lưu.
 
 Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sheet `Meta` được tạo khi cần. Dữ liệu cũ được giữ; các dòng chuyển tiền do bản cũ ghi sẽ tự chuyển sang dạng mới.
@@ -84,6 +84,7 @@ Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sh
 ### Quy tắc đồng bộ
 
 - Chỉ ghi lên Sheet sau khi đã đọc Sheet thành công trong phiên đó.
+- Quay lại cửa sổ hoặc tab (sau ít nhất 30 giây) thì ứng dụng đọc lại Sheet để nhận thay đổi từ máy khác, không cần tải lại trang.
 - Thay đổi chưa được Sheet xác nhận (mất mạng, lỗi) được giữ lại và gộp với Sheet ở lần mở sau; giao dịch đã xóa trên máy này không bị "sống lại".
 - Sheet trống không bao giờ xóa dữ liệu trên máy.
 - Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet.

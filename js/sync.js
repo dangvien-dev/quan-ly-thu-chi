@@ -32,6 +32,10 @@ const TRANSFER_CATEGORY_PREFIX = `${TRANSFER_CATEGORY} → `;
 let remoteReady = false;
 let syncProtocol = ''; // set by the first successful read: 'legacy' | 'v2'
 let pushInFlight = false;
+// Another device may change the data while this one stays open, so the Sheet is read again when
+// the user comes back, but never more often than this.
+const REFRESH_MIN_INTERVAL_MS = 30000;
+let lastPullAt = 0;
 let pushQueued = false;
 let localChangeCount = 0;
 
@@ -60,10 +64,20 @@ function failureBadge(error, fallback) {
     return error && error.message === 'unauthorized' ? 'locked' : fallback;
 }
 
+// What browsers say when a request got no usable answer (offline, blocked, or Google sent a login
+// page, which has no CORS headers). A Web App deployed as "Only myself" ends up here too.
+const NETWORK_ERROR = /failed to fetch|networkerror|load failed/i;
+
 function failureDetail(error) {
-    return error && error.message === 'unauthorized'
-        ? 'Sai hoặc thiếu mã bảo vệ (token). Kiểm tra lại trong Cài đặt & Dữ liệu.'
-        : (error && error.message) || '';
+    const message = (error && error.message) || '';
+
+    if (message === 'unauthorized') {
+        return 'Sai hoặc thiếu mã bảo vệ (token). Kiểm tra lại trong Cài đặt & Dữ liệu.';
+    }
+
+    return NETWORK_ERROR.test(message)
+        ? `${message}. Kiểm tra mạng và URL Web App. Nếu vừa triển khai Apps Script: "Thực thi bằng" phải là Tôi và "Người có quyền truy cập" phải là Bất kỳ ai.`
+        : message;
 }
 
 // --- LOCAL SYNC STATE ---
@@ -630,7 +644,7 @@ function pushToGoogleSheet() {
         });
 }
 
-function syncFromGoogleSheet() {
+function syncFromGoogleSheet({ quiet = false } = {}) {
     if (!webAppUrl) {
         setSyncBadge('idle');
         updateSyncNote();
@@ -639,7 +653,10 @@ function syncFromGoogleSheet() {
 
     const requestedUrl = webAppUrl;
 
-    setSyncBadge('loading');
+    lastPullAt = Date.now();
+
+    // A refresh in the background does not flash "Đang tải..." over a badge that is already fine.
+    if (!quiet) setSyncBadge('loading');
 
     return fetch(sheetUrl(webAppToken ? { v: 2, token: webAppToken } : { v: 2 }))
         .then(parseSheetResponse)
@@ -669,6 +686,14 @@ function syncFromGoogleSheet() {
         .catch((error) => {
             setSyncBadge(failureBadge(error, 'offline'), failureDetail(error));
         });
+}
+
+/** Read the Sheet again when the user returns to this window or tab (see REFRESH_MIN_INTERVAL_MS). */
+function refreshFromSheet() {
+    if (document.visibilityState !== 'visible' || !webAppUrl || !remoteReady) return;
+    if (pushInFlight || Date.now() - lastPullAt < REFRESH_MIN_INTERVAL_MS) return;
+
+    syncFromGoogleSheet({ quiet: true });
 }
 
 /** Retry after the connection comes back: read the Sheet first, or flush pending changes. */

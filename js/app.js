@@ -109,6 +109,8 @@ function initializeApp() {
     initSavings();
     initModalShortcuts();
     window.addEventListener('online', resumeSync);
+    window.addEventListener('focus', refreshFromSheet);
+    document.addEventListener('visibilitychange', refreshFromSheet);
 
     document.getElementById('txDate').value = toLocalDateString();
 
