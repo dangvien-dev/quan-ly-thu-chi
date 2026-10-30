@@ -103,6 +103,7 @@ function initializeApp() {
     updateCategoriesDropdown();
     renderAll();
     renderQuickChips();
+    initTabFromAddress();
     generateRecurringTransactions();
     remindOverdueDebts();
     syncFromGoogleSheet();
