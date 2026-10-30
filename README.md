@@ -87,7 +87,7 @@ Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sh
 - Quay lại cửa sổ hoặc tab (sau ít nhất 30 giây) thì ứng dụng đọc lại Sheet để nhận thay đổi từ máy khác, không cần tải lại trang.
 - Thay đổi chưa được Sheet xác nhận (mất mạng, lỗi) được giữ lại và gộp với Sheet ở lần mở sau; giao dịch đã xóa trên máy này không bị "sống lại".
 - Sheet trống không bao giờ xóa dữ liệu trên máy.
-- Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet.
+- Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet. Khôi phục **giữ nguyên URL Web App đang dùng của máy** (chỉ máy chưa có URL mới lấy URL trong file), nên một file sao lưu cũ không kéo máy về deployment cũ.
 - Với v2, nếu sửa một giao dịch trên máy này trong khi máy khác xóa nó thì bản sửa được giữ lại.
 
 Lưu ý: nếu chưa đặt `FM_TOKEN`, ai có URL Web App đều đọc / ghi được dữ liệu; hãy coi URL như mật khẩu (file sao lưu cũng chứa URL này, nhưng không chứa mã bảo vệ).

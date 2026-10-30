@@ -56,11 +56,15 @@ async function importBackup(file) {
     }
 
     const confirmed = confirm(
-        'Khôi phục bản sao lưu sẽ thay thế giao dịch, danh mục, số dư ban đầu và URL Google Apps Script hiện tại. Nếu bản sao lưu có URL Google Sheets, dữ liệu trên Sheet cũng sẽ được thay bằng bản sao lưu. Bạn có muốn tiếp tục?',
+        'Khôi phục bản sao lưu sẽ thay thế giao dịch, danh mục, nguồn tiền, số dư ban đầu, lương và các dữ liệu khác trên máy này. Máy này giữ nguyên URL Google Apps Script đang dùng (chỉ máy chưa có URL mới lấy URL trong file), và dữ liệu trên Google Sheet đó cũng sẽ được thay bằng bản sao lưu. Bạn có muốn tiếp tục?',
     );
 
     if (!confirmed) return;
 
+    // Which Sheet this device talks to is its own setup, not data: a file made on another device, or
+    // before the Web App was redeployed, must not point it back at an older deployment. Only a
+    // device without a URL takes the one in the file.
+    const targetUrl = webAppUrl || backup.data.scriptUrl;
     const restoredTransactions = normalizeTransactions(backup.data.transactions);
     const skippedCount = backup.data.transactions.length - restoredTransactions.length;
 
@@ -82,7 +86,7 @@ async function importBackup(file) {
         const urlInput = document.getElementById('setting-script-url');
 
         if (urlInput) {
-            urlInput.value = backup.data.scriptUrl;
+            urlInput.value = targetUrl;
         }
 
         updateCategoriesDropdown();
@@ -91,16 +95,16 @@ async function importBackup(file) {
 
         // With a Sheet configured, the restored list becomes the Sheet's content as well. The flag
         // is only set here; setScriptUrl() reads the new Sheet first and then uploads the list.
-        if (backup.data.scriptUrl) {
+        if (targetUrl) {
             setSyncDirty('replace');
         }
 
-        setScriptUrl(backup.data.scriptUrl);
+        setScriptUrl(targetUrl);
 
         alert(
             'Đã khôi phục dữ liệu từ bản sao lưu.' +
                 (skippedCount ? ` Bỏ qua ${skippedCount} dòng giao dịch không hợp lệ.` : '') +
-                (backup.data.scriptUrl ? ' Đang đồng bộ lên Google Sheets.' : ''),
+                (targetUrl ? ' Đang đồng bộ lên Google Sheets.' : ''),
         );
     } catch (error) {
         console.error('Không thể khôi phục bản sao lưu:', error);
