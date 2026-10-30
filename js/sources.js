@@ -110,7 +110,7 @@ function describeOpening(source) {
     let html = `<div class="source-meta">Số dư ban đầu ${escapeHtml(formatMoney(opening))}</div>`;
 
     if (SOURCE_KINDS[source.kind].debt && opening > 0) {
-        html += `<div class="source-meta source-warn">Số dư dương này bù vào các khoản chi nên chưa tính là dư nợ. Bấm "Sửa số dư" và nhập 0 (hoặc số âm nếu đã nợ sẵn).</div>`;
+        html += `<div class="source-meta source-warn">Số dư dương này bù vào các khoản chi nên chưa tính là dư nợ. Bấm "Khớp số dư" và nhập số thực tế, app sẽ tự tính lại.</div>`;
     }
 
     return html;
@@ -125,6 +125,9 @@ function renderSourceCard(source, balance) {
             </button>`
         : `<button class="btn btn-outline btn-small" data-action="edit-balance" data-source="${name}">
                 <i class="fa-solid fa-pen"></i> Sửa số dư
+            </button>
+            <button class="btn btn-outline btn-small" data-action="match-balance" data-source="${name}" title="Nhập số dư thực tế, app tự tính số dư ban đầu cho khớp" aria-label="Khớp số dư thực tế của ${name}">
+                <i class="fa-solid fa-scale-balanced"></i> Khớp số dư
             </button>
             <button class="btn btn-outline btn-small" data-action="edit-source" data-source="${name}" title="Sửa nguồn tiền" aria-label="Sửa nguồn ${name}">
                 <i class="fa-solid fa-pen-to-square"></i>
@@ -185,6 +188,7 @@ function handleSourceGridClick(event) {
     const name = button.dataset.source;
     const actions = {
         'edit-balance': () => editInitialBalance(name),
+        'match-balance': () => matchSourceBalance(name),
         'edit-source': () => openSourceModal(name),
         'archive-source': () => archiveSource(name, true),
         'restore-source': () => archiveSource(name, false),
@@ -217,6 +221,44 @@ function editInitialBalance(sourceName) {
     initialBalances[sourceName] = newValue;
     saveMeta('initialBalances');
     renderAll();
+}
+
+/**
+ * Make a source show the real balance (what the bank / wallet app says) without working out the
+ * opening balance by hand. A credit line with a limit is asked for the amount still available.
+ */
+function matchSourceBalance(sourceName) {
+    const source = findSource(sourceName);
+
+    if (!source) return;
+
+    const balance = calculateSourceBalances()[source.name];
+    const opening = Number(initialBalances[source.name]) || 0;
+    const byAvailable = source.kind === 'credit' && source.creditLimit > 0;
+    const shown = byAvailable ? source.creditLimit + balance : balance;
+    const question = byAvailable
+        ? `Nhập số dư KHẢ DỤNG hiện tại của [${source.name}] theo ứng dụng (hạn mức ${formatMoney(source.creditLimit)}):`
+        : `Nhập số dư thực tế hiện tại của [${source.name}] (đang nợ thì nhập số âm, ví dụ -500.000):`;
+    const input = prompt(`${question}\n(App đang tính: ${formatMoney(shown)})`, shown);
+
+    if (input === null) return;
+
+    const typed = parseMoneyText(input);
+
+    if (!Number.isFinite(typed)) {
+        alert('Số tiền không hợp lệ!');
+        return;
+    }
+
+    const target = byAvailable ? balanceFromAvailable(source.creditLimit, typed) : typed;
+
+    initialBalances[source.name] = openingBalanceToMatch({ target, balance, opening });
+    saveMeta('initialBalances');
+    renderAll();
+    showToast(
+        `Đã khớp [${source.name}]: số dư ${formatMoney(target)}, số dư ban đầu ${formatMoney(initialBalances[source.name])}.`,
+        'success',
+    );
 }
 
 function updateSourceFormVisibility() {

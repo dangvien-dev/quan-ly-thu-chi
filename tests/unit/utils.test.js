@@ -995,3 +995,24 @@ test.describe('sổ tiết kiệm', () => {
         assert.equal(movements.find((m) => m.id === 'd1').amount, 100);
     });
 });
+
+test('openingBalanceToMatch: chỉ dịch số dư ban đầu, giữ nguyên các giao dịch', () => {
+    // Opening 500.000 and 464.140 spent: the balance shows 35.860; the real balance is -1.343.581.
+    assert.equal(
+        run('openingBalanceToMatch({target:-1343581,balance:35860,opening:500000})'),
+        -879441,
+    );
+    // Matching the number already shown changes nothing.
+    assert.equal(
+        run('openingBalanceToMatch({target:-1343581,balance:-1343581,opening:-879441})'),
+        -879441,
+    );
+    // No opening balance stored yet.
+    assert.equal(run('openingBalanceToMatch({target:1200000,balance:1500000})'), -300000);
+});
+
+test('balanceFromAvailable: khả dụng trừ hạn mức, âm nghĩa là đang nợ', () => {
+    assert.equal(run('balanceFromAvailable(30000000,28656419)'), -1343581);
+    assert.equal(run('balanceFromAvailable(30000000,30000000)'), 0);
+    assert.equal(run('balanceFromAvailable(30000000,31000000)'), 1000000);
+});

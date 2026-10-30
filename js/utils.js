@@ -198,6 +198,19 @@ function normalizeCategories(list) {
     );
 }
 
+/**
+ * Opening balance that makes a source show `target` today. The transactions stay as they are, so
+ * only the opening balance moves: target - (balance - opening) = target - sum of transactions.
+ */
+function openingBalanceToMatch({ target, balance, opening = 0 }) {
+    return target - (balance - opening);
+}
+
+/** Balance (negative = owed) of a credit line from its limit and the amount still available. */
+function balanceFromAvailable(limit, available) {
+    return available - limit;
+}
+
 /** { sourceName: openingBalance } with only finite numbers kept. */
 function normalizeBalances(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
