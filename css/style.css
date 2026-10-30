@@ -246,6 +246,58 @@ header {
     border: 0;
 }
 
+/* App version: footer of the menu, the Settings card and the "new version" bar. */
+.app-version {
+    margin: 0;
+    padding: 12px 20px 16px;
+    font-size: 11px;
+    color: #94a3b8;
+}
+/* Not .hint: that one has a negative top margin meant for a hint right under an input. */
+.update-status {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.update-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+.update-banner {
+    position: fixed;
+    left: 16px;
+    bottom: 24px;
+    z-index: 2100;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: calc(100vw - 32px);
+    padding: 12px 16px;
+    background: #0f172a;
+    color: #fff;
+    border-left: 4px solid var(--primary);
+    border-radius: 10px;
+    font-size: 14px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+.update-banner[hidden] {
+    display: none;
+}
+.update-banner .btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+@media (max-width: 768px) {
+    .update-banner {
+        left: 12px;
+        right: 12px;
+        bottom: calc(100px + env(safe-area-inset-bottom));
+        justify-content: space-between;
+    }
+}
+
 .table-container {
     background: var(--bg-card);
     border-radius: 12px;
