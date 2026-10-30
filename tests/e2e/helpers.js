@@ -68,7 +68,9 @@ function serverRows(server) {
  * opts: seed (localStorage), remote (rows the spreadsheet starts with), backend ('legacy' | 'v2'),
  *       server (an existing newServer() to share), properties (Script Properties), now (fixed clock),
  *       getDelay, getFails, postFails, postResponse (raw reply text), blockChart,
- *       serviceWorkers, viewport, promptValue.
+ *       serviceWorkers, viewport, promptValue (answers the amount dialog of askMoney() as window.prompt
+ *       used to be answered: the text typed into it, null to cancel, left out to accept what is
+ *       shown; the question is recorded in state.confirms).
  */
 async function openApp(browser, opts = {}) {
     const context = await browser.newContext({
@@ -168,6 +170,50 @@ async function openApp(browser, opts = {}) {
             ...opts.seed,
         },
     );
+
+    if (opts.promptValue !== undefined || opts.acceptAmounts) {
+        await context.exposeFunction('__recordAmountQuestion', (question) =>
+            state.confirms.push(question),
+        );
+        await context.addInitScript((answer) => {
+            // A test may change the answer in the middle: window.__amountAnswer = '600000'.
+            window.__amountAnswer = answer;
+            window.addEventListener('DOMContentLoaded', () => {
+                const modal = document.getElementById('moneyPromptModal');
+                let answered = false;
+
+                new MutationObserver(() => {
+                    const open = modal.classList.contains('open');
+
+                    if (!open) {
+                        answered = false;
+                        return;
+                    }
+
+                    if (answered) return;
+
+                    answered = true;
+                    window.__recordAmountQuestion(
+                        document.getElementById('moneyPromptMessage').textContent,
+                    );
+
+                    if (window.__amountAnswer === null) {
+                        modal.querySelector('.close-btn').click();
+                        return;
+                    }
+
+                    if (window.__amountAnswer !== undefined) {
+                        const input = document.getElementById('moneyPromptInput');
+
+                        input.value = String(window.__amountAnswer);
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+
+                    document.getElementById('moneyPromptForm').requestSubmit();
+                }).observe(modal, { attributes: true, attributeFilter: ['class'] });
+            });
+        }, opts.promptValue);
+    }
 
     const page = await context.newPage();
 

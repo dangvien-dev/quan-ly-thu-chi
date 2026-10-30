@@ -201,19 +201,22 @@ function handleSourceGridClick(event) {
 }
 
 // --- ACTIONS ---
-function editInitialBalance(sourceName) {
+async function editInitialBalance(sourceName) {
     const currentValue = Number(initialBalances[sourceName]) || 0;
     const debtHint = isDebtSource(sourceName)
         ? '\n(Thẻ tín dụng / trả sau / khoản nợ: nhập 0 nếu chưa nợ, số âm nếu đã nợ sẵn, ví dụ -500.000. Số dương sẽ bù vào các khoản chi nên không tính là nợ.)'
         : '';
-    const input = prompt(`Nhập số dư ban đầu cho [${sourceName}]:${debtHint}`, currentValue);
+    // A minus sign is allowed: an opening debt.
+    const newValue = await askMoney({
+        title: 'Số dư ban đầu',
+        message: `Nhập số dư ban đầu cho [${sourceName}]:${debtHint}`,
+        value: currentValue,
+        signed: true,
+    });
 
-    if (input === null) return;
+    if (newValue === null) return;
 
-    // Accept Vietnamese-style input such as "1.500.000"; a leading minus is allowed (opening debt).
-    const newValue = Number(input.replace(/[.,\s]/g, ''));
-
-    if (input.trim() === '' || !Number.isFinite(newValue)) {
+    if (!Number.isFinite(newValue)) {
         alert('Số tiền không hợp lệ!');
         return;
     }
@@ -228,29 +231,36 @@ function editInitialBalance(sourceName) {
  * Make a source show the real balance (what the bank / wallet app says) without working out the
  * opening balance by hand. A credit line with a limit is asked for the amount still available.
  */
-function matchSourceBalance(sourceName) {
+async function matchSourceBalance(sourceName) {
     const source = findSource(sourceName);
 
     if (!source) return;
 
-    const balance = calculateSourceBalances()[source.name];
-    const opening = Number(initialBalances[source.name]) || 0;
     const byAvailable = source.kind === 'credit' && source.creditLimit > 0;
-    const shown = byAvailable ? source.creditLimit + balance : balance;
+    const shown = byAvailable
+        ? source.creditLimit + calculateSourceBalances()[source.name]
+        : calculateSourceBalances()[source.name];
     const question = byAvailable
         ? `Nhập số dư KHẢ DỤNG hiện tại của [${source.name}] theo ứng dụng (hạn mức ${formatMoney(source.creditLimit)}):`
         : `Nhập số dư thực tế hiện tại của [${source.name}] (đang nợ thì nhập số âm, ví dụ -500.000):`;
-    const input = prompt(`${question}\n(App đang tính: ${formatMoney(shown)})`, shown);
+    const typed = await askMoney({
+        title: 'Khớp số dư',
+        message: `${question}\n(App đang tính: ${formatMoney(shown)})`,
+        value: shown,
+        signed: true,
+        confirmLabel: 'Khớp',
+    });
 
-    if (input === null) return;
-
-    const typed = parseMoneyText(input);
+    if (typed === null) return;
 
     if (!Number.isFinite(typed)) {
         alert('Số tiền không hợp lệ!');
         return;
     }
 
+    // The data may have changed (a sync) while the question was open: work from what is true now.
+    const balance = calculateSourceBalances()[source.name];
+    const opening = Number(initialBalances[source.name]) || 0;
     const target = byAvailable ? balanceFromAvailable(source.creditLimit, typed) : typed;
 
     initialBalances[source.name] = openingBalanceToMatch({ target, balance, opening });

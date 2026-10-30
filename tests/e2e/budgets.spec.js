@@ -51,7 +51,7 @@ test.describe('Đặt ngân sách', () => {
         ).toHaveCount(0);
     });
 
-    test('nhập 0 hoặc để trống thì bỏ ngân sách; số không hợp lệ bị từ chối', async ({ app }) => {
+    test('nhập 0 thì bỏ ngân sách; chữ lẫn trong số bị loại bỏ ngay khi gõ', async ({ app }) => {
         const first = await app({ ...withBudget({ 'Ăn uống': 1000000 }), promptValue: '0' });
 
         await goTab(first.page, 'categories');
@@ -59,12 +59,13 @@ test.describe('Đặt ngân sách', () => {
         expect(await first.page.evaluate(() => budgets)).toEqual({});
         await expect(first.page.locator('#budget-section')).toBeHidden();
 
-        const second = await app({ ...withBudget({ 'Ăn uống': 1000000 }), promptValue: 'abc' });
+        // The field only accepts digits, so "1a2b3" is the amount 123 and nothing is rejected.
+        const second = await app({ ...withBudget({ 'Ăn uống': 1000000 }), promptValue: '1a2b3' });
 
         await goTab(second.page, 'categories');
         await second.page.click('#category-table-body tr:has-text("Ăn uống") [data-action=budget]');
-        expect(second.state.alerts).toHaveLength(1);
-        expect(await second.page.evaluate(() => budgets)).toEqual({ 'Ăn uống': 1000000 });
+        expect(second.state.alerts).toHaveLength(0);
+        expect(await second.page.evaluate(() => budgets)).toEqual({ 'Ăn uống': 123 });
     });
 
     test('xóa danh mục cũng xóa ngân sách của nó', async ({ app }) => {

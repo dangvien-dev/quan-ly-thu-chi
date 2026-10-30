@@ -130,33 +130,37 @@ function toggleDebtHistory(id) {
     renderDebts();
 }
 
-function addDebtPayment(id) {
+async function addDebtPayment(id) {
     const debt = debts.find((item) => item.id === id);
 
     if (!debt) return;
 
     const remaining = debtRemaining(debt);
-    const input = prompt(
-        `${debt.direction === 'owe' ? 'Số tiền đã trả cho' : 'Số tiền đã thu từ'} [${debt.party}] (còn ${formatMoney(remaining)}):`,
-        remaining,
-    );
+    const amount = await askMoney({
+        title: debt.direction === 'owe' ? 'Trả nợ' : 'Thu nợ',
+        message: `${debt.direction === 'owe' ? 'Số tiền đã trả cho' : 'Số tiền đã thu từ'} [${debt.party}] (còn ${formatMoney(remaining)}):`,
+        value: remaining,
+    });
 
-    if (input === null) return;
-
-    const amount = parseMoneyText(input);
+    if (amount === null) return;
 
     if (!(amount > 0)) {
         alert('Số tiền không hợp lệ!');
         return;
     }
 
-    if (amount > remaining) {
-        alert(`Số tiền vượt quá số còn lại (${formatMoney(remaining)}).`);
+    // A sync may have replaced the list while the question was open: work on what is there now.
+    const current = debts.find((item) => item.id === id);
+
+    if (!current) return;
+
+    if (amount > debtRemaining(current)) {
+        alert(`Số tiền vượt quá số còn lại (${formatMoney(debtRemaining(current))}).`);
         return;
     }
 
-    debt.payments.push({ id: `P_${Date.now()}`, date: toLocalDateString(), amount });
-    debt.updatedAt = new Date().toISOString();
+    current.payments.push({ id: `P_${Date.now()}`, date: toLocalDateString(), amount });
+    current.updatedAt = new Date().toISOString();
     expandedDebtIds.add(id);
     saveDebts();
 }

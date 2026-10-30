@@ -437,12 +437,11 @@ function readMoneyInput(id) {
 
 /** Reformat on every keystroke and keep the caret after the same number of digits. */
 function attachMoneyInput(input) {
-    const allowNegative = input.dataset.money === 'signed';
-
     input.addEventListener('input', () => {
         const typed = input.value;
         const caret = input.selectionStart ?? typed.length;
-        const formatted = formatMoneyDigits(typed, allowNegative);
+        // Read on every keystroke: the field of askMoney() switches between the two modes.
+        const formatted = formatMoneyDigits(typed, input.dataset.money === 'signed');
 
         if (formatted === typed) return;
 
@@ -464,4 +463,87 @@ function attachMoneyInput(input) {
 
 function initMoneyInputs() {
     document.querySelectorAll('input[data-money]').forEach(attachMoneyInput);
+}
+
+// --- ASK FOR AN AMOUNT ---
+// window.prompt() cannot show thousands separators while typing, so amounts are asked in
+// #moneyPromptModal, whose field is a data-money input like every other amount in the app.
+let moneyPromptResolve = null;
+let moneyPromptAllowEmpty = false;
+let moneyPromptTrigger = '';
+
+/** A selector that finds a control again after the page redrew it: tag plus its data-* values. */
+function controlSelector(element) {
+    if (!element || !element.attributes) return '';
+
+    return (
+        element.tagName.toLowerCase() +
+        [...element.attributes]
+            .filter((attribute) => attribute.name.startsWith('data-'))
+            .map((attribute) => `[${attribute.name}="${CSS.escape(attribute.value)}"]`)
+            .join('')
+    );
+}
+
+/**
+ * Ask for an amount. Resolves to null when the user cancels, otherwise to the number: NaN for an
+ * empty or incomplete entry (a lone "-"), or 0 for an empty entry when allowEmpty is set.
+ * options: { title, message, value, signed (a minus sign is allowed), allowEmpty, confirmLabel }.
+ */
+function askMoney({
+    title,
+    message = '',
+    value = '',
+    signed = false,
+    allowEmpty = false,
+    confirmLabel = 'Lưu',
+}) {
+    // A question that is somehow still open counts as cancelled before the next one starts.
+    if (moneyPromptResolve) closeMoneyPrompt(null);
+
+    return new Promise((resolve) => {
+        const input = document.getElementById('moneyPromptInput');
+
+        moneyPromptResolve = resolve;
+        moneyPromptAllowEmpty = allowEmpty;
+        moneyPromptTrigger = controlSelector(document.activeElement);
+        document.getElementById('moneyPromptTitle').textContent = title;
+        document.getElementById('moneyPromptMessage').textContent = message;
+        document.getElementById('moneyPromptSubmit').textContent = confirmLabel;
+        input.dataset.money = signed ? 'signed' : 'positive';
+        // A numeric keypad has no minus sign.
+        input.inputMode = signed ? 'text' : 'numeric';
+        setMoneyInput('moneyPromptInput', value);
+        openDialog('moneyPromptModal', 'moneyPromptInput');
+        input.select();
+    });
+}
+
+function closeMoneyPrompt(result) {
+    const resolve = moneyPromptResolve;
+
+    const trigger = moneyPromptTrigger;
+    const previous = dialogReturnFocus.get('moneyPromptModal');
+
+    moneyPromptResolve = null;
+    closeDialog('moneyPromptModal');
+
+    if (resolve) resolve(result);
+
+    // Saving redraws the list the button was in: once that is done, focus its replacement.
+    setTimeout(() => {
+        if (previous && document.contains(previous)) return;
+
+        const again = trigger && document.querySelector(trigger);
+
+        if (again) again.focus();
+    }, 0);
+}
+
+function submitMoneyPrompt(event) {
+    event.preventDefault();
+
+    const empty = document.getElementById('moneyPromptInput').value.trim() === '';
+
+    closeMoneyPrompt(empty && moneyPromptAllowEmpty ? 0 : readMoneyInput('moneyPromptInput'));
 }

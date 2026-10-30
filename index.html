@@ -943,6 +943,52 @@
         </div>
 
         <div
+            id="moneyPromptModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="moneyPromptTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="moneyPromptTitle">Nhập số tiền</h3>
+                    <button
+                        type="button"
+                        class="close-btn"
+                        onclick="closeMoneyPrompt(null)"
+                        aria-label="Đóng"
+                    >
+                        &times;
+                    </button>
+                </div>
+                <form id="moneyPromptForm" onsubmit="submitMoneyPrompt(event)">
+                    <p id="moneyPromptMessage" class="money-prompt-message"></p>
+                    <div class="form-group">
+                        <label for="moneyPromptInput">Số tiền (VNĐ)</label>
+                        <input
+                            type="text"
+                            id="moneyPromptInput"
+                            class="form-control"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            data-money="positive"
+                            placeholder="0"
+                            aria-describedby="moneyPromptMessage"
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        class="btn"
+                        id="moneyPromptSubmit"
+                        style="width: 100%; justify-content: center"
+                    >
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
             id="salaryModal"
             class="modal"
             role="dialog"
