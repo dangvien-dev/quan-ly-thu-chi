@@ -119,11 +119,13 @@ function renderCategories() {
                 </button>`
                     : '—';
 
-            return `<tr>
-            <td data-label="Tên danh mục"><i class="fa-solid ${escapeHtml(category.icon)}" style="margin-right:8px; color:var(--primary);"></i>${escapeHtml(category.name)}</td>
-            <td data-label="Loại">${category.type === 'income' ? 'Thu Nhập' : 'Chi Tiêu'}</td>
+            const isIncome = category.type === 'income';
+
+            return `<tr class="cat-row ${isIncome ? 'cat-income' : 'cat-expense'}">
+            <td data-label="Tên danh mục"><i class="fa-solid ${escapeHtml(category.icon)} cat-icon"></i><span class="cat-name">${escapeHtml(category.name)}</span><small class="cat-type" title="${isIncome ? 'Thu nhập' : 'Chi tiêu'}">${isIncome ? 'Thu' : 'Chi'}</small></td>
+            <td data-label="Loại">${isIncome ? 'Thu Nhập' : 'Chi Tiêu'}</td>
             <td data-label="Biểu tượng">${escapeHtml(category.icon)}</td>
-            <td data-label="Ngân sách tháng">${budgetCell}</td>
+            <td data-label="Ngân sách tháng"${isIncome ? ' class="cat-na"' : ''}>${budgetCell}</td>
             <td class="row-actions" style="text-align:right;">
                 <button class="btn btn-outline btn-small" data-action="delete" data-id="${id}" title="Xóa" aria-label="Xóa danh mục ${escapeHtml(category.name)}">
                     <i class="fa-solid fa-trash"></i>

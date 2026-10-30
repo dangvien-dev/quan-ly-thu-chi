@@ -1387,3 +1387,134 @@ main:focus {
         pointer-events: auto;
     }
 }
+
+/* --- Categories: icon and type chip; on a phone each category is one compact line --- */
+.cat-icon {
+    margin-right: 8px;
+    color: var(--primary);
+}
+
+.cat-type {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .section-head h3 {
+        flex: 1;
+        min-width: 0;
+        font-size: 16px;
+    }
+
+    .section-head .btn {
+        flex: none;
+        white-space: nowrap;
+    }
+
+    .compact-cats tbody tr {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        align-items: center;
+        column-gap: 6px;
+        min-height: 48px;
+        padding: 4px 8px 4px 10px;
+        border-left: 3px solid var(--border);
+    }
+
+    .compact-cats tbody tr.cat-expense {
+        border-left-color: var(--danger);
+    }
+
+    .compact-cats tbody tr.cat-income {
+        border-left-color: var(--success);
+    }
+
+    .compact-cats td {
+        display: block;
+        padding: 0;
+        border: 0;
+        text-align: left;
+    }
+
+    .compact-cats td::before {
+        content: none;
+    }
+
+    /* The type is the coloured bar and the chip; the icon's class name is not useful here. */
+    .compact-cats td[data-label='Loại'],
+    .compact-cats td[data-label='Biểu tượng'] {
+        display: none;
+    }
+
+    .compact-cats td[data-label='Tên danh mục'] {
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        font-weight: 600;
+    }
+
+    .compact-cats .cat-icon {
+        flex: none;
+        width: 20px;
+        margin-right: 0;
+        text-align: center;
+    }
+
+    .compact-cats .cat-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .compact-cats .cat-type {
+        display: inline-block;
+        flex: none;
+        padding: 1px 7px;
+        border-radius: 10px;
+        /* Dark green on light green (about 7:1); only income rows show it. */
+        background: #d1fae5;
+        color: #065f46;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    /* Expense is the default (red bar, budget and pencil): its chip is only read aloud. */
+    .compact-cats .cat-expense .cat-type {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .compact-cats td[data-label='Ngân sách tháng'] {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+        color: var(--text-muted);
+        font-size: 13px;
+        white-space: nowrap;
+    }
+
+    /* An income category has no budget: nothing to show in that slot. */
+    .compact-cats td[data-label='Ngân sách tháng'].cat-na {
+        display: none;
+    }
+
+    .compact-cats td.row-actions {
+        display: flex;
+        justify-content: flex-end;
+        padding: 0;
+    }
+
+    .compact-cats .btn-small {
+        min-width: 36px;
+        min-height: 36px;
+        margin: 0;
+    }
+}
