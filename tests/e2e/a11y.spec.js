@@ -6,6 +6,7 @@ const TABS = [
     'overview',
     'transactions',
     'sources',
+    'savings',
     'categories',
     'recurring',
     'debts',
@@ -93,6 +94,7 @@ test.describe('Quét trợ năng tự động (axe, WCAG 2 A/AA)', () => {
         ['nguồn tiền', () => window.openSourceModal()],
         ['định kỳ', () => window.openRecurringModal()],
         ['vay nợ', () => window.openDebtModal()],
+        ['tự động gửi tiết kiệm', () => window.openSavingsModal()],
     ]) {
         test(`hộp thoại ${modal[0]} không có vi phạm`, async ({ app }) => {
             const { page } = await app(fullSeed);

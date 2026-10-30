@@ -7,6 +7,7 @@ const PAGES = [
     ['overview', 'Tổng Quan Dòng Tiền'],
     ['transactions', 'Sổ Giao Dịch'],
     ['sources', 'Nguồn Tiền & Tài Khoản'],
+    ['savings', 'Sổ Tiết Kiệm'],
     ['categories', 'Danh Mục Thu / Chi'],
     ['recurring', 'Giao Dịch Định Kỳ'],
     ['debts', 'Vay Nợ & Công Ty'],

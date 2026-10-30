@@ -1524,3 +1524,97 @@ main:focus {
         margin: 0;
     }
 }
+
+/* --- Savings book --- */
+.savings-plan-line {
+    margin-bottom: 4px;
+    font-size: 14px;
+}
+
+.savings-problem {
+    margin-top: 8px;
+    color: var(--warning);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.savings-history {
+    overflow: hidden;
+    list-style: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+.savings-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.savings-row:last-child {
+    border-bottom: 0;
+}
+
+.savings-date {
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.savings-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.savings-text small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The title may take two lines so that the name of the book is not cut off. */
+.savings-text b {
+    font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+.savings-text small {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.savings-amount {
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.savings-deposit .savings-amount,
+.savings-income .savings-amount {
+    color: var(--success);
+}
+
+.savings-withdraw .savings-amount,
+.savings-spend .savings-amount {
+    color: var(--danger);
+}
+
+/* Dark green on light green, about 7:1. */
+.savings-auto {
+    padding: 0 6px;
+    border-radius: 8px;
+    background: #d1fae5;
+    color: #065f46;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.savings-empty {
+    padding: 16px;
+    color: var(--text-muted);
+    font-size: 14px;
+}

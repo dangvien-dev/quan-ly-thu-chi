@@ -8,6 +8,7 @@ const TABS = [
     'overview',
     'transactions',
     'sources',
+    'savings',
     'categories',
     'recurring',
     'debts',
@@ -20,6 +21,7 @@ const DIALOGS = [
     ['định kỳ', () => window.openRecurringModal()],
     ['vay nợ', () => window.openDebtModal()],
     ['mức lương', () => window.openSalaryModal()],
+    ['tự động gửi tiết kiệm', () => window.openSavingsModal()],
     ['chia lương theo nhóm', () => window.openAllocationModal()],
 ];
 const seed = {

@@ -139,6 +139,7 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
             'debtAmount',
             'rcAmount',
             'salaryAmount',
+            'savAmount',
             'srcCreditLimit',
             'srcInitialBalance',
             'txAmount',

@@ -254,6 +254,8 @@ function renameSource(oldName, newName) {
         renameSourceInRecurring(oldName, newName);
     }
 
+    renameSourceInSavings(oldName, newName);
+
     saveDataLocally();
     queueUpsert(changedIds);
 }
@@ -337,6 +339,13 @@ function archiveSource(name, archive) {
             return;
         }
 
+        if (savingsPlanUsesSource(name)) {
+            alert(
+                `"${name}" đang nằm trong kế hoạch tự động gửi tiết kiệm. Hãy sửa hoặc tắt kế hoạch đó trước khi lưu trữ.`,
+            );
+            return;
+        }
+
         if (Math.abs(calculateSourceBalances()[name]) >= 1) {
             alert(
                 `Nguồn "${name}" còn số dư ${formatMoney(calculateSourceBalances()[name])}. Hãy chuyển hết tiền (hoặc tất toán) về 0 trước khi lưu trữ.`,
@@ -361,9 +370,9 @@ function deleteSource(name) {
     const usedByRecurring =
         typeof countRecurringUsingSource === 'function' ? countRecurringUsingSource(name) : 0;
 
-    if (usedByTransactions || usedByRecurring) {
+    if (usedByTransactions || usedByRecurring || savingsPlanUsesSource(name)) {
         alert(
-            `Không thể xóa "${name}": đang được ${usedByTransactions} giao dịch và ${usedByRecurring} giao dịch định kỳ sử dụng. Hãy dùng "Lưu trữ" để ẩn nguồn này.`,
+            `Không thể xóa "${name}": đang được ${usedByTransactions} giao dịch và ${usedByRecurring} giao dịch định kỳ sử dụng${savingsPlanUsesSource(name) ? ', và nằm trong kế hoạch tự động gửi tiết kiệm' : ''}. Hãy dùng "Lưu trữ" để ẩn nguồn này.`,
         );
         return;
     }

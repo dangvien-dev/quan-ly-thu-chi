@@ -767,3 +767,231 @@ test.describe('lương và cảnh báo chi tiêu', () => {
         );
     });
 });
+
+test.describe('sổ tiết kiệm', () => {
+    const plan = (extra = {}) =>
+        JSON.stringify({
+            enabled: true,
+            day: 5,
+            from: 'Thẻ Ngân Hàng',
+            book: 'Sổ tiết kiệm',
+            mode: 'percent',
+            percent: 20,
+            amount: 0,
+            since: '2026-10-01',
+            lastMonth: '',
+            ...extra,
+        });
+    const due = (extra, today) =>
+        plain(
+            run(
+                `savingsDueDeposits(normalizeSavingsPlan(${plan(extra)}), ${JSON.stringify(today)})`,
+            ),
+        );
+
+    test('loại nguồn "Sổ tiết kiệm" được giữ nguyên và đánh dấu saving, không phải nợ', () => {
+        assert.equal(run('normalizeSource({name:"S", kind:"savings"}).kind'), 'savings');
+        assert.equal(run('SOURCE_KINDS.savings.saving'), true);
+        assert.equal(run('SOURCE_KINDS.savings.debt'), false);
+        assert.equal(run('SOURCE_KINDS.bank.saving'), undefined);
+    });
+
+    test('normalizeSavingsPlan: mặc định tắt; bật cần đủ ngày, nguồn, sổ khác nhau và ngày bắt đầu', () => {
+        assert.deepEqual(plain(run('normalizeSavingsPlan({})')), {
+            enabled: false,
+            day: 0,
+            from: '',
+            book: '',
+            mode: 'percent',
+            percent: 20,
+            amount: 0,
+            since: '',
+            lastMonth: '',
+        });
+        assert.equal(plain(run(`normalizeSavingsPlan(${plan()})`)).enabled, true);
+
+        for (const broken of [
+            { day: 0 },
+            { day: 32 },
+            { from: '' },
+            { book: ' ' },
+            { book: 'Thẻ Ngân Hàng' },
+            { since: '' },
+            { enabled: 'yes' },
+        ]) {
+            assert.equal(
+                plain(run(`normalizeSavingsPlan(${plan(broken)})`)).enabled,
+                false,
+                JSON.stringify(broken),
+            );
+        }
+    });
+
+    test('normalizeSavingsPlan: làm sạch phần trăm, số tiền, chế độ, tháng; từ chối không phải object', () => {
+        const clean = plain(
+            run(
+                `normalizeSavingsPlan(${plan({ percent: 150, amount: '1500000.4', mode: 'x', lastMonth: '2026-13x' })})`,
+            ),
+        );
+
+        assert.equal(clean.percent, 20);
+        assert.equal(clean.amount, 1500000);
+        assert.equal(clean.mode, 'percent');
+        assert.equal(clean.lastMonth, '');
+        assert.equal(
+            plain(run(`normalizeSavingsPlan(${plan({ mode: 'fixed', percent: 35 })})`)).percent,
+            35,
+        );
+        assert.equal(plain(run(`normalizeSavingsPlan(${plan({ mode: 'fixed' })})`)).mode, 'fixed');
+        assert.equal(run('normalizeSavingsPlan(null)'), null);
+        assert.equal(run('normalizeSavingsPlan([1])'), null);
+        assert.equal(run('normalizeSavingsPlan("x")'), null);
+    });
+
+    test('savingsDepositDate: ngày lãnh lương, lùi về cuối tháng với tháng ngắn', () => {
+        assert.equal(run('savingsDepositDate("2026-10", 5)'), '2026-10-05');
+        assert.equal(run('savingsDepositDate("2026-02", 31)'), '2026-02-28');
+        assert.equal(run('savingsDepositDate("2028-02", 31)'), '2028-02-29');
+        assert.equal(run('savingsDepositDate("2026-04", 31)'), '2026-04-30');
+        assert.equal(run('savingsDepositDate("2026-12", 31)'), '2026-12-31');
+    });
+
+    test('savingsDueDeposits: không gửi bù tháng trước ngày bắt đầu, gửi đúng ngày lãnh lương', () => {
+        // Set up on 10-20 with payday 5: this month's payday has passed, nothing is due.
+        assert.deepEqual(due({ since: '2026-10-20' }, '2026-10-30'), []);
+        // The day before / on payday of the next month.
+        assert.deepEqual(due({ since: '2026-10-20' }, '2026-11-04'), []);
+        assert.deepEqual(due({ since: '2026-10-20' }, '2026-11-05'), [
+            { month: '2026-11', date: '2026-11-05' },
+        ]);
+        // Set up on payday itself: due today.
+        assert.deepEqual(due({ since: '2026-10-05' }, '2026-10-05'), [
+            { month: '2026-10', date: '2026-10-05' },
+        ]);
+    });
+
+    test('savingsDueDeposits: gửi bù các tháng bỏ lỡ sau khi không mở app, bỏ qua tháng đã gửi', () => {
+        assert.deepEqual(
+            due({ since: '2026-07-15', lastMonth: '2026-08', day: 10 }, '2026-11-12').map(
+                (d) => d.date,
+            ),
+            ['2026-09-10', '2026-10-10', '2026-11-10'],
+        );
+        assert.deepEqual(due({ since: '2026-07-01', lastMonth: '2026-10' }, '2026-10-31'), []);
+        assert.deepEqual(due({ enabled: false }, '2026-12-31'), []);
+    });
+
+    test('savingsDueDeposits: tháng 2 dùng ngày 28 khi ngày lãnh lương là 31', () => {
+        assert.deepEqual(
+            due({ day: 31, since: '2026-01-31', lastMonth: '2026-01' }, '2026-03-30').map(
+                (d) => d.date,
+            ),
+            ['2026-02-28'],
+        );
+    });
+
+    test('savingsDueDeposits: giới hạn số kỳ bù để không treo máy', () => {
+        const length = plain(
+            run(
+                `savingsDueDeposits(normalizeSavingsPlan(${plan({ since: '2000-01-01' })}), "2026-10-30")`,
+            ),
+        ).length;
+
+        assert.equal(length, 120);
+    });
+
+    test('nextSavingsDeposit: kỳ kế tiếp chưa gửi; đã gửi tháng này thì sang tháng sau', () => {
+        const next = (extra, today) =>
+            plain(
+                run(
+                    `nextSavingsDeposit(normalizeSavingsPlan(${plan(extra)}), ${JSON.stringify(today)})`,
+                ),
+            );
+
+        assert.deepEqual(next({ since: '2026-10-20' }, '2026-10-30'), {
+            month: '2026-11',
+            date: '2026-11-05',
+        });
+        assert.deepEqual(next({ since: '2026-10-01', lastMonth: '2026-10' }, '2026-10-30'), {
+            month: '2026-11',
+            date: '2026-11-05',
+        });
+        // Overdue because it could not be worked out: still reported so the page can say it is waiting.
+        assert.deepEqual(next({ since: '2026-10-01' }, '2026-10-30'), {
+            month: '2026-10',
+            date: '2026-10-05',
+        });
+        assert.equal(next({ enabled: false }, '2026-10-30'), null);
+    });
+
+    test('savingsDepositAmount: % lương làm tròn, cố định, 0 khi chưa đặt lương', () => {
+        const amount = (extra, salary) =>
+            run(`savingsDepositAmount(normalizeSavingsPlan(${plan(extra)}), ${salary})`);
+
+        assert.equal(amount({}, '{amount: 10000000}'), 2000000);
+        assert.equal(amount({ percent: 15 }, '{amount: 17333333}'), 2600000);
+        assert.equal(amount({}, '{amount: 0}'), 0);
+        assert.equal(amount({}, 'null'), 0);
+        assert.equal(amount({ mode: 'fixed', amount: 1500000 }, '{amount: 0}'), 1500000);
+        assert.equal(amount({ mode: 'fixed', amount: 1500000 }, '{amount: 9}'), 1500000);
+    });
+
+    test('savingsTransactionId chỉ phụ thuộc tháng', () => {
+        assert.equal(run('savingsTransactionId("2026-10")'), 'TX_SAV_202610');
+    });
+
+    test('savingsMovements: gửi, rút, chuyển giữa sổ, lãi, chi; bỏ qua giao dịch không liên quan; mới nhất trước', () => {
+        const books = '["Sổ A", "Sổ B"]';
+        const list = [
+            tx({ id: 'u1', type: 'expense', source: 'Tiền Mặt', amount: 5 }),
+            tx({
+                id: 'd1',
+                date: '2026-10-05',
+                type: 'transfer',
+                source: 'Ngân hàng',
+                targetSource: 'Sổ A',
+                amount: 100,
+            }),
+            tx({
+                id: 'w1',
+                date: '2026-10-20',
+                type: 'transfer',
+                source: 'Sổ A',
+                targetSource: 'Tiền Mặt',
+                amount: 30,
+            }),
+            tx({
+                id: 'm1',
+                date: '2026-10-10',
+                type: 'transfer',
+                source: 'Sổ A',
+                targetSource: 'Sổ B',
+                amount: 10,
+            }),
+            tx({ id: 'i1', date: '2026-10-25', type: 'income', source: 'Sổ B', amount: 7 }),
+            tx({ id: 's1', date: '2026-10-26', type: 'expense', source: 'Sổ B', amount: 3 }),
+            tx({
+                id: 'TX_SAV_202609',
+                date: '2026-09-05',
+                type: 'transfer',
+                source: 'Ngân hàng',
+                targetSource: 'Sổ A',
+                amount: 90,
+            }),
+        ];
+        const movements = plain(run(`savingsMovements(${JSON.stringify(list)}, ${books})`));
+
+        assert.deepEqual(
+            movements.map((m) => [m.id, m.kind, m.book, m.other, m.auto]),
+            [
+                ['s1', 'spend', 'Sổ B', '', false],
+                ['i1', 'income', 'Sổ B', '', false],
+                ['w1', 'withdraw', 'Sổ A', 'Tiền Mặt', false],
+                ['m1', 'move', 'Sổ B', 'Sổ A', false],
+                ['d1', 'deposit', 'Sổ A', 'Ngân hàng', false],
+                ['TX_SAV_202609', 'deposit', 'Sổ A', 'Ngân hàng', true],
+            ],
+        );
+        assert.equal(movements.find((m) => m.id === 'd1').amount, 100);
+    });
+});

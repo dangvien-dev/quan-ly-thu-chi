@@ -25,6 +25,10 @@ function renderSalaryGroup(group) {
         amountText = `${formatMoney(group.kept)} / mục tiêu ${formatMoney(group.cap)}`;
         note = `Mục tiêu ${group.percent}% lương · đang giữ ${group.percentOfSalary}% lương (phần còn lại sau chi tiêu)`;
 
+        const deposited = savingsDepositedInMonth(currentMonthKey());
+
+        if (deposited > 0) note += ` · đã gửi vào sổ tiết kiệm ${formatMoney(deposited)}`;
+
         if (group.level === 1) {
             status = `${WARNING_ICON} Sắp chạm mức tiết kiệm mục tiêu`;
         } else if (group.level === 2) {

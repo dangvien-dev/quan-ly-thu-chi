@@ -132,10 +132,12 @@ function compareNewestFirst(a, b) {
 // --- SOURCES (money accounts) ---
 
 // debt: a negative balance on this kind of source is money owed.
+// saving: a savings book; its money is set aside, so it is left out of the available balance.
 const SOURCE_KINDS = {
     cash: { label: 'Tiền mặt', debt: false },
     bank: { label: 'Ngân hàng', debt: false },
     ewallet: { label: 'Ví điện tử', debt: false },
+    savings: { label: 'Sổ tiết kiệm', debt: false, saving: true },
     credit: { label: 'Thẻ tín dụng / Trả sau', debt: true },
     debt: { label: 'Khoản nợ', debt: true },
     other: { label: 'Khác', debt: false },
@@ -546,6 +548,164 @@ function computeSalaryAllocation(list, plan, monthKey) {
         totalSpent,
         totalPercent: plan.groups.reduce((total, group) => total + group.percent, 0),
     };
+}
+
+// --- SAVINGS BOOK ---
+
+const DEFAULT_SAVINGS_PERCENT = 20;
+const SAVINGS_ID_PREFIX = 'TX_SAV_';
+const MAX_SAVINGS_CATCH_UP = 120;
+
+/**
+ * The automatic monthly deposit into a savings book, made on payday:
+ * { enabled, day (1-31), from (source name), book (savings source name), mode 'percent' | 'fixed',
+ *   percent (of the salary), amount (fixed), since (YYYY-MM-DD: nothing is deposited before it),
+ *   lastMonth (YYYY-MM of the latest deposit, '' = none yet) }.
+ * Returns null when the input is not an object.
+ */
+function normalizeSavingsPlan(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+    const day = dayOfMonthOrNull(value.day) || 0;
+    const from = String(value.from ?? '').trim();
+    const book = String(value.book ?? '').trim();
+    const percent = Math.round(Number(value.percent));
+    const amount = Math.round(Number(value.amount));
+    const since = normalizeDate(value.since);
+    const lastMonth = /^\d{4}-\d{2}$/.test(String(value.lastMonth ?? '')) ? value.lastMonth : '';
+
+    return {
+        enabled:
+            value.enabled === true &&
+            day > 0 &&
+            from !== '' &&
+            book !== '' &&
+            from !== book &&
+            since !== '',
+        day,
+        from,
+        book,
+        mode: value.mode === 'fixed' ? 'fixed' : 'percent',
+        percent: percent >= 1 && percent <= 100 ? percent : DEFAULT_SAVINGS_PERCENT,
+        amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
+        since,
+        lastMonth,
+    };
+}
+
+/** The deposit date in a month (YYYY-MM): the payday, or the last day of a shorter month. */
+function savingsDepositDate(monthKey, day) {
+    const [year, month] = monthKey.split('-').map(Number);
+    const lastDay = new Date(year, month, 0).getDate();
+
+    return `${monthKey}-${padTwoDigits(Math.min(day, lastDay))}`;
+}
+
+/** The month keys from `fromKey` to `toKey` (both YYYY-MM, inclusive), at most `limit` of them. */
+function monthKeysBetween(fromKey, toKey, limit = MAX_SAVINGS_CATCH_UP) {
+    const keys = [];
+
+    for (let key = fromKey; key <= toKey && keys.length < limit; key = shiftMonthKey(key, 1)) {
+        keys.push(key);
+    }
+
+    return keys;
+}
+
+/** Deposits that have come due and were not made yet: [{ month, date }], oldest first. */
+function savingsDueDeposits(plan, todayKey) {
+    if (!plan.enabled) return [];
+
+    return monthKeysBetween(plan.since.slice(0, 7), todayKey.slice(0, 7))
+        .map((month) => ({ month, date: savingsDepositDate(month, plan.day) }))
+        .filter(
+            (deposit) =>
+                deposit.date >= plan.since &&
+                deposit.date <= todayKey &&
+                (!plan.lastMonth || deposit.month > plan.lastMonth),
+        );
+}
+
+/** The next deposit not made yet (it may already be overdue when it could not be worked out). */
+function nextSavingsDeposit(plan, todayKey) {
+    if (!plan.enabled) return null;
+
+    const start = plan.since.slice(0, 7);
+    const end = shiftMonthKey(todayKey.slice(0, 7), 2);
+
+    return (
+        monthKeysBetween(start, end)
+            .map((month) => ({ month, date: savingsDepositDate(month, plan.day) }))
+            .find(
+                (deposit) =>
+                    deposit.date >= plan.since &&
+                    (!plan.lastMonth || deposit.month > plan.lastMonth),
+            ) || null
+    );
+}
+
+/** How much to put in each month; 0 when it cannot be worked out (a % of a salary that is not set). */
+function savingsDepositAmount(plan, salary) {
+    if (plan.mode === 'fixed') return plan.amount;
+
+    return salary && salary.amount > 0 ? Math.round((salary.amount * plan.percent) / 100) : 0;
+}
+
+function savingsTransactionId(monthKey) {
+    return `${SAVINGS_ID_PREFIX}${monthKey.replace('-', '')}`;
+}
+
+/**
+ * Everything that moved money in or out of the savings books, newest first:
+ * deposit / withdraw (transfers), move (between books), income (interest) and spend.
+ */
+function savingsMovements(list, bookNames) {
+    const books = new Set(bookNames);
+    const movements = [];
+
+    list.slice()
+        .sort(compareNewestFirst)
+        .forEach((transaction) => {
+            const fromBook = books.has(transaction.source);
+            const toBook = transaction.type === 'transfer' && books.has(transaction.targetSource);
+            let kind = '';
+            let book = '';
+            let other = '';
+
+            if (transaction.type === 'transfer') {
+                if (toBook && !fromBook) {
+                    [kind, book, other] = ['deposit', transaction.targetSource, transaction.source];
+                } else if (fromBook && !toBook) {
+                    [kind, book, other] = [
+                        'withdraw',
+                        transaction.source,
+                        transaction.targetSource || '',
+                    ];
+                } else if (fromBook && toBook) {
+                    [kind, book, other] = ['move', transaction.targetSource, transaction.source];
+                }
+            } else if (fromBook) {
+                [kind, book] = [
+                    transaction.type === 'income' ? 'income' : 'spend',
+                    transaction.source,
+                ];
+            }
+
+            if (kind) {
+                movements.push({
+                    id: transaction.id,
+                    date: transaction.date,
+                    kind,
+                    book,
+                    other,
+                    amount: transaction.amount,
+                    note: transaction.note || '',
+                    auto: String(transaction.id).startsWith(SAVINGS_ID_PREFIX),
+                });
+            }
+        });
+
+    return movements;
 }
 
 // --- RECURRING TRANSACTIONS ---

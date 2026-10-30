@@ -10,6 +10,7 @@
 - **Nguồn tiền**: tiền mặt, ngân hàng, ví điện tử, thẻ tín dụng / trả sau (hạn mức, ngày chốt sao kê, hạn thanh toán), khoản nợ; lưu trữ, đổi tên (cập nhật mọi giao dịch).
 - **Tổng quan**: thu / chi tháng này, số dư khả dụng, dư nợ, biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.
 - **Ngân sách** theo danh mục chi, cảnh báo khi vượt 80% và 100%.
+- **Sổ tiết kiệm**: loại nguồn tiền riêng, không tính vào số dư khả dụng (có thẻ "Tổng tiết kiệm" riêng). Đặt ngày lãnh lương thì mỗi tháng ứng dụng tự chuyển một khoản (theo % lương hoặc số tiền cố định) từ nguồn nhận lương vào sổ, không gửi bù các tháng trước ngày cài đặt; có nút Gửi vào / Rút ra và lịch sử gửi / rút.
 - **Chi tiêu trên lương**: đặt lương hằng tháng và mức cảnh báo (mặc định 80%); thẻ trên Tổng quan cho biết đã chi bao nhiêu % lương, còn lại bao nhiêu, đổi màu xanh / vàng / đỏ, và báo ngay khi một khoản chi làm chạm mốc cảnh báo hoặc hết lương. Chỉ tính khoản chi của tháng hiện tại (thu nhập và chuyển tiền không tính).
 - **Chia lương theo nhóm** (ví dụ tiêu dùng cá nhân 50%, công việc 30%, tiết kiệm 20% — mẫu có sẵn, đổi tên / % / thêm bớt tối đa 8 nhóm): mỗi danh mục chi thuộc một nhóm; nhóm chi có hạn mức = % × lương và đổi màu / báo khi sắp hết; nhóm tiết kiệm là phần còn lại sau khi chi, báo khi chi lấn vào mục tiêu tiết kiệm.
 - **Giao dịch định kỳ** (hằng tháng / hằng tuần): tự tạo khi đến hạn, không tạo trùng.
@@ -28,6 +29,7 @@ Chạy thử: `npm run serve` rồi mở http://127.0.0.1:4173/ (hoặc host th�
 | `js/ui.js`                                          | Chuyển tab, hộp thoại, loại giao dịch, thông báo (toast)                                              |
 | `js/categories.js`, `js/budgets.js`, `js/salary.js` | Danh mục, ngân sách và chi tiêu trên lương                                                            |
 | `js/recurring.js`, `js/debts.js`                    | Giao dịch định kỳ và sổ vay nợ                                                                        |
+| `js/savings.js`                                     | Sổ tiết kiệm: tự động gửi khi lãnh lương, các sổ và lịch sử gửi / rút                                 |
 | `js/transactions.js`, `js/sources.js`               | Giao dịch (bộ lọc, xuất CSV) và nguồn tiền                                                            |
 | `js/charts.js`                                      | Biểu đồ Chart.js                                                                                      |
 | `js/sync.js`                                        | Đồng bộ Google Sheets                                                                                 |
