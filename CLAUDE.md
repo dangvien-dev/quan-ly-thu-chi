@@ -87,6 +87,7 @@ npm run format:check   # Prettier (npm run format để sửa)
 
 - Test e2e chạy hoàn toàn không cần mạng: mọi request tới host ngoài bị chặn và ghi vào `state.external` (phải rỗng); `script.google.com` được trả lời bởi script thật của chủ repo chạy trong sandbox (`tests/e2e/helpers.js`).
 - Quét axe luôn qua `scanA11y(page, include?)` trong `tests/e2e/helpers.js` (tự chờ mọi animation/transition CSS xong qua `settle`): quét lúc tab đang `fadeIn` 0,3s hoặc hộp thoại đang chuyển cảnh thì axe báo `color-contrast` giả, chỉ lộ ra trên CI chậm (PR #4 đỏ vì vậy). Đừng thay bằng `wait(ms)` cố định.
+- `tests/e2e/layout.spec.js` quét mọi trang và hộp thoại (điện thoại và máy tính) xem hai khối liền kề có đè lên nhau không. `.hint` có lề trên **âm** (`-8px`, dành cho gợi ý nằm ngay dưới ô nhập): đặt nó sau một tiêu đề thì phải cho tiêu đề lề dưới và đặt lại lề của `.hint` (như `.allocation-title + .hint`), nếu không nó chui lên đè tiêu đề.
 - Khi dùng `page.clock.setFixedTime` thì animation Chart.js bị đóng băng (chỉ kiểm tra dữ liệu, đừng chụp ảnh biểu đồ).
 - Sandbox không tải được CDN; mọi thư viện đã nằm trong `vendor/`. `npm` registry thì dùng được.
 - Sandbox Apps Script chỉ là mock của Sheets/ContentService — script chạy đúng trong mock chưa chứng minh chạy y hệt trên Google.
@@ -95,7 +96,7 @@ npm run format:check   # Prettier (npm run format để sửa)
 
 PR #3 (`claude/hopeful-einstein-l7hu3u` → `main`, đã merge, merge commit `88df733`; PR #4, #5 và #6 cũng đã merge, merge commit `c3c1c39`, `62645c4` và `984b4e3`) gồm: sửa lỗi gốc (chuyển tiền không lưu được, `step` số tiền, ngày lệch múi giờ, sync mất dữ liệu, XSS, số liệu Tổng quan, localStorage hỏng/CDN lỗi) → PWA + vendor thư viện + test/CI trong repo → **sửa giao thức sync cho khớp script thật** → quản lý nguồn tiền → lọc/tìm kiếm/CSV → ngân sách → định kỳ → vay nợ → đồng bộ v2 → mobile + trợ năng.
 
-Đợt tiếp theo (cùng branch, PR mới sau PR #3): ngày hiển thị `dd/mm/yyyy` (cột ngày của `Code.gs` v2 cũng `dd/mm/yyyy`), ô tiền có dấu phân cách hàng nghìn khi gõ, sổ giao dịch trên điện thoại gọn một dòng/giao dịch (chạm để mở chi tiết). Đợt PR #4 gồm các mục trên, kèm **chi tiêu trên lương** (thẻ % lương đã chi + cảnh báo gần hết lương, meta `salary`) và **chia lương theo nhóm** (tiêu dùng cá nhân / công việc / tiết kiệm). Sau PR #4 (branch mới từ `main`): điều hướng điện thoại gọn lại (thanh dưới 4 mục + nút thêm ở giữa, các trang còn lại trong menu trái). Sau PR #6: danh mục gọn một dòng trên điện thoại. Kéo làm mới giữ nguyên trang đang xem (ghi trong `#` của địa chỉ). Toàn bộ test (321 e2e, 73 unit) pass.
+Đợt tiếp theo (cùng branch, PR mới sau PR #3): ngày hiển thị `dd/mm/yyyy` (cột ngày của `Code.gs` v2 cũng `dd/mm/yyyy`), ô tiền có dấu phân cách hàng nghìn khi gõ, sổ giao dịch trên điện thoại gọn một dòng/giao dịch (chạm để mở chi tiết). Đợt PR #4 gồm các mục trên, kèm **chi tiêu trên lương** (thẻ % lương đã chi + cảnh báo gần hết lương, meta `salary`) và **chia lương theo nhóm** (tiêu dùng cá nhân / công việc / tiết kiệm). Sau PR #4 (branch mới từ `main`): điều hướng điện thoại gọn lại (thanh dưới 4 mục + nút thêm ở giữa, các trang còn lại trong menu trái). Sau PR #6: danh mục gọn một dòng trên điện thoại. Kéo làm mới giữ nguyên trang đang xem (ghi trong `#` của địa chỉ). Toàn bộ test (350 e2e, 73 unit) pass.
 
 Việc chủ repo cần làm / quyết định:
 

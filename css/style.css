@@ -858,8 +858,14 @@ canvas {
 }
 
 .allocation-title {
-    margin-top: 16px;
+    margin: 16px 0 6px;
     font-size: 15px;
+}
+
+/* The base .hint has a negative top margin (it sits under a form field); under a heading it
+   would run over the heading. */
+.allocation-title + .hint {
+    margin: 0 0 12px;
 }
 
 .allocation-category {
