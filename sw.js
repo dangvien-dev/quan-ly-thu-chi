@@ -5,9 +5,11 @@
 // Requests to other origins (the Google Apps Script Web App) always go straight to the network.
 //
 // Every local file referenced by index.html must be listed in APP_SHELL (tests check this).
-// Bump CACHE_VERSION to drop files that were removed from the app.
+// CACHE_VERSION, js/version.js and version.json are stamped by `npm run stamp` (a hash of the files
+// below): every release is a new service worker with its own cache, which drops the old one.
+// version.json is never cached, so the app can ask what the newest deployed version is.
 
-const CACHE_VERSION = 'fm-v1';
+const CACHE_VERSION = 'fm-e392bbc';
 const APP_SHELL = [
     './',
     'index.html',
@@ -20,6 +22,7 @@ const APP_SHELL = [
     'assets/icons/icon-192.png',
     'assets/icons/icon-512.png',
     'assets/icons/apple-touch-icon.png',
+    'js/version.js',
     'js/utils.js',
     'js/data.js',
     'js/ui.js',
@@ -42,7 +45,10 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         caches
             .open(CACHE_VERSION)
-            .then((cache) => cache.addAll(APP_SHELL))
+            // `reload` skips the browser's HTTP cache, so a release is cached from the server.
+            .then((cache) =>
+                cache.addAll(APP_SHELL.map((url) => new Request(url, { cache: 'reload' }))),
+            )
             .then(() => self.skipWaiting()),
     );
 });
@@ -96,6 +102,7 @@ self.addEventListener('fetch', (event) => {
 
     if (request.method !== 'GET') return;
     if (new URL(request.url).origin !== self.location.origin) return;
+    if (new URL(request.url).pathname.endsWith('/version.json')) return;
 
     event.respondWith(staleWhileRevalidate(event));
 });

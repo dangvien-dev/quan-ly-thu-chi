@@ -78,6 +78,7 @@
                     </li>
                 </ul>
             </nav>
+            <p class="app-version" id="sidebar-version"></p>
         </aside>
 
         <div class="drawer-backdrop" aria-hidden="true" onclick="closeMenu()"></div>
@@ -551,6 +552,25 @@
                         "
                     />
                 </div>
+                <div class="card" style="margin-bottom: 20px" id="version-card">
+                    <h3 style="margin-bottom: 12px">Phiên Bản Ứng Dụng</h3>
+                    <p>Đang chạy: <b id="app-version"></b></p>
+                    <p id="update-status" class="update-status" role="status"></p>
+                    <div class="update-actions">
+                        <button type="button" class="btn btn-outline" onclick="checkForUpdate()">
+                            <i class="fa-solid fa-rotate" aria-hidden="true"></i> Kiểm tra bản mới
+                        </button>
+                        <button
+                            type="button"
+                            class="btn"
+                            id="apply-update-btn"
+                            onclick="applyUpdate()"
+                            hidden
+                        >
+                            Cập nhật ngay
+                        </button>
+                    </div>
+                </div>
                 <div class="card" style="border-color: var(--danger)">
                     <h3 style="color: var(--danger); margin-bottom: 12px">Vùng Nguy Hiểm</h3>
                     <button class="btn btn-danger" onclick="resetAllData()">
@@ -559,6 +579,12 @@
                 </div>
             </section>
         </main>
+
+        <!-- Shown when a new version has been installed while the page was open -->
+        <div id="update-banner" class="update-banner" role="status" hidden>
+            <span>Đã có phiên bản mới của ứng dụng.</span>
+            <button type="button" class="btn" onclick="location.reload()">Tải lại</button>
+        </div>
 
         <!-- Phone bottom bar: four pages and the add button in the middle (the rest are in the menu) -->
         <nav class="mobile-nav" aria-label="Điều hướng nhanh">
@@ -1222,6 +1248,7 @@
         </div>
 
         <!-- Liên kết file JavaScript riêng -->
+        <script src="js/version.js"></script>
         <script src="js/utils.js"></script>
         <script src="js/data.js"></script>
         <script src="js/ui.js"></script>
