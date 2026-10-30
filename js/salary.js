@@ -138,11 +138,73 @@ function renderDebtVsSalary(totalDebt) {
     }
 }
 
+/**
+ * Overview debt card, second line: how much of this month was spent on credit, as a share of the
+ * salary. Unlike the debt balance it does not drop to 0 when the statement is paid.
+ */
+function renderCardSpend() {
+    const element = document.getElementById('lbl-card-spend');
+
+    if (!element) return;
+
+    const spent = computeCardSpend(transactions, sources, currentMonthKey());
+    const status = computeCardSpendStatus(spent, salaryPlan);
+
+    element.hidden = !status || spent <= 0;
+    element.dataset.level = status ? String(status.level) : '';
+    element.classList.toggle('source-warn', Boolean(status && status.level >= 1));
+
+    if (!status) {
+        element.textContent = '';
+        return;
+    }
+
+    const base = `Tháng này dùng thẻ / trả sau ${formatMoney(status.spent)} = ${status.percent}% lương`;
+    const limit = `${status.warnPercent}% (${formatMoney(status.limit)})`;
+
+    if (status.level === 2) {
+        element.innerHTML = `${DANGER_ICON} ${base}: bằng cả tháng lương. Nên dừng dùng thẻ / trả sau tháng này.`;
+    } else if (status.level === 1) {
+        element.innerHTML = `${WARNING_ICON} ${base}, đã chạm mốc ${limit}. Hạn chế mua trả sau thêm.`;
+    } else {
+        element.textContent = `${base} · cảnh báo từ ${limit}`;
+    }
+}
+
+/** After a new card purchase, warn only when it pushed the month's card spending over a level. */
+function notifyCardSpend(transaction) {
+    const month = currentMonthKey();
+    const added = computeCardSpend([transaction], sources, month);
+
+    if (!(added > 0)) return;
+
+    const spent = computeCardSpend(transactions, sources, month);
+    const after = computeCardSpendStatus(spent, salaryPlan);
+
+    if (!after) return;
+
+    const before = computeCardSpendStatus(spent - added, salaryPlan);
+
+    if (after.level <= before.level) return;
+
+    const detail = `${formatMoney(after.spent)} / ${formatMoney(after.salary)} (${after.percent}%)`;
+
+    if (after.level === 2) {
+        showToast(`Dùng thẻ / trả sau tháng này đã bằng cả tháng lương: ${detail}`, 'danger');
+    } else {
+        showToast(
+            `Dùng thẻ / trả sau tháng này chạm mốc ${after.warnPercent}% lương: ${detail}`,
+            'warning',
+        );
+    }
+}
+
 // --- SALARY DIALOG ---
 function openSalaryModal() {
     setMoneyInput('salaryAmount', salaryPlan.amount || '');
     document.getElementById('salaryWarn').value = salaryPlan.warnPercent;
     document.getElementById('salaryDebtWarn').value = salaryPlan.debtWarnPercent;
+    document.getElementById('salaryCardWarn').value = salaryPlan.cardWarnPercent;
     openDialog('salaryModal', 'salaryAmount');
 }
 
@@ -156,6 +218,7 @@ function handleSalarySubmit(event) {
     const amount = readMoneyInput('salaryAmount');
     const warnPercent = Number(document.getElementById('salaryWarn').value);
     const debtWarnPercent = Number(document.getElementById('salaryDebtWarn').value);
+    const cardWarnPercent = Number(document.getElementById('salaryCardWarn').value);
 
     if (!Number.isInteger(warnPercent) || warnPercent < 1 || warnPercent > 100) {
         alert('Mức cảnh báo phải là số nguyên từ 1 đến 100 (% lương).');
@@ -167,12 +230,18 @@ function handleSalarySubmit(event) {
         return;
     }
 
+    if (!Number.isInteger(cardWarnPercent) || cardWarnPercent < 1 || cardWarnPercent > 100) {
+        alert('Mức cảnh báo dùng thẻ phải là số nguyên từ 1 đến 100 (% lương).');
+        return;
+    }
+
     // An empty or zero salary switches the feature off. The groups are kept for next time.
     salaryPlan = normalizeSalaryPlan({
         ...salaryPlan,
         amount: Number.isFinite(amount) ? amount : 0,
         warnPercent,
         debtWarnPercent,
+        cardWarnPercent,
     });
     saveMeta('salary');
     closeSalaryModal();

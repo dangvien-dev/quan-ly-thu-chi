@@ -129,6 +129,7 @@
                         <div class="card-title">Dư Nợ Tín Dụng / SPay</div>
                         <div class="card-value expense" id="lbl-total-debt">0 đ</div>
                         <div class="source-meta" id="lbl-debt-salary" hidden></div>
+                        <div class="source-meta" id="lbl-card-spend" hidden></div>
                     </div>
                     <div class="card" id="savings-card" hidden>
                         <div class="card-title">Tổng Tiết Kiệm</div>
@@ -943,8 +944,28 @@
                             aria-describedby="salaryDebtWarnHint"
                         />
                         <p id="salaryDebtWarnHint" class="hint">
-                            Dư nợ thẻ tín dụng / trả sau (thẻ "Dư Nợ" ở Tổng quan) chạm mốc này thì
-                            được tô đỏ và nhắc nên trả bớt. Gợi ý: 20-30%.
+                            Dư nợ còn tồn của thẻ tín dụng / trả sau (thẻ "Dư Nợ" ở Tổng quan) chạm
+                            mốc này thì được tô đỏ và nhắc nên trả bớt. Gợi ý: 20-30%.
+                        </p>
+                    </div>
+                    <div class="form-group">
+                        <label for="salaryCardWarn"
+                            >Cảnh báo dùng thẻ / trả sau trong tháng (% lương)</label
+                        >
+                        <input
+                            type="number"
+                            id="salaryCardWarn"
+                            class="form-control"
+                            required
+                            min="1"
+                            max="100"
+                            step="1"
+                            inputmode="numeric"
+                            aria-describedby="salaryCardWarnHint"
+                        />
+                        <p id="salaryCardWarnHint" class="hint">
+                            Cộng mọi khoản chi bằng thẻ tín dụng / trả sau trong tháng, kể cả khi đã
+                            trả sao kê. Chạm mốc thì báo ngay khi thêm khoản chi. Gợi ý: 30%.
                         </p>
                     </div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">

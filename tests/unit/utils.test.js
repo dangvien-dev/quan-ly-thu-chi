@@ -1057,3 +1057,65 @@ test('computeDebtStatus: chưa đặt lương thì không so được', () => {
     assert.equal(run('computeDebtStatus(1000,{amount:0,debtWarnPercent:30})'), null);
     assert.equal(run('computeDebtStatus(1000,null)'), null);
 });
+
+test('normalizeSalaryPlan: mức cảnh báo dùng thẻ mặc định 30, ngoài 1-100 về 30', () => {
+    assert.equal(run('normalizeSalaryPlan({amount:1000}).cardWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({cardWarnPercent:40}).cardWarnPercent'), 40);
+    assert.equal(run('normalizeSalaryPlan({cardWarnPercent:0}).cardWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({cardWarnPercent:150}).cardWarnPercent'), 30);
+});
+
+test('computeCardSpend: chi và rút tiền từ thẻ tín dụng / trả sau trong tháng, không tính trả sao kê', () => {
+    const sources =
+        '[{name:"Tiền Mặt",kind:"cash"},{name:"Ngân Hàng",kind:"bank"},{name:"Spay",kind:"credit"},{name:"Visa",kind:"credit"},{name:"Nợ",kind:"debt"}]';
+    const spend = (rows) => run(`computeCardSpend(${rows},${sources},"2026-10")`);
+    const row = (type, source, amount, extra = '') =>
+        `{type:"${type}",source:"${source}",amount:${amount},date:"2026-10-05"${extra}}`;
+
+    // Purchases on any card count; cash and bank purchases do not.
+    assert.equal(spend(`[${row('expense', 'Spay', 100)},${row('expense', 'Visa', 50)}]`), 150);
+    assert.equal(
+        spend(`[${row('expense', 'Tiền Mặt', 100)},${row('expense', 'Ngân Hàng', 70)}]`),
+        0,
+    );
+    // A loan source is not a card.
+    assert.equal(spend(`[${row('expense', 'Nợ', 100)}]`), 0);
+    // Cash taken out of a card counts; a transfer between two cards does not.
+    assert.equal(spend(`[${row('transfer', 'Spay', 80, ',targetSource:"Tiền Mặt"')}]`), 80);
+    assert.equal(spend(`[${row('transfer', 'Spay', 80, ',targetSource:"Visa"')}]`), 0);
+    // Paying the statement (money into the card) and income do not count.
+    assert.equal(spend(`[${row('transfer', 'Ngân Hàng', 500, ',targetSource:"Spay"')}]`), 0);
+    assert.equal(spend(`[${row('income', 'Spay', 500)}]`), 0);
+    // Only the asked month.
+    assert.equal(
+        run(
+            `computeCardSpend([{type:"expense",source:"Spay",amount:100,date:"2026-09-30"}],${sources},"2026-10")`,
+        ),
+        0,
+    );
+    // An unknown source is ignored.
+    assert.equal(spend(`[${row('expense', 'Lạ', 100)}]`), 0);
+});
+
+test('computeCardSpendStatus: mức 0 / 1 / 2, làm tròn xuống, đúng mốc là cảnh báo', () => {
+    const plan = '{amount:8000000,cardWarnPercent:30}';
+    const status = (spent) =>
+        JSON.parse(JSON.stringify(run(`computeCardSpendStatus(${spent},${plan})`)));
+
+    assert.deepEqual(status(1500000), {
+        spent: 1500000,
+        salary: 8000000,
+        percent: 18,
+        warnPercent: 30,
+        limit: 2400000,
+        level: 0,
+    });
+    assert.equal(status(2399999).level, 0);
+    assert.equal(status(2399999).percent, 29);
+    assert.equal(status(2400000).level, 1);
+    assert.equal(status(7999999).level, 1);
+    assert.equal(status(8000000).level, 2);
+    assert.equal(status(9000000).percent, 112);
+    assert.equal(run('computeCardSpendStatus(10,{amount:0,cardWarnPercent:30})'), null);
+    assert.equal(run('computeCardSpendStatus(10,null)'), null);
+});

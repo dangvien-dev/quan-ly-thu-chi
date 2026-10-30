@@ -77,6 +77,7 @@ test.describe('Đặt mức lương', () => {
             amount: SALARY,
             warnPercent: 80,
             debtWarnPercent: 30,
+            cardWarnPercent: 30,
             groups: DEFAULT_GROUPS,
             assign: {},
         };
@@ -332,6 +333,7 @@ test.describe('Đồng bộ và sao lưu', () => {
             amount: SALARY,
             warnPercent: 80,
             debtWarnPercent: 30,
+            cardWarnPercent: 30,
             groups: DEFAULT_GROUPS,
             assign: {},
         });
@@ -369,6 +371,7 @@ test.describe('Đồng bộ và sao lưu', () => {
             amount: SALARY,
             warnPercent: 65,
             debtWarnPercent: 30,
+            cardWarnPercent: 30,
             groups: [],
             assign: {},
         });
@@ -387,6 +390,7 @@ test.describe('Đồng bộ và sao lưu', () => {
             amount: SALARY,
             warnPercent: 65,
             debtWarnPercent: 30,
+            cardWarnPercent: 30,
             groups: [],
             assign: {},
         });

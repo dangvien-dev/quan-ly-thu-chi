@@ -43,6 +43,7 @@ function renderOverview() {
     setMoneyLabel('lbl-total-balance', availableBalance);
     setMoneyLabel('lbl-total-debt', totalDebt);
     renderDebtVsSalary(totalDebt);
+    renderCardSpend();
 
     const savingsCard = document.getElementById('savings-card');
 

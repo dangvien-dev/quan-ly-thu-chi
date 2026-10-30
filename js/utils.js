@@ -389,6 +389,7 @@ function computeBudgetStatus(list, budgetMap, monthKey) {
 
 const DEFAULT_SALARY_WARN_PERCENT = 80;
 const DEFAULT_DEBT_WARN_PERCENT = 30;
+const DEFAULT_CARD_WARN_PERCENT = 30;
 const MAX_SALARY_GROUPS = 8;
 const DEFAULT_SALARY_GROUPS = [
     { id: 'personal', name: 'Tiêu dùng cá nhân', percent: 50, saving: false },
@@ -441,6 +442,7 @@ function normalizeSalaryPlan(value) {
     const amount = Math.round(Number(value.amount));
     const warnPercent = Math.round(Number(value.warnPercent));
     const debtWarnPercent = Math.round(Number(value.debtWarnPercent));
+    const cardWarnPercent = Math.round(Number(value.cardWarnPercent));
     const groups =
         normalizeSalaryGroups(value.groups) ?? DEFAULT_SALARY_GROUPS.map((group) => ({ ...group }));
     const spendingIds = new Set(groups.filter((group) => !group.saving).map((group) => group.id));
@@ -459,6 +461,10 @@ function normalizeSalaryPlan(value) {
             debtWarnPercent >= 1 && debtWarnPercent <= 100
                 ? debtWarnPercent
                 : DEFAULT_DEBT_WARN_PERCENT,
+        cardWarnPercent:
+            cardWarnPercent >= 1 && cardWarnPercent <= 100
+                ? cardWarnPercent
+                : DEFAULT_CARD_WARN_PERCENT,
         groups,
         assign: Object.fromEntries(assign),
     };
@@ -488,6 +494,57 @@ function computeDebtStatus(debt, plan) {
         warnPercent: plan.debtWarnPercent,
         limit: Math.round((plan.amount * plan.debtWarnPercent) / 100),
         level: owed * 100 >= plan.amount * plan.debtWarnPercent ? 1 : 0,
+    };
+}
+
+/**
+ * Money put on credit / pay-later sources in a month (YYYY-MM): purchases, plus cash taken out of
+ * a card (a transfer to a source that is not a card). Paying the statement does not lower it:
+ * it measures how much of the month was spent on credit, which the debt balance forgets once paid.
+ */
+function computeCardSpend(list, sourceList, monthKey) {
+    const kinds = new Map(sourceList.map((source) => [source.name, source.kind]));
+    const isCard = (name) => kinds.get(name) === 'credit';
+
+    return list.reduce((total, transaction) => {
+        if (!transaction.date.startsWith(monthKey)) return total;
+
+        if (transaction.type === 'expense' && isCard(transaction.source)) {
+            return total + transaction.amount;
+        }
+
+        if (
+            transaction.type === 'transfer' &&
+            isCard(transaction.source) &&
+            !isCard(transaction.targetSource)
+        ) {
+            return total + transaction.amount;
+        }
+
+        return total;
+    }, 0);
+}
+
+/**
+ * The month's card spending against the salary; null when no salary is set.
+ * level 0 = below the warning percent, 1 = reached it, 2 = at or over the whole salary.
+ */
+function computeCardSpendStatus(spent, plan) {
+    if (!plan || !(plan.amount > 0)) return null;
+
+    const used = Math.max(0, Number(spent) || 0);
+    let level = 0;
+
+    if (used >= plan.amount) level = 2;
+    else if (used * 100 >= plan.amount * plan.cardWarnPercent) level = 1;
+
+    return {
+        spent: used,
+        salary: plan.amount,
+        percent: Math.floor((used * 100) / plan.amount),
+        warnPercent: plan.cardWarnPercent,
+        limit: Math.round((plan.amount * plan.cardWarnPercent) / 100),
+        level,
     };
 }
 

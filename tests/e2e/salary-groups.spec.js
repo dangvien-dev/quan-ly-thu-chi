@@ -15,6 +15,7 @@ const plan = (extra = {}) => ({
     amount: SALARY,
     warnPercent: 80,
     debtWarnPercent: 30,
+    cardWarnPercent: 30,
     groups,
     assign: { 'Mua sắm': 'w' },
     ...extra,

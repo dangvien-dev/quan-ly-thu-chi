@@ -70,6 +70,7 @@ function handleFormSubmit(e) {
 
         notifyBudget(saved);
         notifySalary(saved);
+        notifyCardSpend(saved);
     }
 }
 
