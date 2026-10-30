@@ -117,10 +117,32 @@ function renderSalary() {
         </div>${renderSalaryGroups()}`;
 }
 
+/** Overview debt card: the debt as a share of the salary, turning red from the warning percent. */
+function renderDebtVsSalary(totalDebt) {
+    const element = document.getElementById('lbl-debt-salary');
+
+    if (!element) return;
+
+    const status = computeDebtStatus(totalDebt, salaryPlan);
+
+    element.hidden = !(totalDebt > 0);
+    element.classList.toggle('source-warn', Boolean(status && status.level === 1));
+    element.dataset.level = status ? String(status.level) : '';
+
+    if (!status) {
+        element.textContent = 'Chưa đặt mức lương nên chưa so được dư nợ với lương.';
+    } else if (status.level === 1) {
+        element.innerHTML = `${WARNING_ICON} Dư nợ bằng <b>${status.percent}%</b> lương, đã chạm mốc ${status.warnPercent}% (${escapeHtml(formatMoney(status.limit))}). Nên trả bớt trước khi mua trả sau thêm.`;
+    } else {
+        element.textContent = `Bằng ${status.percent}% lương · cảnh báo từ ${status.warnPercent}% (${formatMoney(status.limit)})`;
+    }
+}
+
 // --- SALARY DIALOG ---
 function openSalaryModal() {
     setMoneyInput('salaryAmount', salaryPlan.amount || '');
     document.getElementById('salaryWarn').value = salaryPlan.warnPercent;
+    document.getElementById('salaryDebtWarn').value = salaryPlan.debtWarnPercent;
     openDialog('salaryModal', 'salaryAmount');
 }
 
@@ -133,9 +155,15 @@ function handleSalarySubmit(event) {
 
     const amount = readMoneyInput('salaryAmount');
     const warnPercent = Number(document.getElementById('salaryWarn').value);
+    const debtWarnPercent = Number(document.getElementById('salaryDebtWarn').value);
 
     if (!Number.isInteger(warnPercent) || warnPercent < 1 || warnPercent > 100) {
         alert('Mức cảnh báo phải là số nguyên từ 1 đến 100 (% lương).');
+        return;
+    }
+
+    if (!Number.isInteger(debtWarnPercent) || debtWarnPercent < 1 || debtWarnPercent > 100) {
+        alert('Mức cảnh báo dư nợ phải là số nguyên từ 1 đến 100 (% lương).');
         return;
     }
 
@@ -144,6 +172,7 @@ function handleSalarySubmit(event) {
         ...salaryPlan,
         amount: Number.isFinite(amount) ? amount : 0,
         warnPercent,
+        debtWarnPercent,
     });
     saveMeta('salary');
     closeSalaryModal();

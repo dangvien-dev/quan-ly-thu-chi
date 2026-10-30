@@ -388,6 +388,7 @@ function computeBudgetStatus(list, budgetMap, monthKey) {
 // --- SALARY ---
 
 const DEFAULT_SALARY_WARN_PERCENT = 80;
+const DEFAULT_DEBT_WARN_PERCENT = 30;
 const MAX_SALARY_GROUPS = 8;
 const DEFAULT_SALARY_GROUPS = [
     { id: 'personal', name: 'Tiêu dùng cá nhân', percent: 50, saving: false },
@@ -439,6 +440,7 @@ function normalizeSalaryPlan(value) {
 
     const amount = Math.round(Number(value.amount));
     const warnPercent = Math.round(Number(value.warnPercent));
+    const debtWarnPercent = Math.round(Number(value.debtWarnPercent));
     const groups =
         normalizeSalaryGroups(value.groups) ?? DEFAULT_SALARY_GROUPS.map((group) => ({ ...group }));
     const spendingIds = new Set(groups.filter((group) => !group.saving).map((group) => group.id));
@@ -453,6 +455,10 @@ function normalizeSalaryPlan(value) {
         amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
         warnPercent:
             warnPercent >= 1 && warnPercent <= 100 ? warnPercent : DEFAULT_SALARY_WARN_PERCENT,
+        debtWarnPercent:
+            debtWarnPercent >= 1 && debtWarnPercent <= 100
+                ? debtWarnPercent
+                : DEFAULT_DEBT_WARN_PERCENT,
         groups,
         assign: Object.fromEntries(assign),
     };
@@ -463,6 +469,26 @@ function salaryLevel(ratio, warnPercent) {
     if (ratio >= 1) return 2;
 
     return ratio >= warnPercent / 100 ? 1 : 0;
+}
+
+/**
+ * Credit / pay-later debt against the salary; null when no salary is set. The percent is rounded
+ * down (never 30% before the warning) and integer maths keeps "exactly at the limit" exact.
+ * level 1 = the debt reached the warning percent of the salary.
+ */
+function computeDebtStatus(debt, plan) {
+    if (!plan || !(plan.amount > 0)) return null;
+
+    const owed = Math.max(0, Number(debt) || 0);
+
+    return {
+        debt: owed,
+        salary: plan.amount,
+        percent: Math.floor((owed * 100) / plan.amount),
+        warnPercent: plan.debtWarnPercent,
+        limit: Math.round((plan.amount * plan.debtWarnPercent) / 100),
+        level: owed * 100 >= plan.amount * plan.debtWarnPercent ? 1 : 0,
+    };
 }
 
 const isExpenseInMonth = (transaction, monthKey) =>

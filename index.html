@@ -128,6 +128,7 @@
                     <div class="card">
                         <div class="card-title">Dư Nợ Tín Dụng / SPay</div>
                         <div class="card-value expense" id="lbl-total-debt">0 đ</div>
+                        <div class="source-meta" id="lbl-debt-salary" hidden></div>
                     </div>
                     <div class="card" id="savings-card" hidden>
                         <div class="card-title">Tổng Tiết Kiệm</div>
@@ -926,6 +927,24 @@
                         <p id="salaryWarnHint" class="hint">
                             Khi chi tiêu tháng này chạm mốc này ứng dụng báo "sắp hết lương"; chạm
                             100% thì báo đã chi hết lương.
+                        </p>
+                    </div>
+                    <div class="form-group">
+                        <label for="salaryDebtWarn">Cảnh báo dư nợ khi đạt (% lương)</label>
+                        <input
+                            type="number"
+                            id="salaryDebtWarn"
+                            class="form-control"
+                            required
+                            min="1"
+                            max="100"
+                            step="1"
+                            inputmode="numeric"
+                            aria-describedby="salaryDebtWarnHint"
+                        />
+                        <p id="salaryDebtWarnHint" class="hint">
+                            Dư nợ thẻ tín dụng / trả sau (thẻ "Dư Nợ" ở Tổng quan) chạm mốc này thì
+                            được tô đỏ và nhắc nên trả bớt. Gợi ý: 20-30%.
                         </p>
                     </div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">

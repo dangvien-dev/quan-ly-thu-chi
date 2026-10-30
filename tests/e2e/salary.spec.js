@@ -73,7 +73,13 @@ test.describe('Đặt mức lương', () => {
         await expect(card(page)).toContainText('0% lương đã chi');
         await expect(card(page)).toContainText('0 đ / lương 20.000.000 đ');
         await expect(page.locator('#salary-edit-btn')).toHaveText(/Sửa/);
-        const plan = { amount: SALARY, warnPercent: 80, groups: DEFAULT_GROUPS, assign: {} };
+        const plan = {
+            amount: SALARY,
+            warnPercent: 80,
+            debtWarnPercent: 30,
+            groups: DEFAULT_GROUPS,
+            assign: {},
+        };
 
         expect(await page.evaluate(() => salaryPlan)).toEqual(plan);
         expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fm_salary')))).toEqual(
@@ -325,6 +331,7 @@ test.describe('Đồng bộ và sao lưu', () => {
         expect(server.get({ v: '2' }).meta.salary.value).toEqual({
             amount: SALARY,
             warnPercent: 80,
+            debtWarnPercent: 30,
             groups: DEFAULT_GROUPS,
             assign: {},
         });
@@ -361,6 +368,7 @@ test.describe('Đồng bộ và sao lưu', () => {
         expect(backup.data.salary).toEqual({
             amount: SALARY,
             warnPercent: 65,
+            debtWarnPercent: 30,
             groups: [],
             assign: {},
         });
@@ -378,6 +386,7 @@ test.describe('Đồng bộ và sao lưu', () => {
         expect(await other.page.evaluate(() => salaryPlan)).toEqual({
             amount: SALARY,
             warnPercent: 65,
+            debtWarnPercent: 30,
             groups: [],
             assign: {},
         });

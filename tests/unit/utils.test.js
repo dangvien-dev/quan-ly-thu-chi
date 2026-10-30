@@ -1016,3 +1016,44 @@ test('balanceFromAvailable: khả dụng trừ hạn mức, âm nghĩa là đang
     assert.equal(run('balanceFromAvailable(30000000,30000000)'), 0);
     assert.equal(run('balanceFromAvailable(30000000,31000000)'), 1000000);
 });
+
+test('normalizeSalaryPlan: mức cảnh báo dư nợ mặc định 30, ngoài 1-100 về 30, làm tròn', () => {
+    assert.equal(run('normalizeSalaryPlan({amount:1000}).debtWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:25}).debtWarnPercent'), 25);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:24.6}).debtWarnPercent'), 25);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:0}).debtWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:101}).debtWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:"abc"}).debtWarnPercent'), 30);
+});
+
+test('computeDebtStatus: dư nợ so với lương, làm tròn xuống, chạm mốc là mức 1', () => {
+    const plan = '{amount:8000000,debtWarnPercent:30}';
+    const status = (debt, p = plan) =>
+        JSON.parse(JSON.stringify(run(`computeDebtStatus(${debt},${p})`)));
+
+    // 1.447.355 / 8.000.000 = 18,09%: shown as 18%, below the 2.400.000 limit.
+    assert.deepEqual(status(1447355), {
+        debt: 1447355,
+        salary: 8000000,
+        percent: 18,
+        warnPercent: 30,
+        limit: 2400000,
+        level: 0,
+    });
+    // One đồng under the limit is still 29% and safe; exactly at the limit is 30% and a warning.
+    assert.equal(status(2399999).percent, 29);
+    assert.equal(status(2399999).level, 0);
+    assert.equal(status(2400000).percent, 30);
+    assert.equal(status(2400000).level, 1);
+    assert.equal(status(9000000).percent, 112);
+    // A lower warning percent moves the line.
+    assert.equal(status(1600000, '{amount:8000000,debtWarnPercent:20}').level, 1);
+    // No debt (or a negative number) reads as 0%.
+    assert.equal(status(0).percent, 0);
+    assert.equal(status(-5).debt, 0);
+});
+
+test('computeDebtStatus: chưa đặt lương thì không so được', () => {
+    assert.equal(run('computeDebtStatus(1000,{amount:0,debtWarnPercent:30})'), null);
+    assert.equal(run('computeDebtStatus(1000,null)'), null);
+});
