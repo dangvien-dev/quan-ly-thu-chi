@@ -221,6 +221,7 @@ function editInitialBalance(sourceName) {
     initialBalances[sourceName] = newValue;
     saveMeta('initialBalances');
     renderAll();
+    syncToGoogleSheet();
 }
 
 /**
@@ -255,6 +256,7 @@ function matchSourceBalance(sourceName) {
     initialBalances[source.name] = openingBalanceToMatch({ target, balance, opening });
     saveMeta('initialBalances');
     renderAll();
+    syncToGoogleSheet();
     showToast(
         `Đã khớp [${source.name}]: số dư ${formatMoney(target)}, số dư ban đầu ${formatMoney(initialBalances[source.name])}.`,
         'success',
@@ -421,6 +423,7 @@ function archiveSource(name, archive) {
     source.archived = archive;
     saveMeta('sources');
     renderAll();
+    syncToGoogleSheet();
 }
 
 function deleteSource(name) {
@@ -453,4 +456,5 @@ function deleteSource(name) {
     saveMeta('sources');
     saveMeta('initialBalances');
     renderAll();
+    syncToGoogleSheet();
 }

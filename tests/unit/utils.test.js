@@ -1016,3 +1016,120 @@ test('balanceFromAvailable: khả dụng trừ hạn mức, âm nghĩa là đang
     assert.equal(run('balanceFromAvailable(30000000,30000000)'), 0);
     assert.equal(run('balanceFromAvailable(30000000,31000000)'), 1000000);
 });
+
+test('normalizeSalaryPlan: mức cảnh báo dư nợ mặc định 30, ngoài 1-100 về 30, làm tròn', () => {
+    assert.equal(run('normalizeSalaryPlan({amount:1000}).debtWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:25}).debtWarnPercent'), 25);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:24.6}).debtWarnPercent'), 25);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:0}).debtWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:101}).debtWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({debtWarnPercent:"abc"}).debtWarnPercent'), 30);
+});
+
+test('computeDebtStatus: dư nợ so với lương, làm tròn xuống, chạm mốc là mức 1', () => {
+    const plan = '{amount:8000000,debtWarnPercent:30}';
+    const status = (debt, p = plan) =>
+        JSON.parse(JSON.stringify(run(`computeDebtStatus(${debt},${p})`)));
+
+    // 1.447.355 / 8.000.000 = 18,09%: shown as 18%, below the 2.400.000 limit.
+    assert.deepEqual(status(1447355), {
+        debt: 1447355,
+        salary: 8000000,
+        percent: 18,
+        warnPercent: 30,
+        limit: 2400000,
+        level: 0,
+    });
+    // One đồng under the limit is still 29% and safe; exactly at the limit is 30% and a warning.
+    assert.equal(status(2399999).percent, 29);
+    assert.equal(status(2399999).level, 0);
+    assert.equal(status(2400000).percent, 30);
+    assert.equal(status(2400000).level, 1);
+    assert.equal(status(9000000).percent, 112);
+    // A lower warning percent moves the line.
+    assert.equal(status(1600000, '{amount:8000000,debtWarnPercent:20}').level, 1);
+    // No debt (or a negative number) reads as 0%.
+    assert.equal(status(0).percent, 0);
+    assert.equal(status(-5).debt, 0);
+});
+
+test('computeDebtStatus: chưa đặt lương thì không so được', () => {
+    assert.equal(run('computeDebtStatus(1000,{amount:0,debtWarnPercent:30})'), null);
+    assert.equal(run('computeDebtStatus(1000,null)'), null);
+});
+
+test('normalizeSalaryPlan: mức cảnh báo dùng thẻ mặc định 30, ngoài 1-100 về 30', () => {
+    assert.equal(run('normalizeSalaryPlan({amount:1000}).cardWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({cardWarnPercent:40}).cardWarnPercent'), 40);
+    assert.equal(run('normalizeSalaryPlan({cardWarnPercent:0}).cardWarnPercent'), 30);
+    assert.equal(run('normalizeSalaryPlan({cardWarnPercent:150}).cardWarnPercent'), 30);
+});
+
+test('computeCardSpend: chi và rút tiền từ thẻ tín dụng / trả sau trong tháng, không tính trả sao kê', () => {
+    const sources =
+        '[{name:"Tiền Mặt",kind:"cash"},{name:"Ngân Hàng",kind:"bank"},{name:"Spay",kind:"credit"},{name:"Visa",kind:"credit"},{name:"Nợ",kind:"debt"}]';
+    const spend = (rows) => run(`computeCardSpend(${rows},${sources},"2026-10")`);
+    const row = (type, source, amount, extra = '') =>
+        `{type:"${type}",source:"${source}",amount:${amount},date:"2026-10-05"${extra}}`;
+
+    // Purchases on any card count; cash and bank purchases do not.
+    assert.equal(spend(`[${row('expense', 'Spay', 100)},${row('expense', 'Visa', 50)}]`), 150);
+    assert.equal(
+        spend(`[${row('expense', 'Tiền Mặt', 100)},${row('expense', 'Ngân Hàng', 70)}]`),
+        0,
+    );
+    // A loan source is not a card.
+    assert.equal(spend(`[${row('expense', 'Nợ', 100)}]`), 0);
+    // Cash taken out of a card counts; a transfer between two cards does not.
+    assert.equal(spend(`[${row('transfer', 'Spay', 80, ',targetSource:"Tiền Mặt"')}]`), 80);
+    assert.equal(spend(`[${row('transfer', 'Spay', 80, ',targetSource:"Visa"')}]`), 0);
+    // Paying the statement (money into the card) and income do not count.
+    assert.equal(spend(`[${row('transfer', 'Ngân Hàng', 500, ',targetSource:"Spay"')}]`), 0);
+    assert.equal(spend(`[${row('income', 'Spay', 500)}]`), 0);
+    // Only the asked month.
+    assert.equal(
+        run(
+            `computeCardSpend([{type:"expense",source:"Spay",amount:100,date:"2026-09-30"}],${sources},"2026-10")`,
+        ),
+        0,
+    );
+    // An unknown source is ignored.
+    assert.equal(spend(`[${row('expense', 'Lạ', 100)}]`), 0);
+});
+
+test('computeCardSpendStatus: mức 0 / 1 / 2, làm tròn xuống, đúng mốc là cảnh báo', () => {
+    const plan = '{amount:8000000,cardWarnPercent:30}';
+    const status = (spent) =>
+        JSON.parse(JSON.stringify(run(`computeCardSpendStatus(${spent},${plan})`)));
+
+    assert.deepEqual(status(1500000), {
+        spent: 1500000,
+        salary: 8000000,
+        percent: 18,
+        warnPercent: 30,
+        limit: 2400000,
+        level: 0,
+    });
+    assert.equal(status(2399999).level, 0);
+    assert.equal(status(2399999).percent, 29);
+    assert.equal(status(2400000).level, 1);
+    assert.equal(status(7999999).level, 1);
+    assert.equal(status(8000000).level, 2);
+    assert.equal(status(9000000).percent, 112);
+    assert.equal(run('computeCardSpendStatus(10,{amount:0,cardWarnPercent:30})'), null);
+    assert.equal(run('computeCardSpendStatus(10,null)'), null);
+});
+
+test('filterTransactions: sources giữ giao dịch chạm vào một trong các nguồn ở cả hai phía', () => {
+    const list =
+        '[{id:"a",date:"2026-10-01",type:"expense",source:"Spay",category:"x",amount:1,note:""},{id:"b",date:"2026-10-01",type:"expense",source:"Tiền Mặt",category:"x",amount:1,note:""},{id:"c",date:"2026-10-01",type:"transfer",source:"Ngân Hàng",targetSource:"Visa",category:"x",amount:1,note:""}]';
+    const ids = (filters) =>
+        run(`filterTransactions(${list},${filters}).map((t) => t.id).join("")`);
+
+    assert.equal(ids('{sources:["Spay","Visa"]}'), 'ac');
+    assert.equal(ids('{sources:["Visa"],type:"transfer"}'), 'c');
+    assert.equal(ids('{sources:[]}'), '');
+    // null / missing means no such filter.
+    assert.equal(ids('{sources:null}'), 'abc');
+    assert.equal(ids('{}'), 'abc');
+});

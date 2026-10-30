@@ -199,6 +199,23 @@ test.describe('Đồng bộ Google Sheets (giao thức v1)', () => {
         expect(await page.evaluate(() => transactions.length)).toBe(2);
     });
 
+    test('không kết nối được (Failed to fetch): nhãn offline kèm gợi ý kiểm tra quyền Web App', async ({
+        app,
+    }) => {
+        const { page } = await app({ seed: syncedSeed([A]), remote: [A], getFails: true });
+
+        await wait(300);
+
+        await expect(page.locator('#sync-status')).toContainText('offline');
+        const title = await page.locator('#sync-status').getAttribute('title');
+
+        expect(title).toContain('Failed to fetch');
+        expect(title).toContain('Thực thi bằng');
+        expect(title).toContain('Bất kỳ ai');
+        // The data stays on the device.
+        expect(await page.evaluate(() => transactions.length)).toBe(1);
+    });
+
     test('lưu URL mới: đọc Sheet về trước, không đẩy dữ liệu máy đè lên', async ({ app }) => {
         const { page, state } = await app({
             seed: { fm_transactions: JSON.stringify([tx({ id: 'L1' })]) },

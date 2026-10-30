@@ -590,3 +590,128 @@ test.describe('Script cũ vẫn dùng được', () => {
         await expect(page.locator('#sync-protocol-note')).toContainText('phiên bản cũ');
     });
 });
+
+test.describe('Số dư ban đầu và quay lại cửa sổ (nhiều thiết bị)', () => {
+    const NOW = '2026-10-30T03:00:00Z';
+    const spay = [tx({ id: 'S1', date: '2026-10-05', source: 'Spaylater', amount: 464140 })];
+    const sourcesWithLimit = JSON.stringify([
+        { name: 'Tiền Mặt', kind: 'cash' },
+        { name: 'Thẻ Ngân Hàng', kind: 'bank' },
+        { name: 'Thẻ Tín Dụng', kind: 'credit' },
+        { name: 'Spaylater', kind: 'credit', creditLimit: 30000000 },
+        { name: 'Nợ Công Ty', kind: 'debt' },
+    ]);
+    const seed = {
+        fm_transactions: JSON.stringify(spay),
+        fm_sources: sourcesWithLimit,
+    };
+    const serverBalances = (server) => server.get({ v: '2' }).meta.initialBalances.value;
+    const card = (page, name) => page.locator('#sources-grid .card', { hasText: name });
+
+    test('Khớp số dư đẩy lên server ngay, máy khác mở lên thấy đúng dư nợ', async ({ app }) => {
+        const server = newServer('v2');
+        const a = await app({ server, now: NOW, seed, promptValue: '28.656.419' });
+
+        await goTab(a.page, 'sources');
+        await card(a.page, 'Spaylater').locator('button[data-action=match-balance]').click();
+        await wait(500);
+
+        // Nothing else was done on this device: the change must not wait for the next sync.
+        expect(serverBalances(server).Spaylater).toBe(-879441);
+        expect(await pending(a.page)).toMatchObject({ meta: [] });
+
+        const b = await app({ server, now: NOW });
+
+        await expect(b.page.locator('#lbl-total-debt')).toHaveText('1.343.581 đ');
+    });
+
+    test('Sửa số dư cũng đẩy lên server ngay', async ({ app }) => {
+        const server = newServer('v2');
+        const a = await app({ server, now: NOW, promptValue: '500.000' });
+
+        await goTab(a.page, 'sources');
+        await card(a.page, 'Tiền Mặt').locator('button[data-action=edit-balance]').click();
+        await wait(500);
+
+        expect(serverBalances(server)['Tiền Mặt']).toBe(500000);
+        expect(await pending(a.page)).toMatchObject({ meta: [] });
+    });
+
+    test('lưu trữ và xóa nguồn đẩy lên server ngay', async ({ app }) => {
+        const server = newServer('v2');
+        const a = await app({
+            server,
+            now: NOW,
+            seed: {
+                fm_sources: JSON.stringify([
+                    { name: 'Tiền Mặt', kind: 'cash' },
+                    { name: 'Ví cũ', kind: 'ewallet' },
+                    { name: 'Ví thừa', kind: 'ewallet' },
+                ]),
+            },
+        });
+
+        await goTab(a.page, 'sources');
+        await card(a.page, 'Ví cũ').locator('button[data-action=archive-source]').click();
+        await wait(400);
+
+        const archived = server.get({ v: '2' }).meta.sources.value.find((s) => s.name === 'Ví cũ');
+
+        expect(archived.archived).toBe(true);
+
+        await card(a.page, 'Ví thừa').locator('button[data-action=delete-source]').click();
+        await wait(400);
+
+        expect(
+            server.get({ v: '2' }).meta.sources.value.map((source) => source.name),
+        ).not.toContain('Ví thừa');
+        expect(await pending(a.page)).toMatchObject({ meta: [] });
+    });
+
+    test('máy đang mở nhận thay đổi của máy khác khi người dùng quay lại cửa sổ', async ({
+        app,
+    }) => {
+        const server = newServer('v2');
+        const a = await app({ server, now: NOW, seed });
+        const b = await app({ server, now: NOW, promptValue: '28.656.419' });
+
+        await expect(a.page.locator('#lbl-total-debt')).toHaveText('464.140 đ');
+
+        await goTab(b.page, 'sources');
+        await card(b.page, 'Spaylater').locator('button[data-action=match-balance]').click();
+        await wait(500);
+
+        // Just opened: the 30 s guard has not passed, so coming back does not read again yet.
+        const before = a.state.gets;
+
+        await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        await wait(300);
+        expect(a.state.gets).toBe(before);
+
+        await a.page.evaluate(() => {
+            lastPullAt = 0;
+            window.dispatchEvent(new Event('focus'));
+        });
+        await wait(500);
+
+        expect(a.state.gets).toBe(before + 1);
+        await expect(a.page.locator('#lbl-total-debt')).toHaveText('1.343.581 đ');
+        // The badge was not switched to "Đang tải..." for a background refresh that succeeded.
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('quay lại khi chưa có URL Web App hoặc chưa đọc xong thì không gọi mạng', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ now: NOW });
+
+        await page.evaluate(() => {
+            lastPullAt = 0;
+            window.dispatchEvent(new Event('focus'));
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await wait(300);
+
+        expect(state.gets).toBe(0);
+    });
+});

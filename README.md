@@ -8,7 +8,7 @@
 - **Điện thoại**: thanh dưới gọn 4 mục (Tổng quan, Sổ GD, Nguồn, Vay nợ) với nút `+` thêm giao dịch tròn nhô lên ở giữa; các trang còn lại (Danh mục, Định kỳ, Cài đặt…) nằm trong menu trái mở bằng nút ☰ ở đầu trang. Kéo làm mới vẫn ở đúng trang đang xem. Danh mục cũng là một dòng gọn mỗi mục. Mỗi giao dịch là một dòng (ngày · ghi chú · số tiền, viền màu theo loại thu / chi / chuyển); chạm vào dòng để xem nguồn tiền, danh mục và nút sửa / xóa.
 - **Nhập liệu dễ đọc**: ngày hiển thị `dd/mm/yyyy` ở mọi nơi (kể cả CSV); các ô tiền tự thêm dấu chấm ngăn cách hàng nghìn khi gõ (`1500000` → `1.500.000`).
 - **Nguồn tiền**: tiền mặt, ngân hàng, ví điện tử, thẻ tín dụng / trả sau (hạn mức, ngày chốt sao kê, hạn thanh toán), khoản nợ; lưu trữ, đổi tên (cập nhật mọi giao dịch). Nút **Khớp số dư** nhập số thực tế trong ứng dụng ngân hàng / ví (thẻ tín dụng có hạn mức thì nhập số **khả dụng**), app tự tính số dư ban đầu, không phải trừ tay.
-- **Tổng quan**: thu / chi tháng này, số dư khả dụng, dư nợ, biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.
+- **Tổng quan**: bấm vào từng thẻ để xem chi tiết (Thu / Chi mở Sổ Giao Dịch đã lọc theo tháng này, Dư nợ mở giao dịch của mọi thẻ tín dụng / trả sau / nợ, Số dư khả dụng mở trang Nguồn Tiền, Tổng tiết kiệm mở Sổ Tiết Kiệm); thu / chi tháng này, số dư khả dụng, dư nợ (kèm % so với lương và cảnh báo từ 30% lương, chỉnh được; thêm dòng "tháng này dùng thẻ / trả sau" không về 0 khi trả sao kê, có báo ngay khi một khoản mua trả sau làm chạm mốc), biểu đồ chi tiêu tháng và thu / chi 6 tháng, thanh tiến độ ngân sách.
 - **Ngân sách** theo danh mục chi, cảnh báo khi vượt 80% và 100%.
 - **Sổ tiết kiệm**: loại nguồn tiền riêng, không tính vào số dư khả dụng (có thẻ "Tổng tiết kiệm" riêng). Đặt ngày lãnh lương thì mỗi tháng ứng dụng tự chuyển một khoản (theo % lương hoặc số tiền cố định) từ nguồn nhận lương vào sổ, không gửi bù các tháng trước ngày cài đặt; có nút Gửi vào / Rút ra và lịch sử gửi / rút.
 - **Chi tiêu trên lương**: đặt lương hằng tháng và mức cảnh báo (mặc định 80%); thẻ trên Tổng quan cho biết đã chi bao nhiêu % lương, còn lại bao nhiêu, đổi màu xanh / vàng / đỏ, và báo ngay khi một khoản chi làm chạm mốc cảnh báo hoặc hết lương. Chỉ tính khoản chi của tháng hiện tại (thu nhập và chuyển tiền không tính).
@@ -76,7 +76,7 @@ CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR. Test
 ### Nâng cấp lên v2
 
 1. Mở Google Sheet > Extensions > Apps Script, thay toàn bộ mã bằng nội dung `apps-script/Code.gs`.
-2. Deploy > Manage deployments > Edit > Version: New version > Deploy (URL `/exec` giữ nguyên).
+2. Deploy > Manage deployments > Edit > Version: New version > Deploy (URL `/exec` giữ nguyên). Nếu tạo **New deployment** thì URL đổi: bắt buộc chọn **Execute as: Me** và **Who has access: Anyone** (mặc định là "Chỉ mình tôi" / "Người dùng truy cập vào ứng dụng web" làm app báo `Failed to fetch` và "Dùng bản offline"), rồi dán URL mới vào **mọi** thiết bị, điện thoại trước.
 3. Khuyến nghị: Project Settings > Script properties > thêm `FM_TOKEN` với một chuỗi bí mật dài, rồi nhập cùng giá trị vào **Cài đặt & Dữ liệu > Mã bảo vệ** trên mọi thiết bị và bấm Lưu.
 
 Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sheet `Meta` được tạo khi cần. Dữ liệu cũ được giữ; các dòng chuyển tiền do bản cũ ghi sẽ tự chuyển sang dạng mới.
@@ -84,9 +84,10 @@ Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sh
 ### Quy tắc đồng bộ
 
 - Chỉ ghi lên Sheet sau khi đã đọc Sheet thành công trong phiên đó.
+- Quay lại cửa sổ hoặc tab (sau ít nhất 30 giây) thì ứng dụng đọc lại Sheet để nhận thay đổi từ máy khác, không cần tải lại trang.
 - Thay đổi chưa được Sheet xác nhận (mất mạng, lỗi) được giữ lại và gộp với Sheet ở lần mở sau; giao dịch đã xóa trên máy này không bị "sống lại".
 - Sheet trống không bao giờ xóa dữ liệu trên máy.
-- Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet.
+- Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet. Khôi phục **giữ nguyên URL Web App đang dùng của máy** (chỉ máy chưa có URL mới lấy URL trong file), nên một file sao lưu cũ không kéo máy về deployment cũ.
 - Với v2, nếu sửa một giao dịch trên máy này trong khi máy khác xóa nó thì bản sửa được giữ lại.
 
 Lưu ý: nếu chưa đặt `FM_TOKEN`, ai có URL Web App đều đọc / ghi được dữ liệu; hãy coi URL như mật khẩu (file sao lưu cũng chứa URL này, nhưng không chứa mã bảo vệ).
