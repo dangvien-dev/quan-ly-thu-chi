@@ -99,9 +99,9 @@ npm run format:check   # Prettier (npm run format để sửa)
 - Sandbox không tải được CDN; mọi thư viện đã nằm trong `vendor/`. `npm` registry thì dùng được.
 - Sandbox Apps Script chỉ là mock của Sheets/ContentService — script chạy đúng trong mock chưa chứng minh chạy y hệt trên Google.
 
-## Trạng thái (cập nhật 28/10/2026)
+## Trạng thái (cập nhật 30/10/2026)
 
-PR #3 (`claude/hopeful-einstein-l7hu3u` → `main`, đã merge, merge commit `88df733`; PR #4, #5, #6 và #7 cũng đã merge, merge commit `c3c1c39`, `62645c4`, `984b4e3` và `0a1fb5d`) gồm: sửa lỗi gốc (chuyển tiền không lưu được, `step` số tiền, ngày lệch múi giờ, sync mất dữ liệu, XSS, số liệu Tổng quan, localStorage hỏng/CDN lỗi) → PWA + vendor thư viện + test/CI trong repo → **sửa giao thức sync cho khớp script thật** → quản lý nguồn tiền → lọc/tìm kiếm/CSV → ngân sách → định kỳ → vay nợ → đồng bộ v2 → mobile + trợ năng.
+PR #3 (`claude/hopeful-einstein-l7hu3u` → `main`, đã merge, merge commit `88df733`; PR #4, #5, #6, #7, #8 và #9 cũng đã merge, merge commit `c3c1c39`, `62645c4`, `984b4e3`, `0a1fb5d`, `387bedf` và `34ae023`) gồm: sửa lỗi gốc (chuyển tiền không lưu được, `step` số tiền, ngày lệch múi giờ, sync mất dữ liệu, XSS, số liệu Tổng quan, localStorage hỏng/CDN lỗi) → PWA + vendor thư viện + test/CI trong repo → **sửa giao thức sync cho khớp script thật** → quản lý nguồn tiền → lọc/tìm kiếm/CSV → ngân sách → định kỳ → vay nợ → đồng bộ v2 → mobile + trợ năng.
 
 Đợt tiếp theo (cùng branch, PR mới sau PR #3): ngày hiển thị `dd/mm/yyyy` (cột ngày của `Code.gs` v2 cũng `dd/mm/yyyy`), ô tiền có dấu phân cách hàng nghìn khi gõ, sổ giao dịch trên điện thoại gọn một dòng/giao dịch (chạm để mở chi tiết). Đợt PR #4 gồm các mục trên, kèm **chi tiêu trên lương** (thẻ % lương đã chi + cảnh báo gần hết lương, meta `salary`) và **chia lương theo nhóm** (tiêu dùng cá nhân / công việc / tiết kiệm). Sau PR #4 (branch mới từ `main`): điều hướng điện thoại gọn lại (thanh dưới 4 mục + nút thêm ở giữa, các trang còn lại trong menu trái). Sau PR #6: danh mục gọn một dòng trên điện thoại. Kéo làm mới giữ nguyên trang đang xem (ghi trong `#` của địa chỉ). Sổ tiết kiệm: loại nguồn `savings`, trang Sổ Tiết Kiệm và tự gửi vào ngày lãnh lương. Toàn bộ test (469 e2e, 99 unit) pass.
 
@@ -109,7 +109,7 @@ Việc chủ repo cần làm / quyết định:
 
 - PR #4 và PR #5 đã merge (lưu ý: commit đẩy lên branch **sau khi** PR đã merge không vào `main`, phải mở PR mới). Với các thay đổi tiếp theo, GitHub Pages chỉ cập nhật sau khi merge (service worker có thể cần tải lại 1-2 lần để lấy bản mới).
 - Sheet đang dùng script cũ: chọn cột `date` > Format > Number > Custom date and time > `dd/mm/yyyy` để cột ngày trong Sheet cũng đọc theo dd/mm/yyyy.
-- Đã nâng cấp Apps Script lên `apps-script/Code.gs` (v2) và hai máy đã đồng bộ; còn nên bật `FM_TOKEN` (Script Properties + ô Mã bảo vệ trên mọi máy) vì ai có URL đều đọc/ghi được, và thử thêm/sửa/xóa một giao dịch để xác nhận máy kia nhận đúng.
+- Đã nâng cấp Apps Script lên `apps-script/Code.gs` (v2); chủ repo xác nhận 30/10/2026 điện thoại và máy tính cùng dữ liệu (giao dịch, nguồn tiền, số dư ban đầu, lương) sau khi điện thoại chuyển sang URL v2 rồi khôi phục sao lưu; còn nên bật `FM_TOKEN` (Script Properties + ô Mã bảo vệ trên mọi máy) vì ai có URL đều đọc/ghi được, và thử thêm/sửa/xóa một giao dịch để xác nhận máy kia nhận đúng.
 - Xác nhận cách POST `text/plain` đọc được phản hồi trên Web App thật (nếu không, app tự dự phòng bằng GET khi dữ liệu nhỏ).
 - Nếu "Nợ Công Ty" thực ra là công ty nợ chủ repo: đổi loại nguồn đó sang "Khác".
 
