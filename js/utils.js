@@ -279,8 +279,9 @@ function transactionSearchText(transaction) {
 }
 
 /**
- * filters: { month: 'YYYY-MM', type, category, source, search }; empty or 'ALL' means no filter.
- * source matches either side of a transfer; every word of search must match.
+ * filters: { month: 'YYYY-MM', type, category, source, sources, search }; empty or 'ALL' means no
+ * filter. source matches either side of a transfer; sources (a list of names) keeps transactions
+ * that touch any of them on either side; every word of search must match.
  */
 function filterTransactions(list, filters = {}) {
     const words = normalizeSearchText(filters.search).split(' ').filter(Boolean);
@@ -295,6 +296,14 @@ function filterTransactions(list, filters = {}) {
             active(filters.source) &&
             transaction.source !== filters.source &&
             transaction.targetSource !== filters.source
+        ) {
+            return false;
+        }
+
+        if (
+            Array.isArray(filters.sources) &&
+            !filters.sources.includes(transaction.source) &&
+            !filters.sources.includes(transaction.targetSource)
         ) {
             return false;
         }

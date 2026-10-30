@@ -200,18 +200,27 @@ function renderTransactionRow(transaction) {
 const TRANSACTION_PAGE_SIZE = 50;
 let visibleTransactionCount = TRANSACTION_PAGE_SIZE;
 
+// A choice of the source filter that stands for every credit card, pay-later and loan source.
+const DEBT_SOURCES_FILTER = '__debt__';
+
+const debtSourceNames = () =>
+    sources.filter((source) => SOURCE_KINDS[source.kind].debt).map((source) => source.name);
+
 function readTransactionFilters() {
     const value = (id) => {
         const element = document.getElementById(id);
 
         return element ? element.value : '';
     };
+    const source = value('filter-source');
+    const byDebt = source === DEBT_SOURCES_FILTER;
 
     return {
         month: value('filter-month'),
         type: value('filter-type'),
         category: value('filter-category'),
-        source: value('filter-source'),
+        source: byDebt ? 'ALL' : source,
+        sources: byDebt ? debtSourceNames() : null,
         search: value('filter-search'),
     };
 }
@@ -244,12 +253,21 @@ function renderTransactionFilterOptions() {
             a.localeCompare(b, 'vi'),
         );
 
+        const groups =
+            id === 'filter-source' && debtSourceNames().length
+                ? [[DEBT_SOURCES_FILTER, 'Mọi thẻ tín dụng / trả sau / nợ']]
+                : [];
+
         select.innerHTML =
             `<option value="ALL">${all}</option>` +
+            groups.map(([key, label]) => `<option value="${key}">${label}</option>`).join('') +
             unique
                 .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
                 .join('');
-        select.value = unique.includes(previous) ? previous : 'ALL';
+        select.value =
+            unique.includes(previous) || groups.some(([key]) => key === previous)
+                ? previous
+                : 'ALL';
     });
 }
 
@@ -314,6 +332,21 @@ function handleTransactionFilterChange() {
 function showMoreTransactions() {
     visibleTransactionCount += TRANSACTION_PAGE_SIZE;
     renderTransactions();
+}
+
+/**
+ * Open Sổ Giao Dịch already filtered, e.g. from a card of the overview. Every filter not given is
+ * cleared, so what is listed is exactly what was asked for.
+ */
+function showTransactionsFor({ month = '', type = 'ALL', category = 'ALL', source = 'ALL' } = {}) {
+    renderTransactionFilterOptions();
+    document.getElementById('filter-month').value = month;
+    document.getElementById('filter-search').value = '';
+    document.getElementById('filter-type').value = type;
+    document.getElementById('filter-category').value = category;
+    document.getElementById('filter-source').value = source;
+    handleTransactionFilterChange();
+    switchTab('transactions');
 }
 
 function resetTransactionFilters() {

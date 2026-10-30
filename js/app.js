@@ -56,6 +56,26 @@ function renderOverview() {
     renderCharts();
 }
 
+// Each card of the overview opens the page that explains its number.
+const OVERVIEW_LINKS = {
+    balance: () => switchTab('sources'),
+    income: () => showTransactionsFor({ month: currentMonthKey(), type: 'income' }),
+    expense: () => showTransactionsFor({ month: currentMonthKey(), type: 'expense' }),
+    debt: () =>
+        debtSourceNames().length
+            ? showTransactionsFor({ source: DEBT_SOURCES_FILTER })
+            : switchTab('sources'),
+    savings: () => switchTab('savings'),
+};
+
+function handleOverviewLinkClick(event) {
+    const button = event.target.closest('[data-card-link]');
+
+    if (button && Object.hasOwn(OVERVIEW_LINKS, button.dataset.cardLink)) {
+        OVERVIEW_LINKS[button.dataset.cardLink]();
+    }
+}
+
 function renderAll() {
     ensureSourcesForTransactions();
 
@@ -109,6 +129,7 @@ function initializeApp() {
     initSavings();
     initModalShortcuts();
     window.addEventListener('online', resumeSync);
+    document.getElementById('tab-overview').addEventListener('click', handleOverviewLinkClick);
     window.addEventListener('focus', refreshFromSheet);
     document.addEventListener('visibilitychange', refreshFromSheet);
 

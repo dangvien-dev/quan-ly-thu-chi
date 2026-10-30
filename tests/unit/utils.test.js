@@ -1119,3 +1119,17 @@ test('computeCardSpendStatus: mức 0 / 1 / 2, làm tròn xuống, đúng mốc 
     assert.equal(run('computeCardSpendStatus(10,{amount:0,cardWarnPercent:30})'), null);
     assert.equal(run('computeCardSpendStatus(10,null)'), null);
 });
+
+test('filterTransactions: sources giữ giao dịch chạm vào một trong các nguồn ở cả hai phía', () => {
+    const list =
+        '[{id:"a",date:"2026-10-01",type:"expense",source:"Spay",category:"x",amount:1,note:""},{id:"b",date:"2026-10-01",type:"expense",source:"Tiền Mặt",category:"x",amount:1,note:""},{id:"c",date:"2026-10-01",type:"transfer",source:"Ngân Hàng",targetSource:"Visa",category:"x",amount:1,note:""}]';
+    const ids = (filters) =>
+        run(`filterTransactions(${list},${filters}).map((t) => t.id).join("")`);
+
+    assert.equal(ids('{sources:["Spay","Visa"]}'), 'ac');
+    assert.equal(ids('{sources:["Visa"],type:"transfer"}'), 'c');
+    assert.equal(ids('{sources:[]}'), '');
+    // null / missing means no such filter.
+    assert.equal(ids('{sources:null}'), 'abc');
+    assert.equal(ids('{}'), 'abc');
+});
