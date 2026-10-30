@@ -66,7 +66,7 @@ test.describe('Sổ vay nợ', () => {
         await expect(page.locator('.debt-details')).toContainText('400.000 đ');
 
         await page.evaluate(() => {
-            window.prompt = () => '600000';
+            window.__amountAnswer = '600000';
         });
         await row(page, 'Anh Nam').locator('[data-action=pay]').click();
 

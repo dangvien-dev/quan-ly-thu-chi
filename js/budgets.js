@@ -31,20 +31,19 @@ function renderBudgets() {
         .join('');
 }
 
-function editBudget(categoryId) {
+async function editBudget(categoryId) {
     const category = categories.find((item) => String(item.id) === String(categoryId));
 
     if (!category || category.type !== 'expense') return;
 
-    const input = prompt(
-        `Nhập ngân sách tháng cho [${category.name}] (để trống hoặc 0 để bỏ):`,
-        budgets[category.name] || '',
-    );
+    const limit = await askMoney({
+        title: 'Ngân sách tháng',
+        message: `Nhập ngân sách tháng cho [${category.name}] (để trống hoặc 0 để bỏ):`,
+        value: budgets[category.name] || '',
+        allowEmpty: true,
+    });
 
-    if (input === null) return;
-
-    const text = input.replace(/[.,\s]/g, '');
-    const limit = text === '' ? 0 : Number(text);
+    if (limit === null) return;
 
     if (!Number.isFinite(limit) || limit < 0) {
         alert('Số tiền không hợp lệ!');
