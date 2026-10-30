@@ -51,6 +51,11 @@
                             <i class="fa-solid fa-vault"></i> Nguồn Tiền
                         </button>
                     </li>
+                    <li data-tab="savings">
+                        <button type="button" class="menu-link" onclick="switchTab('savings')">
+                            <i class="fa-solid fa-piggy-bank"></i> Sổ Tiết Kiệm
+                        </button>
+                    </li>
                     <li data-tab="categories">
                         <button type="button" class="menu-link" onclick="switchTab('categories')">
                             <i class="fa-solid fa-tags"></i> Danh Mục
@@ -123,6 +128,10 @@
                     <div class="card">
                         <div class="card-title">Dư Nợ Tín Dụng / SPay</div>
                         <div class="card-value expense" id="lbl-total-debt">0 đ</div>
+                    </div>
+                    <div class="card" id="savings-card" hidden>
+                        <div class="card-title">Tổng Tiết Kiệm</div>
+                        <div class="card-value income" id="lbl-total-savings">0 đ</div>
                     </div>
                 </div>
                 <div class="card" id="salary-section" style="margin-bottom: 20px">
@@ -286,23 +295,64 @@
                 </div>
             </section>
 
+            <!-- TAB: SỔ TIẾT KIỆM -->
+            <section id="tab-savings" class="view-section">
+                <div class="card savings-total">
+                    <div class="card-title">Tổng Tiết Kiệm</div>
+                    <div class="card-value income" id="lbl-savings-total">0 đ</div>
+                    <div class="source-meta" id="lbl-savings-month"></div>
+                </div>
+                <div class="card" style="margin-top: 20px">
+                    <div class="salary-header">
+                        <h3 style="font-size: 16px">Tự Động Gửi Mỗi Tháng</h3>
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            id="savings-edit-btn"
+                            onclick="openSavingsModal()"
+                        >
+                            <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                            <span id="savings-edit-label">Cài đặt</span>
+                        </button>
+                    </div>
+                    <div id="savings-auto-body"></div>
+                </div>
+                <div class="section-head" style="margin-top: 24px">
+                    <h3>Sổ Tiết Kiệm Của Bạn</h3>
+                    <button class="btn" onclick="openSavingsBookModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Sổ
+                    </button>
+                </div>
+                <div class="grid-cards" id="savings-books"></div>
+                <h3 class="subsection-title">Lịch Sử Gửi / Rút</h3>
+                <ul
+                    class="savings-history"
+                    id="savings-history"
+                    aria-label="Lịch sử gửi và rút tiết kiệm"
+                ></ul>
+                <div class="load-more">
+                    <button
+                        type="button"
+                        class="btn btn-outline"
+                        id="savings-more"
+                        onclick="showMoreSavingsMovements()"
+                        hidden
+                    >
+                        Xem thêm
+                    </button>
+                </div>
+            </section>
+
             <!-- TAB 4: DANH MỤC -->
             <section id="tab-categories" class="view-section">
-                <div
-                    style="
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 20px;
-                    "
-                >
+                <div class="section-head">
                     <h3>Quản Lý Danh Mục Thu / Chi</h3>
                     <button class="btn" onclick="openCategoryModal()">
                         <i class="fa-solid fa-plus"></i> Thêm Danh Mục
                     </button>
                 </div>
                 <div class="table-container">
-                    <table class="responsive-table">
+                    <table class="responsive-table compact-cats">
                         <thead>
                             <tr>
                                 <th scope="col">Tên Danh Mục</th>
@@ -886,6 +936,110 @@
         </div>
 
         <div
+            id="savingsModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="savingsModalTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="savingsModalTitle">Tự Động Gửi Tiết Kiệm</h3>
+                    <button class="close-btn" onclick="closeSavingsModal()" aria-label="Đóng">
+                        &times;
+                    </button>
+                </div>
+                <form id="savingsForm" onsubmit="handleSavingsSubmit(event)">
+                    <p class="hint" style="margin-top: 0">
+                        Mỗi tháng, đến ngày lãnh lương, ứng dụng tự chuyển một khoản từ nguồn tiền
+                        nhận lương vào sổ tiết kiệm. Khoản này không tính là chi tiêu. Chỉ gửi từ
+                        hôm nay trở đi, không gửi bù các tháng trước.
+                    </p>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="savDay">Ngày lãnh lương</label>
+                            <input
+                                type="number"
+                                id="savDay"
+                                class="form-control"
+                                required
+                                min="1"
+                                max="31"
+                                step="1"
+                                inputmode="numeric"
+                                placeholder="1-31"
+                            />
+                        </div>
+                        <div class="form-group">
+                            <label for="savMode">Số tiền gửi</label>
+                            <select id="savMode" class="form-control">
+                                <option value="percent">Theo % lương</option>
+                                <option value="fixed">Số tiền cố định</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group" id="savPercentGroup">
+                        <label for="savPercent">% lương gửi tiết kiệm</label>
+                        <input
+                            type="number"
+                            id="savPercent"
+                            class="form-control"
+                            min="1"
+                            max="100"
+                            step="1"
+                            inputmode="numeric"
+                            aria-describedby="savPreview"
+                        />
+                        <p id="savPreview" class="hint"></p>
+                    </div>
+                    <div class="form-group" id="savAmountGroup" hidden>
+                        <label for="savAmount">Số tiền gửi mỗi tháng (VNĐ)</label>
+                        <input
+                            type="text"
+                            id="savAmount"
+                            class="form-control"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            data-money="positive"
+                            placeholder="0"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="savFrom">Trừ từ nguồn tiền (nơi nhận lương)</label>
+                        <select id="savFrom" class="form-control"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="savBook">Gửi vào sổ</label>
+                        <select id="savBook" class="form-control"></select>
+                    </div>
+                    <div class="form-group" id="savNewGroup" hidden>
+                        <label for="savNewName">Tên sổ mới</label>
+                        <input
+                            type="text"
+                            id="savNewName"
+                            class="form-control"
+                            maxlength="40"
+                            value="Sổ tiết kiệm"
+                        />
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                    <button
+                        type="button"
+                        class="btn btn-outline"
+                        id="savDisable"
+                        style="width: 100%; justify-content: center; margin-top: 10px"
+                        onclick="disableSavingsPlan()"
+                        hidden
+                    >
+                        Tắt tự động gửi
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
             id="allocationModal"
             class="modal"
             role="dialog"
@@ -1003,6 +1157,7 @@
         <script src="js/debts.js"></script>
         <script src="js/transactions.js"></script>
         <script src="js/sources.js"></script>
+        <script src="js/savings.js"></script>
         <script src="js/charts.js"></script>
         <script src="js/sync.js"></script>
         <script src="js/backup.js"></script>

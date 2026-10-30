@@ -4,6 +4,7 @@ const TAB_TITLES = {
     overview: 'Tổng Quan Dòng Tiền',
     transactions: 'Sổ Giao Dịch',
     sources: 'Nguồn Tiền & Tài Khoản',
+    savings: 'Sổ Tiết Kiệm',
     categories: 'Danh Mục Thu / Chi',
     recurring: 'Giao Dịch Định Kỳ',
     debts: 'Vay Nợ & Công Ty',
@@ -69,8 +70,48 @@ function switchTab(tabId) {
         pageTitle.innerText = TAB_TITLES[tabId];
     }
 
+    rememberTab(tabId);
+
     // Choosing a page from the phone menu closes it and moves on to the page.
     closeMenu({ focusMain: true });
+}
+
+// --- CURRENT PAGE IN THE ADDRESS ---
+// The page is kept in the address (#settings), so pulling down to refresh stays on it, while
+// opening the app from scratch (no #) still starts on the overview. replaceState adds no history
+// entries, so the back button is unaffected.
+function tabFromAddress() {
+    const tab = window.location.hash.slice(1);
+
+    return Object.hasOwn(TAB_TITLES, tab) ? tab : null;
+}
+
+function rememberTab(tabId) {
+    if (tabFromAddress() === tabId || (tabId === 'overview' && !window.location.hash)) return;
+
+    try {
+        const { pathname, search } = window.location;
+
+        window.history.replaceState(
+            null,
+            '',
+            tabId === 'overview' ? pathname + search : `#${tabId}`,
+        );
+    } catch {
+        // For example a sandboxed frame: the app then simply reopens on the overview.
+    }
+}
+
+/** Show the page named in the address, and follow it if it is changed by hand. */
+function initTabFromAddress() {
+    const show = () => {
+        const tab = tabFromAddress();
+
+        if (tab) switchTab(tab);
+    };
+
+    show();
+    window.addEventListener('hashchange', show);
 }
 
 // --- PHONE MENU ---

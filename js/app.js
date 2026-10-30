@@ -31,7 +31,8 @@ function renderOverview() {
 
     const isDebt = (source) => SOURCE_KINDS[source.kind].debt;
     const availableBalance = sources
-        .filter((source) => !isDebt(source))
+        // Money in a savings book is set aside, so it is not "available".
+        .filter((source) => !isDebt(source) && !isSavingsKind(source))
         .reduce((total, source) => total + balances[source.name], 0);
     const totalDebt = sources
         .filter(isDebt)
@@ -41,6 +42,13 @@ function renderOverview() {
     setMoneyLabel('lbl-total-expense', thisMonth.expense);
     setMoneyLabel('lbl-total-balance', availableBalance);
     setMoneyLabel('lbl-total-debt', totalDebt);
+
+    const savingsCard = document.getElementById('savings-card');
+
+    if (savingsCard) {
+        savingsCard.hidden = !sources.some(isSavingsKind);
+        setMoneyLabel('lbl-total-savings', savingsTotals().total);
+    }
 
     renderBudgets();
     renderCharts();
@@ -55,6 +63,7 @@ function renderAll() {
         renderOverview,
         renderSalary,
         renderSources,
+        renderSavings,
         renderCategories,
         renderRecurring,
         renderDebts,
@@ -95,6 +104,7 @@ function initializeApp() {
     initRecurring();
     initDebts();
     initSalary();
+    initSavings();
     initModalShortcuts();
     window.addEventListener('online', resumeSync);
 
@@ -103,7 +113,9 @@ function initializeApp() {
     updateCategoriesDropdown();
     renderAll();
     renderQuickChips();
+    initTabFromAddress();
     generateRecurringTransactions();
+    generateSavingsDeposits();
     remindOverdueDebts();
     syncFromGoogleSheet();
 }

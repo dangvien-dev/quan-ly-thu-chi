@@ -571,6 +571,7 @@ function reconcileV2(state) {
     renderAll();
     // Rules that arrived from another device may be due; this can queue new transactions.
     generateRecurringTransactions();
+    generateSavingsDeposits();
 }
 
 async function pushV2() {

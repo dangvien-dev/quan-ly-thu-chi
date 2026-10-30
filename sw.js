@@ -30,6 +30,7 @@ const APP_SHELL = [
     'js/debts.js',
     'js/transactions.js',
     'js/sources.js',
+    'js/savings.js',
     'js/charts.js',
     'js/sync.js',
     'js/backup.js',
