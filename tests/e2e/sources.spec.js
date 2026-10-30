@@ -1,6 +1,6 @@
 // Money sources: add / edit / rename / archive / delete, and how they feed the form and totals.
 
-const { test, expect, tx, goTab, wait } = require('./helpers');
+const { test, expect, tx, goTab, wait, scanA11y } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z'; // 28/10/2026 10:00 GMT+7
 const card = (page, name) => page.locator('#sources-grid .card', { hasText: name });
@@ -267,5 +267,103 @@ test.describe('Nguồn tiền', () => {
         await goTab(other, 'sources');
 
         await expect(card(other, 'Momo')).toHaveCount(1);
+    });
+});
+
+test.describe('Số dư ban đầu của nguồn nợ', () => {
+    const spay = [
+        tx({ id: 'S1', date: '2026-10-30', source: 'Spaylater', amount: 75000 }),
+        tx({ id: 'S2', date: '2026-10-29', source: 'Spaylater', amount: 164640 }),
+        tx({ id: 'S3', date: '2026-10-26', source: 'Spaylater', amount: 224500 }),
+    ];
+    const seed = (balances) => ({
+        fm_transactions: JSON.stringify(spay),
+        fm_initial_balances: JSON.stringify(balances),
+    });
+
+    test('chi qua Spaylater (số dư ban đầu 0) thì dư nợ bằng đúng tổng đã chi', async ({ app }) => {
+        const { page } = await app({ now: NOW, seed: seed({}) });
+
+        await expect(page.locator('#lbl-total-debt')).toHaveText('464.140 đ');
+
+        await goTab(page, 'sources');
+
+        await expect(card(page, 'Spaylater')).not.toContainText('Số dư ban đầu');
+    });
+
+    test('số dư ban đầu dương bù vào khoản chi nên dư nợ 0, và thẻ nguồn nói rõ lý do', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW, seed: seed({ Spaylater: 500000 }) });
+
+        await expect(page.locator('#lbl-total-debt')).toHaveText('0 đ');
+
+        await goTab(page, 'sources');
+
+        const spaylater = card(page, 'Spaylater');
+
+        await expect(spaylater).toContainText('35.860 đ');
+        await expect(spaylater).toContainText('Số dư ban đầu 500.000 đ');
+        await expect(spaylater).toContainText('nên chưa tính là dư nợ');
+
+        const results = await scanA11y(page, '#tab-sources');
+
+        expect(results.violations.map((violation) => violation.id)).toEqual([]);
+    });
+
+    test('số dư ban đầu âm (đã nợ sẵn) được hiện nhưng không cảnh báo, và tính vào dư nợ', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW, seed: seed({ Spaylater: -200000 }) });
+
+        await expect(page.locator('#lbl-total-debt')).toHaveText('664.140 đ');
+
+        await goTab(page, 'sources');
+
+        await expect(card(page, 'Spaylater')).toContainText('Số dư ban đầu -200.000 đ');
+        await expect(card(page, 'Spaylater')).not.toContainText('chưa tính là dư nợ');
+    });
+
+    test('nguồn thường có số dư ban đầu dương thì chỉ hiện dòng số dư, không cảnh báo', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW, seed: seed({ 'Tiền Mặt': 1000000 }) });
+
+        await goTab(page, 'sources');
+
+        await expect(card(page, 'Tiền Mặt')).toContainText('Số dư ban đầu 1.000.000 đ');
+        await expect(card(page, 'Tiền Mặt')).not.toContainText('chưa tính là dư nợ');
+    });
+
+    test('hộp nhập số dư: nguồn nợ có gợi ý "nhập 0 hoặc số âm", nguồn thường thì không', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ now: NOW, promptValue: '0' });
+
+        await goTab(page, 'sources');
+        await card(page, 'Spaylater').locator('button[data-action=edit-balance]').click();
+        await card(page, 'Tiền Mặt').locator('button[data-action=edit-balance]').click();
+
+        expect(state.confirms).toHaveLength(2);
+        expect(state.confirms[0]).toContain('Nhập số dư ban đầu cho [Spaylater]');
+        expect(state.confirms[0]).toContain('nhập 0 nếu chưa nợ, số âm nếu đã nợ sẵn');
+        expect(state.confirms[1]).toBe('Nhập số dư ban đầu cho [Tiền Mặt]:');
+    });
+
+    test('đặt lại số dư ban đầu về 0 thì dư nợ hiện đúng và dòng cảnh báo biến mất', async ({
+        app,
+    }) => {
+        const { page } = await app({
+            now: NOW,
+            promptValue: '0',
+            seed: seed({ Spaylater: 500000 }),
+        });
+
+        await goTab(page, 'sources');
+        await card(page, 'Spaylater').locator('button[data-action=edit-balance]').click();
+
+        await expect(card(page, 'Spaylater')).not.toContainText('Số dư ban đầu');
+        await expect(card(page, 'Spaylater')).toContainText('-464.140 đ');
+        await expect(page.locator('#lbl-total-debt')).toHaveText('464.140 đ');
     });
 });

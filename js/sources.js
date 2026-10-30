@@ -98,6 +98,24 @@ function describeCredit(source, balance) {
     return lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
 }
 
+/**
+ * The opening balance is part of the balance but invisible on its own, so show it. A positive
+ * one on a debt source (credit card, pay-later, loan) offsets spending and hides the debt: say so.
+ */
+function describeOpening(source) {
+    const opening = Number(initialBalances[source.name]) || 0;
+
+    if (!opening) return '';
+
+    let html = `<div class="source-meta">Số dư ban đầu ${escapeHtml(formatMoney(opening))}</div>`;
+
+    if (SOURCE_KINDS[source.kind].debt && opening > 0) {
+        html += `<div class="source-meta source-warn">Số dư dương này bù vào các khoản chi nên chưa tính là dư nợ. Bấm "Sửa số dư" và nhập 0 (hoặc số âm nếu đã nợ sẵn).</div>`;
+    }
+
+    return html;
+}
+
 function renderSourceCard(source, balance) {
     const name = escapeHtml(source.name);
     const kind = SOURCE_KINDS[source.kind];
@@ -123,6 +141,7 @@ function renderSourceCard(source, balance) {
             <div class="card-value" style="color:${balance >= 0 ? 'var(--text-main)' : 'var(--danger)'};">
                 ${formatMoney(balance)}
             </div>
+            ${describeOpening(source)}
             ${source.kind === 'credit' ? describeCredit(source, balance) : ''}
             <div class="source-actions">
                 ${actions}
@@ -180,7 +199,10 @@ function handleSourceGridClick(event) {
 // --- ACTIONS ---
 function editInitialBalance(sourceName) {
     const currentValue = Number(initialBalances[sourceName]) || 0;
-    const input = prompt(`Nhập số dư ban đầu cho [${sourceName}]:`, currentValue);
+    const debtHint = isDebtSource(sourceName)
+        ? '\n(Thẻ tín dụng / trả sau / khoản nợ: nhập 0 nếu chưa nợ, số âm nếu đã nợ sẵn, ví dụ -500.000. Số dương sẽ bù vào các khoản chi nên không tính là nợ.)'
+        : '';
+    const input = prompt(`Nhập số dư ban đầu cho [${sourceName}]:${debtHint}`, currentValue);
 
     if (input === null) return;
 

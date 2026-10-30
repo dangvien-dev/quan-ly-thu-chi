@@ -570,6 +570,10 @@ canvas {
     color: var(--text-muted);
 }
 
+.source-warn {
+    color: var(--danger);
+}
+
 .source-actions {
     display: flex;
     flex-wrap: wrap;
