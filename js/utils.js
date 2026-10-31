@@ -143,6 +143,28 @@ const SOURCE_KINDS = {
     other: { label: 'Khác', debt: false },
 };
 
+/**
+ * Move the item at `index` one place up (step -1) or down (step 1): it swaps with the nearest item
+ * on that side that `isNeighbour(candidate, moving)` accepts, and everything between stays put.
+ * Returns a new array, or the same one when there is nowhere to go.
+ */
+function moveInList(list, index, step, isNeighbour = () => true) {
+    if (!Number.isInteger(index) || index < 0 || index >= list.length) return list;
+    if (step !== -1 && step !== 1) return list;
+
+    for (let target = index + step; target >= 0 && target < list.length; target += step) {
+        if (isNeighbour(list[target], list[index])) {
+            const next = [...list];
+
+            [next[index], next[target]] = [next[target], next[index]];
+
+            return next;
+        }
+    }
+
+    return list;
+}
+
 function dayOfMonthOrNull(value) {
     const day = Math.round(Number(value));
 

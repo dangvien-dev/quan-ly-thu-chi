@@ -175,7 +175,7 @@ test.describe('Danh mục gọn trên điện thoại', () => {
 
         await openCategories(page);
 
-        const add = page.locator('#tab-categories .section-head .btn');
+        const add = page.locator('#tab-categories .section-head .btn:not(.sort-btn)');
 
         expect((await add.boundingBox()).height).toBeLessThan(48);
         await add.click();

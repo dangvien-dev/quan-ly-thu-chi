@@ -1133,3 +1133,52 @@ test('filterTransactions: sources giữ giao dịch chạm vào một trong các
     assert.equal(ids('{sources:null}'), 'abc');
     assert.equal(ids('{}'), 'abc');
 });
+
+test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {
+    const move = (list, index, step, predicate = '') =>
+        run(`moveInList(${list},${index},${step}${predicate && `,${predicate}`}).join("")`);
+
+    assert.equal(move('["a","b","c","d"]', 2, -1), 'acbd');
+    assert.equal(move('["a","b","c","d"]', 1, 1), 'acbd');
+    // At either end, or with a bad index or step, the same array comes back.
+    assert.equal(move('["a","b","c"]', 0, -1), 'abc');
+    assert.equal(move('["a","b","c"]', 2, 1), 'abc');
+    assert.equal(move('["a","b","c"]', 5, 1), 'abc');
+    assert.equal(move('["a","b","c"]', -1, 1), 'abc');
+    assert.equal(move('["a","b","c"]', 1, 2), 'abc');
+    assert.equal(
+        run('(() => { const l = ["a","b"]; moveInList(l, 1, -1); return l.join(""); })()'),
+        'ab',
+    );
+    assert.equal(
+        run('(() => { const l = ["a","b"]; return moveInList(l, 0, -1) === l; })()'),
+        true,
+    );
+});
+
+test('moveInList: chỉ đổi chỗ với phần tử được chấp nhận, những phần tử ở giữa đứng yên', () => {
+    // Lower case = hidden (an archived source, or a category of the other type).
+    const visible = '(other) => other === other.toUpperCase()';
+    const move = (list, index, step) =>
+        run(`moveInList(${list},${index},${step},${visible}).join("")`);
+
+    assert.equal(move('["A","x","B","y","C"]', 2, -1), 'BxAyC');
+    assert.equal(move('["A","x","B","y","C"]', 2, 1), 'AxCyB');
+    assert.equal(move('["A","x","B"]', 0, -1), 'AxB');
+    assert.equal(move('["x","A","y"]', 1, 1), 'xAy');
+});
+
+test('normalizeSources / normalizeCategories giữ nguyên thứ tự người dùng đã sắp xếp', () => {
+    assert.equal(
+        run(
+            'normalizeSources([{name:"C",kind:"cash"},{name:"A",kind:"bank"},{name:"B"}]).map((s) => s.name).join("")',
+        ),
+        'CAB',
+    );
+    assert.equal(
+        run(
+            'normalizeCategories([{id:3,name:"z",type:"expense"},{id:1,name:"a",type:"income"},{id:2,name:"m",type:"expense"}]).map((c) => c.id).join("")',
+        ),
+        '312',
+    );
+});

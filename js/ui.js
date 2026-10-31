@@ -465,6 +465,50 @@ function initMoneyInputs() {
     document.querySelectorAll('input[data-money]').forEach(attachMoneyInput);
 }
 
+// --- REORDERING (sources, categories) ---
+/** Say something to screen readers without showing it. */
+function announce(message) {
+    const region = document.getElementById('reorder-status');
+
+    if (!region) return;
+
+    region.textContent = '';
+    setTimeout(() => {
+        region.textContent = message;
+    }, 50);
+}
+
+/**
+ * Run `redraw` (which replaces the content of `container`) and keep the focus on the control that
+ * had it, found again by its data-* values. A sync that redraws a list must not drop the focus.
+ */
+function keepFocus(container, redraw) {
+    const active = document.activeElement;
+    const selector = container.contains(active) ? controlSelector(active) : '';
+
+    redraw();
+
+    if (!selector) return;
+
+    const again = container.querySelector(selector);
+
+    if (again && !again.disabled) again.focus();
+}
+
+/**
+ * After a list was redrawn, put the focus back on the control that had it. When that arrow is now
+ * disabled (the item reached the top or the bottom) its twin gets the focus instead.
+ */
+function refocusControl(selector, fallbackSelector = '') {
+    const usable = (element) => element && !element.disabled;
+    const target = [selector, fallbackSelector]
+        .filter(Boolean)
+        .map((item) => document.querySelector(item))
+        .find(usable);
+
+    if (target) target.focus();
+}
+
 // --- ASK FOR AN AMOUNT ---
 // window.prompt() cannot show thousands separators while typing, so amounts are asked in
 // #moneyPromptModal, whose field is a data-money input like every other amount in the app.

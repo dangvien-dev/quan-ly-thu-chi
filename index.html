@@ -320,12 +320,28 @@
 
             <!-- TAB 3: NGUỒN TIỀN -->
             <section id="tab-sources" class="view-section">
-                <div class="section-head">
+                <div class="section-head has-actions">
                     <h3>Quản Lý Nguồn Tiền & Tài Khoản</h3>
-                    <button class="btn" onclick="openSourceModal()">
-                        <i class="fa-solid fa-plus"></i> Thêm Nguồn Tiền
-                    </button>
+                    <div class="head-actions">
+                        <button
+                            type="button"
+                            class="btn btn-outline sort-btn"
+                            id="sources-sort-btn"
+                            onclick="toggleSourceReorder()"
+                            aria-label="Sắp xếp nguồn tiền"
+                        >
+                            <i class="fa-solid fa-up-down" aria-hidden="true"></i>
+                            <span class="sort-label">Sắp xếp</span>
+                        </button>
+                        <button class="btn" onclick="openSourceModal()">
+                            <i class="fa-solid fa-plus"></i> Thêm Nguồn Tiền
+                        </button>
+                    </div>
                 </div>
+                <p id="sources-sort-hint" class="reorder-hint" hidden>
+                    Bấm Lên / Xuống để đổi vị trí. Thứ tự này cũng dùng trong các ô chọn nguồn tiền.
+                    Xong thì bấm nút Xong ở trên.
+                </p>
                 <div class="grid-cards" id="sources-grid"></div>
                 <div id="sources-archived-section" hidden>
                     <h3 class="subsection-title">Đã lưu trữ</h3>
@@ -383,12 +399,28 @@
 
             <!-- TAB 4: DANH MỤC -->
             <section id="tab-categories" class="view-section">
-                <div class="section-head">
+                <div class="section-head has-actions">
                     <h3>Quản Lý Danh Mục Thu / Chi</h3>
-                    <button class="btn" onclick="openCategoryModal()">
-                        <i class="fa-solid fa-plus"></i> Thêm Danh Mục
-                    </button>
+                    <div class="head-actions">
+                        <button
+                            type="button"
+                            class="btn btn-outline sort-btn"
+                            id="categories-sort-btn"
+                            onclick="toggleCategoryReorder()"
+                            aria-label="Sắp xếp danh mục"
+                        >
+                            <i class="fa-solid fa-up-down" aria-hidden="true"></i>
+                            <span class="sort-label">Sắp xếp</span>
+                        </button>
+                        <button class="btn" onclick="openCategoryModal()">
+                            <i class="fa-solid fa-plus"></i> Thêm Danh Mục
+                        </button>
+                    </div>
                 </div>
+                <p id="categories-sort-hint" class="reorder-hint" hidden>
+                    Bấm Lên / Xuống để đổi vị trí trong nhóm Chi hoặc Thu. Thứ tự này cũng dùng
+                    trong ô chọn danh mục. Xong thì bấm nút Xong ở trên.
+                </p>
                 <div class="table-container">
                     <table class="responsive-table compact-cats">
                         <thead>
@@ -579,6 +611,8 @@
                 </div>
             </section>
         </main>
+
+        <p id="reorder-status" class="visually-hidden" role="status"></p>
 
         <!-- Shown when a new version has been installed while the page was open -->
         <div id="update-banner" class="update-banner" role="status" hidden>

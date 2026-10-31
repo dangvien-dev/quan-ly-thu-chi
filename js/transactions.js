@@ -231,27 +231,34 @@ function getFilteredTransactions() {
 
 /** Rebuild the category and source filter lists, keeping the current choice when it still exists. */
 function renderTransactionFilterOptions() {
+    // Known categories and sources come in the order the user chose; names that only old
+    // transactions mention follow, alphabetically.
     const lists = {
         'filter-category': {
             all: 'Tất cả danh mục',
-            values: [
-                ...categories.map((category) => category.name),
-                TRANSFER_CATEGORY,
-                ...transactions.map((transaction) => transaction.category),
-            ],
+            ordered: [...categoriesByType().map((category) => category.name), TRANSFER_CATEGORY],
+            others: transactions.map((transaction) => transaction.category),
         },
-        'filter-source': { all: 'Tất cả nguồn', values: sources.map((source) => source.name) },
+        'filter-source': {
+            all: 'Tất cả nguồn',
+            ordered: sources.map((source) => source.name),
+            others: [],
+        },
     };
 
-    Object.entries(lists).forEach(([id, { all, values }]) => {
+    Object.entries(lists).forEach(([id, { all, ordered, others }]) => {
         const select = document.getElementById(id);
 
         if (!select) return;
 
         const previous = select.value || 'ALL';
-        const unique = Array.from(new Set(values.filter(Boolean))).sort((a, b) =>
-            a.localeCompare(b, 'vi'),
-        );
+        const known = new Set(ordered.filter(Boolean));
+        const unique = [
+            ...known,
+            ...Array.from(new Set(others.filter(Boolean)))
+                .filter((name) => !known.has(name))
+                .sort((a, b) => a.localeCompare(b, 'vi')),
+        ];
 
         const groups =
             id === 'filter-source' && debtSourceNames().length
