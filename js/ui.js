@@ -304,6 +304,7 @@ function openModal() {
         document.getElementById('txDate').value = toLocalDateString();
     }
 
+    renderTagSuggestions();
     openDialog('transactionModal', 'txAmount');
 }
 
