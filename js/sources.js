@@ -116,6 +116,32 @@ function describeOpening(source) {
     return html;
 }
 
+// While true the cards show only the up / down arrows (see toggleSourceReorder).
+let reorderingSources = false;
+
+/** A card of the reorder mode: name, balance and the two arrows, nothing else to press by mistake. */
+function renderReorderCard(source, balance, { first, last }) {
+    const name = escapeHtml(source.name);
+
+    return `<div class="card source-card source-reorder">
+            <div class="source-head">
+                <div class="card-title">${name}</div>
+                <span class="kind-badge">${escapeHtml(SOURCE_KINDS[source.kind].label)}</span>
+            </div>
+            <div class="card-value" style="color:${balance >= 0 ? 'var(--text-main)' : 'var(--danger)'};">
+                ${formatMoney(balance)}
+            </div>
+            <div class="source-actions">
+                <button type="button" class="btn btn-outline btn-small" data-action="move-source-up" data-source="${name}" aria-label="Chuyển nguồn ${name} lên trên"${first ? ' disabled' : ''}>
+                    <i class="fa-solid fa-arrow-up" aria-hidden="true"></i> Lên
+                </button>
+                <button type="button" class="btn btn-outline btn-small" data-action="move-source-down" data-source="${name}" aria-label="Chuyển nguồn ${name} xuống dưới"${last ? ' disabled' : ''}>
+                    <i class="fa-solid fa-arrow-down" aria-hidden="true"></i> Xuống
+                </button>
+            </div>
+        </div>`;
+}
+
 function renderSourceCard(source, balance) {
     const name = escapeHtml(source.name);
     const kind = SOURCE_KINDS[source.kind];
@@ -166,9 +192,19 @@ function renderSources() {
     const active = sources.filter((source) => !source.archived);
     const archived = sources.filter((source) => source.archived);
 
-    grid.innerHTML = active
-        .map((source) => renderSourceCard(source, balances[source.name]))
-        .join('');
+    keepFocus(grid, () => {
+        grid.innerHTML = active
+            .map((source, index) =>
+                reorderingSources
+                    ? renderReorderCard(source, balances[source.name], {
+                          first: index === 0,
+                          last: index === active.length - 1,
+                      })
+                    : renderSourceCard(source, balances[source.name]),
+            )
+            .join('');
+    });
+    renderSourceReorderControls();
 
     if (archivedSection && archivedGrid) {
         archivedSection.hidden = archived.length === 0;
@@ -193,11 +229,60 @@ function handleSourceGridClick(event) {
         'archive-source': () => archiveSource(name, true),
         'restore-source': () => archiveSource(name, false),
         'delete-source': () => deleteSource(name),
+        'move-source-up': () => moveSource(name, -1),
+        'move-source-down': () => moveSource(name, 1),
     };
 
     if (actions[button.dataset.action]) {
         actions[button.dataset.action]();
     }
+}
+
+// --- REORDER ---
+function renderSourceReorderControls() {
+    const button = document.getElementById('sources-sort-btn');
+    const hint = document.getElementById('sources-sort-hint');
+
+    if (hint) hint.hidden = !reorderingSources;
+
+    if (!button) return;
+
+    button.classList.toggle('sorting', reorderingSources);
+    button.setAttribute('aria-label', reorderingSources ? 'Xong sắp xếp' : 'Sắp xếp nguồn tiền');
+    button.querySelector('.sort-label').textContent = reorderingSources ? 'Xong' : 'Sắp xếp';
+    button.querySelector('i').className = reorderingSources
+        ? 'fa-solid fa-check'
+        : 'fa-solid fa-up-down';
+}
+
+function toggleSourceReorder() {
+    reorderingSources = !reorderingSources;
+    renderSources();
+}
+
+/** Move a source one place up or down among the ones shown (archived ones keep their place). */
+function moveSource(name, step) {
+    const index = sources.findIndex((source) => source.name === name);
+    const next = moveInList(sources, index, step, (other) => !other.archived);
+
+    if (next === sources) return;
+
+    const action = step < 0 ? 'move-source-up' : 'move-source-down';
+    const twin = step < 0 ? 'move-source-down' : 'move-source-up';
+    const selector = (kind) =>
+        `#sources-grid button[data-action="${kind}"][data-source="${CSS.escape(name)}"]`;
+
+    sources = next;
+    saveMeta('sources');
+    renderAll();
+    syncToGoogleSheet();
+    refocusControl(selector(action), selector(twin));
+
+    const shown = sources.filter((source) => !source.archived);
+
+    announce(
+        `${name} đang ở vị trí ${shown.findIndex((source) => source.name === name) + 1} trên ${shown.length}.`,
+    );
 }
 
 // --- ACTIONS ---

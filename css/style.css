@@ -640,6 +640,27 @@ canvas {
     flex-wrap: wrap;
 }
 
+.head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.reorder-hint {
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.source-reorder .card-value {
+    font-size: 20px;
+}
+.source-reorder .source-actions {
+    margin-top: 8px;
+}
+.btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .subsection-title {
     margin: 10px 0 14px;
     color: var(--text-muted);
@@ -1530,6 +1551,20 @@ main:focus {
         white-space: nowrap;
     }
 
+    /* A heading with two buttons: the heading on its own line, the buttons side by side below. */
+    .section-head.has-actions h3 {
+        flex: 1 1 100%;
+    }
+
+    .section-head.has-actions .head-actions {
+        flex: 1 1 100%;
+    }
+
+    .section-head.has-actions .head-actions .btn {
+        flex: 1;
+        justify-content: center;
+    }
+
     .compact-cats tbody tr {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1629,6 +1664,7 @@ main:focus {
     .compact-cats td.row-actions {
         display: flex;
         justify-content: flex-end;
+        grid-column: 3;
         padding: 0;
     }
 
