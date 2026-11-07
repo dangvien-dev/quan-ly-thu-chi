@@ -1140,6 +1140,7 @@ test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ k
         statementDate: '2026-10-24',
         dueDate: '2026-11-10',
         daysLeft: 3,
+        estimated: true,
     });
 
     // A part payment into the card after the statement lowers it; paying all of it clears it.
@@ -1180,6 +1181,7 @@ test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ k
         statementDate: '',
         dueDate: '2026-11-10',
         daysLeft: 3,
+        estimated: false,
     });
     // A positive opening balance offsets the spending, so nothing is owed.
     assert.equal(due(october, '2026-11-07', spay, 5000000), null);
@@ -2098,6 +2100,7 @@ test('computeCardDue với mốc sao kê: số cần trả không còn dính s�
         statementDate: '2026-10-20',
         dueDate: '2026-11-04',
         daysLeft: -3,
+        estimated: false,
     });
 
     // A payment of less than the statement leaves the rest.
@@ -2126,6 +2129,58 @@ test('computeCardDue với mốc sao kê: số cần trả không còn dính s�
     const future = `${CARD_20},lastStatement:{date:"2026-10-21",balance:1}}`;
 
     assert.equal(due(future, -1747180).amount, 51766);
+
+    // `estimated` tells the card whether the amount rests on a printed closing balance: with a
+    // statement day but none, it is only a guess from the initial balance; a mistyped (future)
+    // balance does not count either.
+    assert.equal(due(`${CARD_20}}`, -1747180).estimated, true);
+    assert.equal(due(future, -1747180).estimated, true);
+    assert.equal(due(anchored, -1747180, '2026-11-07', unpaid).estimated, false);
+});
+
+test('computeCardDue con số liệu thật của thẻ VPBank (7/11/2026): số dư khớp ngân hàng mà vẫn báo cần trả 51.766 cho tới khi có dư nợ cuối kỳ', () => {
+    const card = (extra = '') =>
+        `{name:"Thẻ Tín Dụng",kind:"credit",creditLimit:37800000,statementDay:20,dueDay:4${extra}}`;
+    const expense = (date, amount) =>
+        `{id:"E${date}${amount}",date:"${date}",type:"expense",source:"Thẻ Tín Dụng",amount:${amount}}`;
+    const pay = (date, amount) =>
+        `{id:"T${date}${amount}",date:"${date}",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:${amount}}`;
+    // The book as it was: the statement of 21/09-20/10 lacks 77.000 of fee / VAT lines and the
+    // charges after it lack 51.766; "Khớp số dư" put both, and the extra payment, into the opening.
+    const book = `[${[
+        expense('2026-09-21', 100000),
+        expense('2026-09-23', 73333),
+        expense('2026-09-24', 132000),
+        expense('2026-09-28', 30000),
+        expense('2026-09-30', 582719),
+        expense('2026-10-03', 87778),
+        expense('2026-10-05', 552584),
+        expense('2026-10-10', 30000),
+        expense('2026-10-17', 30000),
+        expense('2026-10-22', 587160),
+        expense('2026-10-23', 73333),
+        expense('2026-10-24', 30000),
+        expense('2026-10-30', 582719),
+        expense('2026-11-03', 87778),
+        expense('2026-11-05', 604390),
+        pay('2026-09-21', 1614164),
+        pay('2026-10-21', 1695414),
+        pay('2026-10-21', 51766),
+    ].join(',')}]`;
+    const due = (source) => plain(run(`computeCardDue(${source},${book},-1794696,"2026-11-07")`));
+    const balance = run(
+        `${book}.reduce((total, row) => total + sourceEffect(row, "Thẻ Tín Dụng"), -1794696)`,
+    );
+
+    // The card balance is exactly what the bank shows (available 35.782.854 of 37.800.000) ...
+    assert.equal(balance, 35782854 - 37800000);
+    // ... yet the 20/10 statement still looks 51.766 unpaid, and the card knows it is only a guess.
+    const guessed = due(card());
+
+    assert.equal(guessed.amount, 51766);
+    assert.equal(guessed.estimated, true);
+    // With the closing balance printed on the statement it is paid.
+    assert.equal(due(card(',lastStatement:{date:"2026-10-20",balance:1695414}')), null);
 });
 
 test('normalizeSource: mốc sao kê chỉ có với thẻ tín dụng, được làm tròn, bỏ khi không hợp lệ', () => {

@@ -1931,6 +1931,8 @@ function previousDayOfMonth(day, from) {
  * When the source has `lastStatement` (the closing balance printed on a statement), what was owed
  * on a later statement day is that balance plus what happened since, so the amount no longer depends
  * on the initial balance, which absorbs every charge the book is missing ("Khớp số dư").
+ * `estimated` is true when there is a statement day but no such balance: the amount is then only a
+ * guess from the initial balance and may be off by whatever the book is missing.
  */
 function computeCardDue(source, list, opening, todayKey) {
     if (!source || source.kind !== 'credit' || source.archived || !source.dueDay) return null;
@@ -1948,6 +1950,7 @@ function computeCardDue(source, list, opening, todayKey) {
     let amount;
     let due;
     let statementKey = '';
+    let estimated = false;
 
     if (source.statementDay) {
         const statement = previousDayOfMonth(source.statementDay, today);
@@ -1976,6 +1979,9 @@ function computeCardDue(source, list, opening, todayKey) {
               )
             : -balanceUpTo(statementKey);
 
+        // Without the printed closing balance the debt on the statement day is worked out from the
+        // initial balance, which "Khớp số dư" fills with every charge the book is missing.
+        estimated = !anchor;
         amount = Math.max(0, owedAtStatement - paidSince);
     } else {
         due = nextDayOfMonth(source.dueDay, today);
@@ -1990,6 +1996,7 @@ function computeCardDue(source, list, opening, todayKey) {
         statementDate: statementKey,
         dueDate: toLocalDateString(due),
         daysLeft: daysUntil(due, today),
+        estimated,
     };
 }
 
