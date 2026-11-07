@@ -128,6 +128,7 @@ function initializeApp() {
     initTags();
     initTagReport();
     initImport();
+    initCardPay();
     initRecurring();
     initDebts();
     initSalary();

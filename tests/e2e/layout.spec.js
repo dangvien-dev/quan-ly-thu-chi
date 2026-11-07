@@ -25,6 +25,7 @@ const DIALOGS = [
     ['tự động gửi tiết kiệm', () => window.openSavingsModal()],
     ['chia lương theo nhóm', () => window.openAllocationModal()],
     ['nhập sao kê', () => window.openImportModal()],
+    ['trả sao kê thẻ', () => window.openCardPayModal('Thẻ Tín Dụng')],
     ['đổi tên thẻ', () => window.openTagRenameModal('khachA')],
 ];
 const seed = {

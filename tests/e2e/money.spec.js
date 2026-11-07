@@ -136,6 +136,7 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
         );
 
         expect(fields.map((field) => field.id).sort()).toEqual([
+            'cardPayAmount',
             'debtAmount',
             'debtPayAmount',
             'moneyPromptInput',

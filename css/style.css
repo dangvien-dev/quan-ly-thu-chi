@@ -1884,3 +1884,8 @@ main:focus {
     gap: 10px;
     margin-top: 16px;
 }
+
+/* --- "Đã trả" under the due line of a card --- */
+.card-due-actions {
+    margin-top: 8px;
+}
