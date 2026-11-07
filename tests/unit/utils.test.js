@@ -1120,6 +1120,110 @@ test('computeCardSpendStatus: mức 0 / 1 / 2, làm tròn xuống, đúng mốc 
     assert.equal(run('computeCardSpendStatus(10,null)'), null);
 });
 
+test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ khoản đã trả, hạn là ngày hạn sau kỳ chốt', () => {
+    // Spaylater: statement on the 24th, due on the 10th of the next month.
+    const spay = '{name:"Spay",kind:"credit",statementDay:24,dueDay:10}';
+    const row = (date, type, amount, extra = '') =>
+        `{id:"${date}${type}${amount}",date:"${date}",type:"${type}",source:"Spay",amount:${amount}${extra}}`;
+    const due = (list, today, source = spay, opening = 0) =>
+        JSON.parse(
+            JSON.stringify(run(`computeCardDue(${source},[${list}],${opening},"${today}")`)),
+        );
+    const october = [row('2026-10-05', 'expense', 1000000), row('2026-10-30', 'expense', 464140)];
+
+    // On 7/11 the 24/10 statement (1.000.000) is due on 10/11; the purchase of 30/10 is next month's.
+    assert.deepEqual(due(october, '2026-11-07'), {
+        name: 'Spay',
+        amount: 1000000,
+        statementDate: '2026-10-24',
+        dueDate: '2026-11-10',
+        daysLeft: 3,
+    });
+
+    // A part payment into the card after the statement lowers it; paying all of it clears it.
+    const paid = (amount) =>
+        `{id:"pay",date:"2026-11-05",type:"transfer",source:"Bank",targetSource:"Spay",amount:${amount}}`;
+
+    assert.equal(due([...october, paid(400000)], '2026-11-07').amount, 600000);
+    assert.equal(due([...october, paid(1000000)], '2026-11-07'), null);
+    // Money paid before the statement is already in the balance and is not counted twice.
+    assert.equal(
+        due(
+            [row('2026-10-05', 'expense', 1000000), row('2026-10-20', 'income', 300000)],
+            '2026-11-07',
+        ).amount,
+        700000,
+    );
+
+    // The due date passed and the statement is still unpaid: overdue, not "next month".
+    const late = due(october, '2026-11-11');
+
+    assert.equal(late.dueDate, '2026-11-10');
+    assert.equal(late.daysLeft, -1);
+    // After the next statement (24/11) the old debt rolls into it and the due date moves on.
+    const next = due(october, '2026-11-25');
+
+    assert.equal(next.statementDate, '2026-11-24');
+    assert.equal(next.dueDate, '2026-12-10');
+    assert.equal(next.amount, 1464140);
+    // Due today counts as 0 days left.
+    assert.equal(due(october, '2026-11-10').daysLeft, 0);
+
+    // No statement day: the whole debt and the next due day.
+    const plain = '{name:"Spay",kind:"credit",dueDay:10}';
+
+    assert.deepEqual(due(october, '2026-11-07', plain), {
+        name: 'Spay',
+        amount: 1464140,
+        statementDate: '',
+        dueDate: '2026-11-10',
+        daysLeft: 3,
+    });
+    // A positive opening balance offsets the spending, so nothing is owed.
+    assert.equal(due(october, '2026-11-07', spay, 5000000), null);
+    // Not a card, no due day, or archived: nothing to remind about.
+    assert.equal(due(october, '2026-11-07', '{name:"Spay",kind:"bank",dueDay:10}'), null);
+    assert.equal(due(october, '2026-11-07', '{name:"Spay",kind:"credit",statementDay:24}'), null);
+    assert.equal(
+        due(october, '2026-11-07', '{name:"Spay",kind:"credit",dueDay:10,archived:true}'),
+        null,
+    );
+    // Short months: a statement on the 31st falls on the last day of February.
+    assert.equal(
+        due(
+            [row('2027-02-10', 'expense', 100)],
+            '2027-03-02',
+            '{name:"Spay",kind:"credit",statementDay:31,dueDay:15}',
+        ).statementDate,
+        '2027-02-28',
+    );
+});
+
+test('cardDueLevel và cardDuesToRemind: nhắc từ 3 ngày trước hạn, quá hạn là mức 2, gấp nhất trước', () => {
+    assert.equal(run('cardDueLevel(null)'), 0);
+    assert.equal(run('cardDueLevel({daysLeft:4})'), 0);
+    assert.equal(run('cardDueLevel({daysLeft:3})'), 1);
+    assert.equal(run('cardDueLevel({daysLeft:0})'), 1);
+    assert.equal(run('cardDueLevel({daysLeft:-1})'), 2);
+
+    const sources =
+        '[{name:"A",kind:"credit",dueDay:12},{name:"B",kind:"credit",dueDay:9},{name:"C",kind:"credit",dueDay:30},{name:"D",kind:"bank",dueDay:8}]';
+    const list =
+        '[{date:"2026-11-01",type:"expense",source:"A",amount:10},{date:"2026-11-01",type:"expense",source:"B",amount:20},{date:"2026-11-01",type:"expense",source:"C",amount:30},{date:"2026-11-01",type:"expense",source:"D",amount:40}]';
+
+    // On 7/11: A is due in 5 days (not yet), B in 2 days, C in 23 days, D is not a card.
+    assert.equal(
+        run(`cardDuesToRemind(${sources},${list},{},"2026-11-07").map((d) => d.name).join("")`),
+        'B',
+    );
+    // On 10/11: B's 9th has passed, so its next due day is 9/12, far away (without a statement day
+    // there is no way to tell an unpaid 9/11 from a paid one); A is due in 2 days.
+    assert.equal(
+        run(`cardDuesToRemind(${sources},${list},{},"2026-11-10").map((d) => d.name).join("")`),
+        'A',
+    );
+});
+
 test('filterTransactions: sources giữ giao dịch chạm vào một trong các nguồn ở cả hai phía', () => {
     const list =
         '[{id:"a",date:"2026-10-01",type:"expense",source:"Spay",category:"x",amount:1,note:""},{id:"b",date:"2026-10-01",type:"expense",source:"Tiền Mặt",category:"x",amount:1,note:""},{id:"c",date:"2026-10-01",type:"transfer",source:"Ngân Hàng",targetSource:"Visa",category:"x",amount:1,note:""}]';

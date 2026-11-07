@@ -132,7 +132,7 @@ function initializeApp() {
     window.addEventListener('online', resumeSync);
     document.getElementById('tab-overview').addEventListener('click', handleOverviewLinkClick);
     window.addEventListener('focus', refreshFromSheet);
-    document.addEventListener('visibilitychange', refreshFromSheet);
+    document.addEventListener('visibilitychange', handleReturnToApp);
 
     document.getElementById('txDate').value = toLocalDateString();
 
@@ -143,7 +143,9 @@ function initializeApp() {
     generateRecurringTransactions();
     generateSavingsDeposits();
     remindOverdueDebts();
-    syncFromGoogleSheet();
+    // Remind about card dues once the Sheet has been read (or failed), so a statement paid from
+    // another device is not reported as due.
+    syncFromGoogleSheet().then(remindCardDues);
 }
 
 function resetAllData() {

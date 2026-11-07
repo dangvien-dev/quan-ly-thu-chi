@@ -665,6 +665,112 @@ function computeCardSpendStatus(spent, plan) {
     };
 }
 
+// --- CARD STATEMENT DUE DATES ---
+
+/** Remind (and colour the card) from this many days before the due day. */
+const CARD_DUE_WARN_DAYS = 3;
+
+/** How a transaction changes the balance of one source; the same rules as calculateSourceBalances. */
+function sourceEffect(transaction, name) {
+    if (transaction.type === 'income') return transaction.source === name ? transaction.amount : 0;
+    if (transaction.type === 'expense')
+        return transaction.source === name ? -transaction.amount : 0;
+    if (transaction.type !== 'transfer') return 0;
+
+    return (
+        (transaction.targetSource === name ? transaction.amount : 0) -
+        (transaction.source === name ? transaction.amount : 0)
+    );
+}
+
+/** The latest date on or before `from` whose day of the month is `day` (short months use their last day). */
+function previousDayOfMonth(day, from) {
+    const base = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+
+    for (let offset = 0; offset < 3; offset++) {
+        const month = new Date(base.getFullYear(), base.getMonth() - offset, 1);
+        const candidate = new Date(
+            month.getFullYear(),
+            month.getMonth(),
+            Math.min(day, daysInMonth(month)),
+        );
+
+        if (candidate <= base) return candidate;
+    }
+
+    return base;
+}
+
+/**
+ * What a credit source must pay next, and by when; null when it has no due day or owes nothing.
+ * With a statement day the amount is what was owed on the last statement day minus what has been
+ * paid into the card since, and the due date is the first due day after that statement (so a
+ * statement that was not paid shows as overdue instead of jumping to next month). Without one it
+ * is the whole debt and the next due day.
+ * `opening` is the source's initial balance. daysLeft is negative once the due date has passed.
+ */
+function computeCardDue(source, list, opening, todayKey) {
+    if (!source || source.kind !== 'credit' || source.archived || !source.dueDay) return null;
+
+    const today = parseLocalDate(todayKey);
+    const base = Number(opening) || 0;
+    const balanceUpTo = (dateKey) =>
+        list.reduce(
+            (total, transaction) =>
+                transaction.date <= dateKey
+                    ? total + sourceEffect(transaction, source.name)
+                    : total,
+            base,
+        );
+    let amount;
+    let due;
+    let statementKey = '';
+
+    if (source.statementDay) {
+        const statement = previousDayOfMonth(source.statementDay, today);
+
+        statementKey = toLocalDateString(statement);
+        due = nextDayOfMonth(source.dueDay, addDays(statement, 1));
+
+        const paidSince = list.reduce((total, transaction) => {
+            if (transaction.date <= statementKey || transaction.date > todayKey) return total;
+
+            return total + Math.max(0, sourceEffect(transaction, source.name));
+        }, 0);
+
+        amount = Math.max(0, -balanceUpTo(statementKey) - paidSince);
+    } else {
+        due = nextDayOfMonth(source.dueDay, today);
+        amount = Math.max(0, -balanceUpTo(todayKey));
+    }
+
+    if (!(amount > 0)) return null;
+
+    return {
+        name: source.name,
+        amount,
+        statementDate: statementKey,
+        dueDate: toLocalDateString(due),
+        daysLeft: daysUntil(due, today),
+    };
+}
+
+/** 0 = nothing to worry about yet, 1 = due within CARD_DUE_WARN_DAYS, 2 = the due date has passed. */
+function cardDueLevel(due) {
+    if (!due) return 0;
+    if (due.daysLeft < 0) return 2;
+
+    return due.daysLeft <= CARD_DUE_WARN_DAYS ? 1 : 0;
+}
+
+/** The dues that need attention (level 1 or 2), the most urgent first. */
+function cardDuesToRemind(sourceList, list, openings, todayKey) {
+    return sourceList
+        .map((source) => computeCardDue(source, list, openings[source.name], todayKey))
+        .filter((due) => cardDueLevel(due) > 0)
+        .sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
 const isExpenseInMonth = (transaction, monthKey) =>
     transaction.type === 'expense' && transaction.date.startsWith(monthKey);
 
