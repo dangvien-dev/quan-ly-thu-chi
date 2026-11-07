@@ -1600,6 +1600,180 @@ test('detectCsvLayout: các kiểu tiêu đề sao kê thường gặp (song ng�
     });
 });
 
+test('Sao kê thẻ có cột ngoại tệ: lấy cột đồng Việt Nam, không lấy số đô; dòng Claude 22,22 USD', () => {
+    const layout = (rows) => plain(run(`detectCsvLayout(${JSON.stringify(rows)})`));
+    const claude = [
+        '30/09/26',
+        '01/10/26',
+        'Retail USA SAN FRANCISCO ANTHROPIC* CLAUDE SUB',
+        '-22.22',
+        'USD',
+        '-582,719.50',
+    ];
+    const coffee = [
+        '02/10/26',
+        '02/10/26',
+        'Retail VN HIGHLANDS COFFEE',
+        '-45000',
+        'VND',
+        '-45,000.00',
+    ];
+
+    // By header: "Số tiền ngoại tệ" is not the amount, "Số tiền VND" is.
+    const byHeader = layout([
+        [
+            'Ngày giao dịch',
+            'Ngày hạch toán',
+            'Nội dung',
+            'Số tiền ngoại tệ',
+            'Loại tiền',
+            'Số tiền VND',
+        ],
+        claude,
+        coffee,
+    ]);
+
+    assert.equal(byHeader.columns.amount, 5);
+    assert.equal(byHeader.columns.date, 0); // the transaction date, not the posting date
+    assert.equal(byHeader.columns.description, 2);
+
+    // Headers that do not say which is which: a column of currency codes (not all VND) after the
+    // amount means the amount is in that currency, so the next numeric column is the one in đồng.
+    const byContent = layout([
+        [
+            'Ngày giao dịch',
+            'Ngày hạch toán',
+            'Nội dung',
+            'Số tiền giao dịch',
+            'Loại tiền',
+            'Số tiền quy đổi',
+        ],
+        claude,
+        coffee,
+    ]);
+
+    assert.equal(byContent.columns.amount, 5);
+
+    const onlyDong = layout([
+        ['Ngày giao dịch', 'Ngày hạch toán', 'Nội dung', 'Số tiền giao dịch', 'Loại tiền'],
+        coffee.slice(0, 5),
+    ]);
+
+    // Every purchase in đồng: the detected column stays.
+    assert.equal(onlyDong.columns.amount, 3);
+
+    // The row of the screenshot becomes a 582.720 đ expense on 30/9 (the .50 is rounded).
+    const built = plain(
+        run(
+            `buildImportItems(${JSON.stringify([
+                [
+                    'Ngày giao dịch',
+                    'Ngày hạch toán',
+                    'Nội dung',
+                    'Số tiền ngoại tệ',
+                    'Loại tiền',
+                    'Số tiền VND',
+                ],
+                claude,
+                coffee,
+            ])},${JSON.stringify(byHeader)},{source:"Thẻ Tín Dụng"})`,
+        ),
+    );
+
+    assert.deepEqual(
+        built.items.map((item) => [item.date, item.type, item.amount]),
+        [
+            ['2026-09-30', 'expense', 582720],
+            ['2026-10-02', 'expense', 45000],
+        ],
+    );
+    assert.equal(built.items[0].note, 'Retail USA SAN FRANCISCO ANTHROPIC* CLAUDE SUB');
+});
+
+test('detectCsvLayout: bảng giao dịch thật của sao kê thẻ VPBank (tiêu đề song ngữ, cột phí, số tiền thanh toán)', () => {
+    const header = [
+        'Ngày giao dịch Tnx date',
+        'Ngày hạch toán Posting date',
+        'Chi tiết giao dịch Tnx details',
+        'Số tiền giao dịch Txn amount',
+        'Loại tiền CCY',
+        'Phí (VND) Fee (VND)',
+        'Số tiền thanh toán (VND) Payment amount (VND)',
+    ];
+    const rows = [
+        header,
+        [
+            '21/09/26',
+            '21/09/26',
+            'Credit Account I2B Virtual Card payment;',
+            '1,614,164.00',
+            'VND',
+            '',
+            '1,614,164.00',
+        ],
+        [
+            '23/09/26',
+            '24/09/26',
+            'Retail USA SAN FRANCISCO OPENAI *CHATGPT SUBSCR',
+            '-132,000.00',
+            'VND',
+            '',
+            '-132,000.00',
+        ],
+        ['23/09/26', '24/09/26', 'Custom Fee', '0.00', 'VND', '-10,000.00', '-10,000.00'],
+        ['23/09/26', '24/09/26', 'VAT', '0.00', 'VND', '-1,000.00', '-1,000.00'],
+    ];
+    const layout = plain(run(`detectCsvLayout(${JSON.stringify(rows)})`));
+
+    // The amount is the last column ("Số tiền thanh toán (VND)", fee included), not "Số tiền giao dịch":
+    // the fee and VAT lines have 0.00 there.
+    assert.deepEqual(layout, {
+        headerIndex: 0,
+        columns: {
+            date: 0,
+            description: 2,
+            amount: 6,
+            debit: -1,
+            credit: -1,
+            balance: -1,
+            reference: -1,
+        },
+    });
+
+    const built = plain(
+        run(
+            `buildImportItems(${JSON.stringify(rows)},${JSON.stringify(layout)},{source:"Thẻ Tín Dụng"})`,
+        ),
+    );
+
+    assert.deepEqual(
+        built.items.map((item) => [item.date, item.type, item.amount]),
+        [
+            ['2026-09-21', 'income', 1614164],
+            ['2026-09-23', 'expense', 132000],
+            ['2026-09-23', 'expense', 10000],
+            ['2026-09-23', 'expense', 1000],
+        ],
+    );
+    assert.equal(built.skipped.length, 0);
+});
+
+test('guessPositiveIsExpense: dấu mà đa số dòng có là chi (sao kê VPBank ghi chi là số âm)', () => {
+    const guess = (amounts, columns = 'amount:1,debit:-1,credit:-1') =>
+        run(
+            `guessPositiveIsExpense(${JSON.stringify([['h', 'h'], ...amounts.map((value) => ['d', value])])},{headerIndex:0,columns:{${columns}}})`,
+        );
+
+    assert.equal(guess(['-10.000', '-20.000', '5.000']), false); // charges are negative
+    assert.equal(guess(['10.000', '20.000', '-5.000']), true); // charges are positive
+    assert.equal(guess(['10.000', '-20.000']), false); // a tie: the usual bank account
+    assert.equal(guess([]), false);
+    assert.equal(guess(['abc', '', 'x']), false);
+    // Separate debit / credit columns, or no amount column: the sign does not matter.
+    assert.equal(guess(['10.000', '20.000'], 'amount:1,debit:1,credit:-1'), false);
+    assert.equal(guess(['10.000', '20.000'], 'amount:-1,debit:-1,credit:-1'), false);
+});
+
 test('detectCsvLayout: không có dòng tiêu đề thì đoán cột ngày và mô tả theo dữ liệu', () => {
     const found = plain(
         run(

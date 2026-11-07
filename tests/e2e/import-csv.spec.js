@@ -98,13 +98,14 @@ test.describe('Nhập sao kê: đọc file và nhận cột', () => {
         await expect(page.locator('#import-raw-body')).toContainText('HIGHLANDS COFFEE Q1');
     });
 
-    test('một cột số tiền có dấu, dấu ; và số kiểu 1.234,56; thẻ tín dụng mặc định số dương là chi', async ({
+    test('một cột số tiền có dấu, dấu ; và số kiểu 1.234,56; đa số dòng dương thì số dương là chi', async ({
         app,
     }) => {
         const text = [
             'Ngày;Mô tả;Số tiền;Số dư',
             '27/10/2026;Mua hàng;150.000,00;0',
-            '28/10/2026;Hoàn tiền;-20.000,50;0',
+            '28/10/2026;Mua thêm;80.000,00;0',
+            '29/10/2026;Hoàn tiền;-20.000,50;0',
         ].join('\n');
         const { page } = await open(app);
 
@@ -117,13 +118,45 @@ test.describe('Nhập sao kê: đọc file và nhận cột', () => {
         await expect(page.locator('#importSign')).toHaveValue('positive');
         await toPreview(page);
 
-        await expect(rowsLocator(page)).toHaveCount(2);
+        await expect(rowsLocator(page)).toHaveCount(3);
         await expect(rowsLocator(page).nth(0).locator('td[data-label="Số tiền"]')).toHaveText(
             '-150.000 đ',
         );
-        await expect(rowsLocator(page).nth(1).locator('td[data-label="Số tiền"]')).toHaveText(
+        await expect(rowsLocator(page).nth(2).locator('td[data-label="Số tiền"]')).toHaveText(
             '+20.001 đ',
         );
+    });
+
+    test('sao kê thẻ VPBank: chi là số âm, có cột ngoại tệ (Claude 22,22 USD): lấy cột đồng và dấu âm là chi', async ({
+        app,
+    }) => {
+        const text = [
+            'SAO KÊ THẺ TÍN DỤNG QUỐC TẾ',
+            'Ngày giao dịch,Ngày hạch toán,Nội dung,Số tiền ngoại tệ,Loại tiền,Số tiền VND',
+            '30/09/26,01/10/26,Retail USA SAN FRANCISCO ANTHROPIC* CLAUDE SUB,-22.22,USD,"-582,719.50"',
+            '02/10/26,02/10/26,Retail VN HO CHI MINH HIGHLANDS COFFEE,-45000,VND,"-45,000.00"',
+            '15/10/26,16/10/26,Thanh toan the,1695414,VND,"1,695,414.00"',
+        ].join('\r\n');
+        const { page } = await open(app);
+
+        await openImport(page);
+        // A credit card, yet the charges are negative: the sign follows the data, not the source kind.
+        await chooseFile(page, file(text), 'Thẻ Tín Dụng');
+
+        await expect(page.locator('#importColDate')).toHaveValue('0');
+        await expect(page.locator('#importColAmount')).toHaveValue('5');
+        await expect(page.locator('#importSign')).toHaveValue('negative');
+        await toPreview(page);
+
+        const amount = (index) => rowsLocator(page).nth(index).locator('td[data-label="Số tiền"]');
+
+        await expect(rowsLocator(page)).toHaveCount(3);
+        await expect(rowsLocator(page).nth(0).locator('td[data-label="Ngày"]')).toHaveText(
+            '30/09/2026',
+        );
+        await expect(amount(0)).toHaveText('-582.720 đ');
+        await expect(amount(1)).toHaveText('-45.000 đ');
+        await expect(amount(2)).toHaveText('+1.695.414 đ');
     });
 
     test('tài khoản thường: số âm là chi, số dương là thu', async ({ app }) => {

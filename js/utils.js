@@ -808,7 +808,22 @@ const IMPORT_COLUMN_KEYWORDS = {
         'deposits',
         'co',
     ],
-    amount: ['so tien giao dich', 'gia tri giao dich', 'so tien', 'amount', 'gia tri', 'value'],
+    amount: [
+        'so tien thanh toan vnd',
+        'payment amount vnd',
+        'so tien thanh toan',
+        'payment amount',
+        'so tien giao dich',
+        'gia tri giao dich',
+        'so tien quy doi',
+        'so tien vnd',
+        'quy doi',
+        'billing amount',
+        'so tien',
+        'amount',
+        'gia tri',
+        'value',
+    ],
     balance: ['so du cuoi', 'so du', 'balance'],
     reference: [
         'ma giao dich',
@@ -830,12 +845,36 @@ const IMPORT_FIELD_ORDER = [
     'balance',
 ];
 
+// A header naming another currency ("Số tiền ngoại tệ", "Amount USD") is not the amount in đồng.
+const IMPORT_FOREIGN_WORDS = [
+    'ngoai te',
+    'nguyen te',
+    'foreign',
+    'original',
+    'usd',
+    'eur',
+    'jpy',
+    'sgd',
+    'aud',
+    'gbp',
+    'cny',
+    'krw',
+];
+const IMPORT_MONEY_FIELDS = ['debit', 'credit', 'amount'];
+
 /** How well a header cell fits a field: 0 for no match, higher for a longer or exact phrase. */
 function importHeaderScore(cell, field) {
     const words = normalizeSearchText(cell)
         .replace(/[^a-z0-9]+/g, ' ')
         .trim();
     let best = 0;
+
+    if (
+        IMPORT_MONEY_FIELDS.includes(field) &&
+        IMPORT_FOREIGN_WORDS.some((word) => ` ${words} `.includes(` ${word} `))
+    ) {
+        return 0;
+    }
 
     IMPORT_COLUMN_KEYWORDS[field].forEach((keyword) => {
         if (words === keyword) best = Math.max(best, 100 + keyword.length);
@@ -873,6 +912,40 @@ function matchImportHeader(row) {
 }
 
 /**
+ * A card statement can list the amount in the currency of the purchase, then its code ("USD"),
+ * then the same amount in đồng. When a column of currency codes follows the detected amount and
+ * not all of them are VND, the amount to import is the next column that holds numbers.
+ */
+function preferLocalCurrencyAmount(rows, headerIndex, columns) {
+    if (columns.amount < 0 || columns.debit >= 0 || columns.credit >= 0) return columns;
+
+    const data = rows.slice(headerIndex + 1, headerIndex + 41);
+    const width = Math.max(0, ...data.map((row) => row.length));
+
+    for (let column = columns.amount + 1; column < width; column++) {
+        const cells = data.map((row) => row[column] ?? '').filter(Boolean);
+        const codes = cells.filter((cell) => /^[A-Za-z]{3}$/.test(cell));
+
+        if (cells.length === 0 || codes.length / cells.length < 0.6) continue;
+
+        // Every purchase is in đồng: the detected column already is the amount in đồng.
+        if (codes.every((code) => code.toUpperCase() === 'VND')) return columns;
+
+        for (let next = column + 1; next < width; next++) {
+            const values = data.map((row) => row[next] ?? '').filter(Boolean);
+
+            if (values.length && values.every((value) => !Number.isNaN(parseBankAmount(value)))) {
+                return { ...columns, amount: next };
+            }
+        }
+
+        return columns;
+    }
+
+    return columns;
+}
+
+/**
  * Find the header row and the columns of a statement. A statement often starts with a few lines
  * about the account, so the first 30 rows are searched for one that names a date and an amount.
  * Returns { headerIndex, columns } with -1 for a missing header / column, so a person can fix it.
@@ -893,7 +966,10 @@ function detectCsvLayout(rows) {
         const hasMoney = ['debit', 'credit', 'amount'].some((field) => Object.hasOwn(found, field));
 
         if (Object.hasOwn(found, 'date') && hasMoney) {
-            return { headerIndex: index, columns: { ...none, ...found } };
+            return {
+                headerIndex: index,
+                columns: preferLocalCurrencyAmount(rows, index, { ...none, ...found }),
+            };
         }
     }
 
@@ -1014,6 +1090,29 @@ function buildImportItems(rows, layout, { source = '', positiveIsExpense = false
     }
 
     return { items, skipped, tooMany: false };
+}
+
+/**
+ * Which sign of a single amount column means money going out: the one most rows have, since
+ * spending outnumbers refunds and payments. (A VPBank card statement writes charges as negative
+ * numbers; other banks write them as positive ones.) False when there is no amount column.
+ */
+function guessPositiveIsExpense(rows, layout) {
+    const column = layout.columns.amount;
+
+    if (column < 0 || layout.columns.debit >= 0 || layout.columns.credit >= 0) return false;
+
+    let positive = 0;
+    let negative = 0;
+
+    for (let index = layout.headerIndex + 1; index < rows.length; index++) {
+        const value = parseBankAmount(rows[index][column] ?? '');
+
+        if (value > 0) positive++;
+        else if (value < 0) negative++;
+    }
+
+    return positive > negative;
 }
 
 /**

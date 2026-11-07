@@ -20,7 +20,6 @@ const IMPORT_FIELD_INPUTS = {
 let importDraft = null;
 let importGuessCategory = null;
 let importFileToken = 0;
-let importSignTouched = false;
 
 /** Bytes of a CSV → text: UTF-16 (BOM) and UTF-8 as exported by most banks, else Windows-1258. */
 function decodeCsvBuffer(buffer) {
@@ -138,7 +137,6 @@ function openImportModal() {
     const remembered = readStoredText(IMPORT_SOURCE_KEY);
 
     importDraft = null;
-    importSignTouched = false;
     document.getElementById('importFile').value = '';
     select.innerHTML = names
         .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
@@ -162,7 +160,10 @@ function importRowWidth(rows) {
 }
 
 /** Fill the column pickers from a layout, with the header text in each choice. */
-function fillImportMapping(layout, positiveIsExpense) {
+function fillImportMapping(
+    layout,
+    positiveIsExpense = guessPositiveIsExpense(importDraft.rows, layout),
+) {
     const rows = importDraft.rows;
     const header = layout.headerIndex >= 0 ? rows[layout.headerIndex] : [];
     const width = importRowWidth(rows);
@@ -183,15 +184,7 @@ function fillImportMapping(layout, positiveIsExpense) {
 
     document.getElementById('importHeaderRow').value = String(layout.headerIndex + 1);
 
-    const source = findSource(document.getElementById('importSource').value);
-
-    document.getElementById('importSign').value = (
-        positiveIsExpense === undefined
-            ? Boolean(source && source.kind === 'credit')
-            : positiveIsExpense
-    )
-        ? 'positive'
-        : 'negative';
+    document.getElementById('importSign').value = positiveIsExpense ? 'positive' : 'negative';
 
     // The first lines of the file, so the person can see what each column holds.
     const first = Math.max(0, layout.headerIndex);
@@ -268,7 +261,6 @@ async function handleImportFile() {
     const saved = findSavedImportLayout(rows, detected.headerIndex);
 
     if (saved) {
-        importSignTouched = true;
         fillImportMapping(
             { headerIndex: saved.headerIndex, columns: saved.columns },
             saved.positiveIsExpense,
@@ -277,7 +269,6 @@ async function handleImportFile() {
             `Đã dùng lại các cột bạn chọn lần trước cho kiểu file này (${rows.length - 1} dòng).`,
         );
     } else {
-        importSignTouched = false;
         fillImportMapping(detected);
         setImportMessage(
             detected.headerIndex >= 0
@@ -294,15 +285,6 @@ function handleImportHeaderRowChange() {
         readImportMapping(),
         document.getElementById('importSign').value === 'positive',
     );
-}
-
-function handleImportSourceChange() {
-    if (!importDraft || importSignTouched) return;
-
-    const source = findSource(document.getElementById('importSource').value);
-
-    document.getElementById('importSign').value =
-        source && source.kind === 'credit' ? 'positive' : 'negative';
 }
 
 // --- STEP 2: PREVIEW ---
@@ -650,15 +632,11 @@ function undoLastImport() {
 
 function initImport() {
     document.getElementById('importFile').addEventListener('change', handleImportFile);
-    document.getElementById('importSource').addEventListener('change', handleImportSourceChange);
     document
         .getElementById('importHeaderRow')
         .addEventListener('change', handleImportHeaderRowChange);
     ['importColDebit', 'importColCredit', 'importColAmount'].forEach((id) => {
         document.getElementById(id).addEventListener('change', updateImportSignVisibility);
-    });
-    document.getElementById('importSign').addEventListener('change', () => {
-        importSignTouched = true;
     });
     document.getElementById('import-table-body').addEventListener('change', handleImportRowChange);
     document.getElementById('import-select-all').addEventListener('change', handleImportSelectAll);
