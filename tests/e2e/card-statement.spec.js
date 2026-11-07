@@ -420,3 +420,132 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
         expect(results.violations.map((violation) => violation.id)).toEqual([]);
     });
 });
+
+// The book as it is after the VPBank statement was imported (fee / VAT lines included) and the
+// closing balance entered. "Khớp số dư" had put the 51.766 of fees posted after the statement day
+// into the initial balance (-1.665.930 instead of -1.614.164); the card says so, so that months
+// later the gap is not a mystery.
+const FEES = [
+    ['2026-09-23', 11000],
+    ['2026-09-23', 11000],
+    ['2026-09-28', 11000],
+    ['2026-09-30', 11000],
+    ['2026-10-04', 11000],
+    ['2026-10-10', 11000],
+    ['2026-10-17', 11000],
+];
+const BOOK_ROWS = [
+    ...REAL_CHARGES.map(([date, amount], index) => charge(`B${index}`, date, amount)),
+    ...FEES.map(([date, amount], index) => charge(`F${index}`, date, amount)),
+    ...REAL_PAYMENTS.slice(0, 2).map(([date, amount], index) =>
+        tx({
+            id: `BP${index}`,
+            date,
+            type: 'transfer',
+            source: VPBANK,
+            targetSource: CARD,
+            category: 'Chuyển tiền nội bộ',
+            amount,
+        }),
+    ),
+];
+const ANCHORED_SOURCES = JSON.stringify(
+    SOURCES.map((item) =>
+        item.name === CARD
+            ? { ...item, lastStatement: { date: '2026-10-20', balance: 1695414 } }
+            : item,
+    ),
+);
+const bookSeed = (opening) => ({
+    fm_sources: ANCHORED_SOURCES,
+    fm_initial_balances: JSON.stringify({ [CARD]: opening }),
+    fm_transactions: JSON.stringify(BOOK_ROWS),
+});
+const gapNote = (page) => card(page).locator('.card-gap-note');
+
+test.describe('Sổ lệch so với sao kê: ghi chú giải thích trên thẻ', () => {
+    test('số dư ban đầu chứa 51.766 phí chưa nhập: thẻ nói rõ khoản lệch, lý do và cách làm hết', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW, seed: bookSeed(-1665930) });
+
+        await page.evaluate(() => switchTab('sources'));
+        await expect(card(page)).toContainText('Sao kê chốt 20/10/2026: dư nợ 1.695.414 đ');
+        await expect(gapNote(page)).toContainText(
+            'Sổ đang lệch 51.766 đ so với sao kê chốt 20/10/2026',
+        );
+        await expect(gapNote(page)).toContainText('số dư ban đầu đang chứa khoản nợ này');
+        await expect(gapNote(page)).toContainText('phí chuyển đổi ngoại tệ, VAT hoặc lãi');
+        await expect(gapNote(page)).toContainText('Nhập sao kê kỳ sau rồi bấm Khớp số dư');
+        // It is a note, not a due line: nothing is owed on the statement.
+        await expect(dueLine(page)).toHaveCount(0);
+    });
+
+    test('số dư ban đầu đúng thì không có ghi chú; sổ ghi nợ ít hơn sao kê thì nói theo chiều ngược lại', async ({
+        app,
+    }) => {
+        const exact = await app({ now: NOW, seed: bookSeed(-1614164) });
+
+        await exact.page.evaluate(() => switchTab('sources'));
+        await expect(card(exact.page)).toContainText('Sao kê chốt 20/10/2026');
+        await expect(gapNote(exact.page)).toHaveCount(0);
+
+        const less = await app({ now: NOW, seed: bookSeed(-1514164) });
+
+        await less.page.evaluate(() => switchTab('sources'));
+        await expect(gapNote(less.page)).toContainText(
+            'Sổ đang ghi nợ ít hơn sao kê chốt 20/10/2026 100.000 đ',
+        );
+        await expect(gapNote(less.page)).toContainText('Xem theo kỳ sao kê');
+    });
+
+    test('thẻ chưa nhập dư nợ cuối kỳ thì không có ghi chú (không có gì để so)', async ({
+        app,
+    }) => {
+        const { page } = await app({
+            now: NOW,
+            seed: { ...bookSeed(-1665930), fm_sources: JSON.stringify(SOURCES) },
+        });
+
+        await page.evaluate(() => switchTab('sources'));
+        await expect(card(page).locator('.card-value')).toBeVisible();
+        await expect(gapNote(page)).toHaveCount(0);
+    });
+
+    test('Khớp số dư nhắc ngay rằng sổ đang lệch so với sao kê', async ({ app }) => {
+        // The available limit 35.782.854 is what the bank shows: the balance is already right
+        // (-2.017.146), so the opening stays and the gap is what the toast warns about.
+        const { page } = await app({
+            now: NOW,
+            seed: bookSeed(-1665930),
+            promptValue: '35782854',
+        });
+
+        await page.evaluate(() => switchTab('sources'));
+        await card(page).locator('button[data-action="match-balance"]').click();
+
+        const toast = page.locator('.toast').last();
+
+        await expect(toast).toContainText('Đã khớp [Thẻ Tín Dụng]');
+        await expect(toast).toContainText('sổ đang lệch 51.766 đ so với sao kê chốt 20/10/2026');
+        await expect(gapNote(page)).toBeVisible();
+    });
+
+    test('trợ năng và điện thoại: ghi chú không vi phạm axe, không tràn ngang', async ({ app }) => {
+        const { page } = await app({
+            now: NOW,
+            seed: bookSeed(-1665930),
+            viewport: { width: 390, height: 844 },
+        });
+
+        await page.evaluate(() => switchTab('sources'));
+        await expect(gapNote(page)).toBeVisible();
+        expect(
+            await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+        ).toBe(0);
+
+        const results = await scanA11y(page, '#tab-sources');
+
+        expect(results.violations.map((violation) => violation.id)).toEqual([]);
+    });
+});

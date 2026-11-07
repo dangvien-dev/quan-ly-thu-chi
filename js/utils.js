@@ -2011,6 +2011,32 @@ function computeCardDue(source, list, opening, todayKey) {
     };
 }
 
+// The printed closing balance is rounded and the rows it sums are rounded one by one, so a few đồng
+// of difference is not a missing transaction.
+const STATEMENT_GAP_TOLERANCE = 10;
+
+/**
+ * How far the book is from the closing balance printed on a card's last statement: what the book
+ * says was owed on that statement day (initial balance + transactions up to it) minus the printed
+ * balance, as { date, printed, book, gap }. Positive = the book owes more: the initial balance holds
+ * debt the book has no transaction for (the foreign-currency fee and VAT lines of a statement that
+ * were never entered, which "Khớp số dư" pushed there); negative = the book owes less. Null without
+ * a closing balance or when they agree.
+ */
+function computeStatementGap(source, list, opening) {
+    if (!source || source.kind !== 'credit' || !source.lastStatement) return null;
+
+    const { date, balance } = source.lastStatement;
+    const book = -list.reduce(
+        (total, transaction) =>
+            transaction.date <= date ? total + sourceEffect(transaction, source.name) : total,
+        Number(opening) || 0,
+    );
+    const gap = book - balance;
+
+    return Math.abs(gap) > STATEMENT_GAP_TOLERANCE ? { date, printed: balance, book, gap } : null;
+}
+
 /** The statement day on or before `todayKey` (YYYY-MM-DD) for a card whose statement closes on `day`. */
 function latestStatementDate(day, todayKey) {
     return toLocalDateString(previousDayOfMonth(day, parseLocalDate(todayKey)));
