@@ -459,6 +459,12 @@ th {
     color: #fff;
 }
 
+/* Not an inline style: that would beat the white label of the selected state (brown on brown). */
+#btnTypeTransfer {
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
 #btnTypeTransfer.active {
     background: var(--warning);
     border-color: var(--warning);
