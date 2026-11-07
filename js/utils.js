@@ -704,13 +704,14 @@ function parseBankDate(value) {
 }
 
 /**
- * An amount as banks write it → a whole number of đồng (NaN when it is not a number).
+ * An amount as banks write it → its exact value (NaN when it is not a number); parseBankAmount
+ * rounds it to a whole number of đồng.
  * "1.234.567", "1,234,567", "1.234.567,89", "1,234,567.89", "-250.000", "(250.000)", "250000 VND"
  * and "+1.000.000" are all understood. A lone separator followed by exactly three digits is a
  * thousands mark ("1.234" is 1234), otherwise it is a decimal point ("1234.5").
  */
-function parseBankAmount(value) {
-    if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value) : NaN;
+function parseBankNumber(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
 
     let text = String(value ?? '')
         .replace(/[\s ]/g, '')
@@ -766,10 +767,19 @@ function parseBankAmount(value) {
 
     if (!Number.isFinite(number)) return NaN;
 
-    // Round the size, then give it the sign: Math.round(-0.5) is -0 but Math.round(0.5) is 1.
-    const rounded = Math.round(number);
+    return negative ? -number : number;
+}
 
-    return (negative ? -rounded : rounded) || 0;
+/** parseBankNumber rounded to a whole number of đồng. */
+function parseBankAmount(value) {
+    const number = parseBankNumber(value);
+
+    if (Number.isNaN(number)) return NaN;
+
+    // Round the size, then give it the sign: Math.round(-0.5) is -0 but Math.round(0.5) is 1.
+    const rounded = Math.round(Math.abs(number));
+
+    return (number < 0 ? -rounded : rounded) || 0;
 }
 
 // Header words of a statement, as written by Vietnamese and international banks (accents and
@@ -1297,6 +1307,379 @@ function buildCategoryGuesser(history, categoryList) {
     };
 }
 
+// --- BANK STATEMENT IN PDF ---
+// pdf.js hands over the text of a page as small pieces with a position: { text, x, y, width, height }
+// (y is the baseline and grows upwards). These functions turn the pieces of a statement into the same
+// rows of cells a CSV would give, so the rest of the import (columns, duplicates, categories,
+// preview, undo) is shared. Everything here is pure; js/import.js reads the file.
+
+/** Pieces on one line → segments: pieces closer than a space and a half are one piece of text. */
+function mergePdfItems(items, height) {
+    const segments = [];
+
+    items.forEach((item) => {
+        const end = item.x + item.width;
+        const last = segments.at(-1);
+        const gap = last ? item.x - last.x1 : Infinity;
+
+        if (last && gap <= height * 0.6) {
+            const joint =
+                /\s$/.test(last.text) || /^\s/.test(item.text) || gap <= height * 0.1 ? '' : ' ';
+
+            last.text += joint + item.text;
+            last.x1 = Math.max(last.x1, end);
+        } else {
+            segments.push({ text: item.text, x0: item.x, x1: end });
+        }
+    });
+
+    return segments
+        .map((segment) => ({ ...segment, text: segment.text.replace(/\s+/g, ' ').trim() }))
+        .filter((segment) => segment.text);
+}
+
+/** The pieces of one page → lines from top to bottom, each with its segments from left to right. */
+function pdfPageLines(items, page = 0) {
+    const sorted = items
+        .filter((item) => String(item.text ?? '').trim() !== '')
+        .map((item) => ({ ...item, height: item.height > 0 ? item.height : 8 }))
+        .sort((a, b) => b.y - a.y || a.x - b.x);
+    const lines = [];
+
+    sorted.forEach((item) => {
+        const line = lines.at(-1);
+
+        if (line && Math.abs(line.y - item.y) <= Math.max(2, item.height * 0.4)) {
+            line.items.push(item);
+            line.height = Math.max(line.height, item.height);
+        } else {
+            lines.push({ page, y: item.y, height: item.height, items: [item] });
+        }
+    });
+
+    return lines.map((line) => ({
+        page: line.page,
+        y: line.y,
+        height: line.height,
+        segments: mergePdfItems(
+            line.items.sort((a, b) => a.x - b.x),
+            line.height,
+        ),
+    }));
+}
+
+/** Header cells from the segments of one or two lines: segments that overlap in x are one cell. */
+function pdfHeaderColumns(lines) {
+    const segments = lines
+        .flatMap((line) => line.segments.map((segment) => ({ ...segment, y: line.y })))
+        .sort((a, b) => a.x0 - b.x0);
+    const columns = [];
+
+    segments.forEach((segment) => {
+        const last = columns.at(-1);
+
+        if (last && segment.x0 <= last.x1 + 1) {
+            last.parts.push(segment);
+            last.x1 = Math.max(last.x1, segment.x1);
+        } else {
+            columns.push({ x0: segment.x0, x1: segment.x1, parts: [segment] });
+        }
+    });
+
+    return columns.map((column) => ({
+        x0: column.x0,
+        x1: column.x1,
+        text: column.parts
+            .sort((a, b) => b.y - a.y || a.x0 - b.x0)
+            .map((part) => part.text)
+            .join(' '),
+    }));
+}
+
+/**
+ * The header of the transaction table starting at lines[index]: that line and the lines right under
+ * it that do not begin with a date (a bilingual header has two). Returns { columns, end, found } when
+ * the cells name a date, a description and an amount, else null.
+ */
+function pdfHeaderBlock(lines, index) {
+    const block = [lines[index]];
+    let end = index + 1;
+
+    while (end < lines.length) {
+        const line = lines[end];
+        const previous = lines[end - 1];
+        const first = line.segments[0];
+
+        if (
+            line.page !== previous.page ||
+            previous.y - line.y > line.height * 1.8 ||
+            (first && parseBankDate(first.text))
+        ) {
+            break;
+        }
+
+        block.push(line);
+        end++;
+    }
+
+    const columns = pdfHeaderColumns(block);
+    const found = matchImportHeader(columns.map((column) => column.text));
+    const hasMoney = ['debit', 'credit', 'amount'].some((field) => Object.hasOwn(found, field));
+
+    return columns.length >= 4 &&
+        Object.hasOwn(found, 'date') &&
+        Object.hasOwn(found, 'description') &&
+        hasMoney
+        ? { columns, end, found }
+        : null;
+}
+
+/**
+ * The transaction table of a statement as rows of cells (the header cells first), or null when no
+ * table is found. A row starts at a line that begins with a date in the date columns; lines right
+ * under it that start in the description column are the rest of its description (these wrap).
+ * A cell is chosen by position: text left of the description is a date, text before the first
+ * amount column is the description, and each amount is put in the column whose right edge is the
+ * nearest (they are right-aligned), so an empty fee cell does not move the amount that follows.
+ */
+function pdfLinesToTable(lines) {
+    let header = null;
+
+    for (let index = 0; index < lines.length && !header; index++) {
+        header = pdfHeaderBlock(lines, index);
+    }
+
+    if (!header) return null;
+
+    const { columns, found } = header;
+    const descriptionIndex = found.description;
+    const dateIndexes = columns
+        .map((_, index) => index)
+        .filter((index) => index < descriptionIndex);
+    const amountIndexes = columns
+        .map((_, index) => index)
+        .filter((index) => index > descriptionIndex);
+    const dateEdge = Math.max(...dateIndexes.map((index) => columns[index].x1), -Infinity);
+    const amountStart = amountIndexes.length ? columns[amountIndexes[0]].x0 : Infinity;
+    const rows = [columns.map((column) => column.text)];
+    const nearest = (indexes, distance) =>
+        indexes.reduce(
+            (best, index) => (distance(index) < distance(best) ? index : best),
+            indexes[0],
+        );
+    let current = null;
+
+    const put = (cells, index, text) => {
+        cells[index] = cells[index] ? `${cells[index]} ${text}` : text;
+    };
+    const place = (cells, segment) => {
+        if (segment.x1 > amountStart + 2 && amountIndexes.length) {
+            const index = nearest(amountIndexes, (candidate) =>
+                Math.abs(segment.x1 - columns[candidate].x1),
+            );
+
+            put(cells, index, segment.text);
+        } else if (segment.x1 <= dateEdge + 2 && dateIndexes.length) {
+            const centre = (segment.x0 + segment.x1) / 2;
+            const index = nearest(dateIndexes, (candidate) =>
+                Math.abs(centre - (columns[candidate].x0 + columns[candidate].x1) / 2),
+            );
+
+            put(cells, index, segment.text);
+        } else {
+            put(cells, descriptionIndex, segment.text);
+        }
+    };
+
+    for (let index = header.end; index < lines.length; index++) {
+        const line = lines[index];
+        const first = line.segments[0];
+        const again = first && pdfHeaderBlock(lines, index);
+
+        if (again) {
+            // The header repeated at the top of a page.
+            index = again.end - 1;
+            current = null;
+            continue;
+        }
+
+        if (first && parseBankDate(first.text) && first.x1 <= dateEdge + 2) {
+            const cells = columns.map(() => '');
+
+            line.segments.forEach((segment) => place(cells, segment));
+            rows.push(cells);
+            current = { cells, page: line.page, y: line.y };
+        } else if (
+            current &&
+            first &&
+            line.page === current.page &&
+            current.y - line.y <= line.height * 2.2 &&
+            first.x0 >= dateEdge - 2
+        ) {
+            line.segments.forEach((segment) => place(current.cells, segment));
+            current.y = line.y;
+        } else {
+            // Footer, page number, anything else: not part of a row.
+            current = null;
+        }
+    }
+
+    return { rows };
+}
+
+/**
+ * The summary of a statement from its first page: the cycle ("Statement cycle : 21/09/2026 -
+ * 20/10/2026"), the due date and minimum amount, and the four numbers of the summary table
+ * (beginning balance, total debit, paid, closing balance). Amounts are positive; a field that is not
+ * found is null (cycle and due date: '').
+ */
+function parsePdfStatementSummary(lines) {
+    const texts = lines.map((line) => line.segments.map((segment) => segment.text).join('  '));
+    const plain = texts.map((text) => normalizeSearchText(text));
+    const summary = {
+        cycleFrom: '',
+        cycleTo: '',
+        dueDate: '',
+        minimumDue: null,
+        closingBalance: null,
+        beginningBalance: null,
+        totalDebit: null,
+        paid: null,
+    };
+    const DATE = /\d{1,2}\/\d{1,2}\/\d{2,4}/g;
+    // The amounts on a line (not the parts of a date), as positive numbers.
+    const amounts = (text) =>
+        (text.replace(DATE, ' ').match(/-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?/g) || [])
+            .map((token) => Math.abs(parseBankNumber(token)))
+            .filter((value) => Number.isFinite(value));
+    const after = (from, test, span = 4) => {
+        for (let index = from + 1; index <= Math.min(from + span, texts.length - 1); index++) {
+            if (test(texts[index])) return index;
+        }
+
+        return -1;
+    };
+
+    plain.forEach((text, index) => {
+        const cycle = texts[index].match(
+            /(\d{1,2}\/\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{4})/,
+        );
+
+        if (cycle && (text.includes('statement cycle') || text.includes('ky sao ke'))) {
+            summary.cycleFrom = parseBankDate(cycle[1]);
+            summary.cycleTo = parseBankDate(cycle[2]);
+        }
+    });
+
+    const due = plain.findIndex(
+        (text) => text.includes('due date') || text.includes('ngay den han'),
+    );
+    const dueValues = due >= 0 ? after(due, (text) => /\d{1,2}\/\d{1,2}\/\d{4}/.test(text)) : -1;
+
+    if (dueValues >= 0) {
+        const numbers = amounts(texts[dueValues]);
+
+        summary.dueDate = parseBankDate(texts[dueValues].match(/\d{1,2}\/\d{1,2}\/\d{4}/)[0]);
+        summary.minimumDue = numbers.length ? numbers[0] : null;
+        summary.closingBalance = numbers.length > 1 ? numbers[1] : null;
+    }
+
+    const begin = plain.findIndex(
+        (text) => text.includes('beginning balance') || text.includes('du no dau ky'),
+    );
+    const equation = begin >= 0 ? after(begin, (text) => amounts(text).length >= 4) : -1;
+
+    if (equation >= 0) {
+        const [beginning, debit, paid, closing] = amounts(texts[equation]);
+
+        Object.assign(summary, {
+            beginningBalance: beginning,
+            totalDebit: debit,
+            paid,
+            closingBalance: closing,
+        });
+    }
+
+    return summary;
+}
+
+/** The pieces of every page of a statement → { rows, summary }, or null when it has no table. */
+function buildPdfStatementTable(pages) {
+    const lines = pages.flatMap((items, index) => pdfPageLines(items, index));
+    const table = pdfLinesToTable(lines);
+
+    return table ? { rows: table.rows, summary: parsePdfStatementSummary(lines) } : null;
+}
+
+/**
+ * Compare the rows read from the table with the summary of the statement: what went out
+ * ("Nợ phát sinh trong kỳ") and what came in ("Đã thanh toán"), to the đồng. Null when the summary
+ * has no such numbers or there is no amount column. A mismatch means a row was missed or misread.
+ */
+function reconcilePdfStatement(rows, layout, summary, positiveIsExpense = false) {
+    const column = layout.columns.amount;
+
+    if (!summary || summary.totalDebit == null || summary.paid == null || column < 0) return null;
+
+    let charges = 0;
+    let payments = 0;
+
+    for (let index = layout.headerIndex + 1; index < rows.length; index++) {
+        const value = parseBankNumber(rows[index][column] ?? '');
+
+        if (!(value > 0 || value < 0)) continue;
+
+        if (value > 0 === positiveIsExpense) charges += Math.abs(value);
+        else payments += Math.abs(value);
+    }
+
+    charges = Math.round(charges * 100) / 100;
+    payments = Math.round(payments * 100) / 100;
+
+    return {
+        charges,
+        payments,
+        expectedCharges: summary.totalDebit,
+        expectedPayments: summary.paid,
+        chargesOk: Math.abs(charges - summary.totalDebit) < 1,
+        paymentsOk: Math.abs(payments - summary.paid) < 1,
+    };
+}
+
+/**
+ * What a statement read from a PDF changes on a card: the statement day (the last day of the cycle),
+ * the due day and the closing balance of that statement. Only the fields that differ are returned;
+ * null when nothing differs or the source is not a credit card. A closing balance of an older
+ * statement than the one saved is not applied.
+ */
+function planCardStatementUpdate(source, summary) {
+    if (!source || source.kind !== 'credit' || !summary || !summary.cycleTo) return null;
+
+    const plan = {};
+    const day = dayOfMonthOrNull(summary.cycleTo.slice(8, 10));
+    // A card with statement day 31 closes on the 28th in February: that is the same day.
+    const sameDay =
+        Boolean(source.statementDay) &&
+        latestStatementDate(source.statementDay, summary.cycleTo) === summary.cycleTo;
+
+    if (day && !sameDay) plan.statementDay = day;
+
+    const dueDay = summary.dueDate ? dayOfMonthOrNull(summary.dueDate.slice(8, 10)) : null;
+
+    if (dueDay && dueDay !== source.dueDay) plan.dueDay = dueDay;
+
+    if (Number.isFinite(summary.closingBalance) && summary.closingBalance >= 0) {
+        const balance = Math.round(summary.closingBalance);
+        const saved = source.lastStatement;
+        const older = saved && saved.date > summary.cycleTo;
+        const same = saved && saved.date === summary.cycleTo && saved.balance === balance;
+
+        if (!older && !same) plan.lastStatement = { date: summary.cycleTo, balance };
+    }
+
+    return Object.keys(plan).length ? plan : null;
+}
+
 // --- BUDGETS ---
 
 const BUDGET_WARN_RATIO = 0.8;
@@ -1548,6 +1931,8 @@ function previousDayOfMonth(day, from) {
  * When the source has `lastStatement` (the closing balance printed on a statement), what was owed
  * on a later statement day is that balance plus what happened since, so the amount no longer depends
  * on the initial balance, which absorbs every charge the book is missing ("Khớp số dư").
+ * `estimated` is true when there is a statement day but no such balance: the amount is then only a
+ * guess from the initial balance and may be off by whatever the book is missing.
  */
 function computeCardDue(source, list, opening, todayKey) {
     if (!source || source.kind !== 'credit' || source.archived || !source.dueDay) return null;
@@ -1565,6 +1950,7 @@ function computeCardDue(source, list, opening, todayKey) {
     let amount;
     let due;
     let statementKey = '';
+    let estimated = false;
 
     if (source.statementDay) {
         const statement = previousDayOfMonth(source.statementDay, today);
@@ -1593,6 +1979,9 @@ function computeCardDue(source, list, opening, todayKey) {
               )
             : -balanceUpTo(statementKey);
 
+        // Without the printed closing balance the debt on the statement day is worked out from the
+        // initial balance, which "Khớp số dư" fills with every charge the book is missing.
+        estimated = !anchor;
         amount = Math.max(0, owedAtStatement - paidSince);
     } else {
         due = nextDayOfMonth(source.dueDay, today);
@@ -1607,6 +1996,7 @@ function computeCardDue(source, list, opening, todayKey) {
         statementDate: statementKey,
         dueDate: toLocalDateString(due),
         daysLeft: daysUntil(due, today),
+        estimated,
     };
 }
 

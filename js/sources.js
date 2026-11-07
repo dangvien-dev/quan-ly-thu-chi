@@ -118,6 +118,9 @@ function describeCredit(source, balance) {
     return html + describeCardDue(source, due);
 }
 
+const ESTIMATED_DUE_NOTE =
+    'Số này ước tính từ số dư ban đầu nên có thể lệch (nhất là sau khi Khớp số dư). Nhập "Dư nợ cuối kỳ" in trên sao kê để có số đúng.';
+
 /**
  * Under a card: "Cần trả X trước dd/mm" (red from CARD_DUE_WARN_DAYS before the due date) with the
  * "Đã trả" button that records the payment, and "Xem theo kỳ" which lists the transactions of a
@@ -138,6 +141,14 @@ function describeCardDue(source, due) {
         buttons.push(`<button type="button" class="btn btn-outline btn-small" data-action="pay-card" data-source="${name}" aria-label="Ghi khoản đã trả cho thẻ ${name}">
                     <i class="fa-solid fa-circle-check" aria-hidden="true"></i> Đã trả
                 </button>`);
+
+        if (due.estimated) {
+            // The amount is a guess from the initial balance: say so, and offer the exact number.
+            line += `<div class="source-meta card-due-note">${escapeHtml(ESTIMATED_DUE_NOTE)}</div>`;
+            buttons.push(`<button type="button" class="btn btn-outline btn-small" data-action="statement-balance" data-source="${name}" aria-label="Nhập dư nợ cuối kỳ của sao kê thẻ ${name}">
+                    <i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i> Nhập dư nợ cuối kỳ
+                </button>`);
+        }
     }
 
     if (source.statementDay) {
@@ -321,6 +332,7 @@ function handleSourceGridClick(event) {
         'restore-source': () => archiveSource(name, false),
         'delete-source': () => deleteSource(name),
         'pay-card': () => openCardPayModal(name),
+        'statement-balance': () => editStatementBalance(name),
         'view-cycle': () => showTransactionsFor({ source: name, cycle: 'closed' }),
         'move-source-up': () => moveSource(name, -1),
         'move-source-down': () => moveSource(name, 1),
@@ -329,6 +341,51 @@ function handleSourceGridClick(event) {
     if (actions[button.dataset.action]) {
         actions[button.dataset.action]();
     }
+}
+
+/**
+ * "Nhập dư nợ cuối kỳ" under an estimated "Cần trả": ask for the closing balance printed on the
+ * last statement and keep it as `lastStatement` (what Sửa nguồn does with the same field).
+ */
+async function editStatementBalance(name) {
+    const source = findSource(name);
+
+    if (!source || source.kind !== 'credit' || !source.statementDay) return;
+
+    const date = latestStatementDate(source.statementDay, toLocalDateString());
+    const saved = source.lastStatement && source.lastStatement.date === date;
+    const typed = await askMoney({
+        title: 'Dư nợ cuối kỳ',
+        message: `Nhập "Dư nợ cuối kỳ" (Outstanding Balance) in trên sao kê của [${name}] chốt ngày ${formatDateDisplay(date)}:`,
+        value: saved ? source.lastStatement.balance : '',
+        confirmLabel: 'Lưu',
+    });
+
+    if (typed === null) return;
+
+    if (!Number.isFinite(typed)) {
+        alert('Số tiền không hợp lệ!');
+        return;
+    }
+
+    // The card may have changed (a sync) while the question was open: work from what is true now.
+    const current = findSource(name);
+
+    if (!current || current.kind !== 'credit' || !current.statementDay) return;
+
+    const statementDate = latestStatementDate(current.statementDay, toLocalDateString());
+
+    sources[sources.indexOf(current)] = normalizeSource({
+        ...current,
+        lastStatement: { date: statementDate, balance: typed },
+    });
+    saveMeta('sources');
+    renderAll();
+    syncToGoogleSheet();
+    showToast(
+        `Đã lưu dư nợ cuối kỳ ${formatMoney(typed)} của sao kê chốt ${formatDateDisplay(statementDate)}.`,
+        'success',
+    );
 }
 
 // --- PAYING A CARD STATEMENT ---
@@ -383,7 +440,10 @@ function openCardPayModal(name) {
     payingCardName = name;
     document.getElementById('cardPayTitle').innerText = `Trả sao kê ${name}`;
     document.getElementById('cardPayMessage').innerText = due
-        ? `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)}. Nhập số tiền bạn đã trả (có thể ít hơn).`
+        ? `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)}. Nhập số tiền bạn đã trả (có thể ít hơn).` +
+          (due.estimated
+              ? ' Số cần trả này chỉ là ước tính từ số dư ban đầu: nếu bạn đã trả đủ theo sao kê thì đừng ghi thêm khoản này, hãy đóng hộp thoại và bấm "Nhập dư nợ cuối kỳ".'
+              : '')
         : `Nhập số tiền bạn đã trả vào thẻ ${name}.`;
     setMoneyInput('cardPayAmount', due ? due.amount : owed);
     document.getElementById('cardPayDate').value = today;

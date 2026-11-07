@@ -1140,6 +1140,7 @@ test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ k
         statementDate: '2026-10-24',
         dueDate: '2026-11-10',
         daysLeft: 3,
+        estimated: true,
     });
 
     // A part payment into the card after the statement lowers it; paying all of it clears it.
@@ -1180,6 +1181,7 @@ test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ k
         statementDate: '',
         dueDate: '2026-11-10',
         daysLeft: 3,
+        estimated: false,
     });
     // A positive opening balance offsets the spending, so nothing is owed.
     assert.equal(due(october, '2026-11-07', spay, 5000000), null);
@@ -2098,6 +2100,7 @@ test('computeCardDue với mốc sao kê: số cần trả không còn dính s�
         statementDate: '2026-10-20',
         dueDate: '2026-11-04',
         daysLeft: -3,
+        estimated: false,
     });
 
     // A payment of less than the statement leaves the rest.
@@ -2126,6 +2129,58 @@ test('computeCardDue với mốc sao kê: số cần trả không còn dính s�
     const future = `${CARD_20},lastStatement:{date:"2026-10-21",balance:1}}`;
 
     assert.equal(due(future, -1747180).amount, 51766);
+
+    // `estimated` tells the card whether the amount rests on a printed closing balance: with a
+    // statement day but none, it is only a guess from the initial balance; a mistyped (future)
+    // balance does not count either.
+    assert.equal(due(`${CARD_20}}`, -1747180).estimated, true);
+    assert.equal(due(future, -1747180).estimated, true);
+    assert.equal(due(anchored, -1747180, '2026-11-07', unpaid).estimated, false);
+});
+
+test('computeCardDue con số liệu thật của thẻ VPBank (7/11/2026): số dư khớp ngân hàng mà vẫn báo cần trả 51.766 cho tới khi có dư nợ cuối kỳ', () => {
+    const card = (extra = '') =>
+        `{name:"Thẻ Tín Dụng",kind:"credit",creditLimit:37800000,statementDay:20,dueDay:4${extra}}`;
+    const expense = (date, amount) =>
+        `{id:"E${date}${amount}",date:"${date}",type:"expense",source:"Thẻ Tín Dụng",amount:${amount}}`;
+    const pay = (date, amount) =>
+        `{id:"T${date}${amount}",date:"${date}",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:${amount}}`;
+    // The book as it was: the statement of 21/09-20/10 lacks 77.000 of fee / VAT lines and the
+    // charges after it lack 51.766; "Khớp số dư" put both, and the extra payment, into the opening.
+    const book = `[${[
+        expense('2026-09-21', 100000),
+        expense('2026-09-23', 73333),
+        expense('2026-09-24', 132000),
+        expense('2026-09-28', 30000),
+        expense('2026-09-30', 582719),
+        expense('2026-10-03', 87778),
+        expense('2026-10-05', 552584),
+        expense('2026-10-10', 30000),
+        expense('2026-10-17', 30000),
+        expense('2026-10-22', 587160),
+        expense('2026-10-23', 73333),
+        expense('2026-10-24', 30000),
+        expense('2026-10-30', 582719),
+        expense('2026-11-03', 87778),
+        expense('2026-11-05', 604390),
+        pay('2026-09-21', 1614164),
+        pay('2026-10-21', 1695414),
+        pay('2026-10-21', 51766),
+    ].join(',')}]`;
+    const due = (source) => plain(run(`computeCardDue(${source},${book},-1794696,"2026-11-07")`));
+    const balance = run(
+        `${book}.reduce((total, row) => total + sourceEffect(row, "Thẻ Tín Dụng"), -1794696)`,
+    );
+
+    // The card balance is exactly what the bank shows (available 35.782.854 of 37.800.000) ...
+    assert.equal(balance, 35782854 - 37800000);
+    // ... yet the 20/10 statement still looks 51.766 unpaid, and the card knows it is only a guess.
+    const guessed = due(card());
+
+    assert.equal(guessed.amount, 51766);
+    assert.equal(guessed.estimated, true);
+    // With the closing balance printed on the statement it is paid.
+    assert.equal(due(card(',lastStatement:{date:"2026-10-20",balance:1695414}')), null);
 });
 
 test('normalizeSource: mốc sao kê chỉ có với thẻ tín dụng, được làm tròn, bỏ khi không hợp lệ', () => {
@@ -2225,6 +2280,367 @@ test('computeCardCycleTotals và lọc theo khoảng ngày: phát sinh và đã 
     assert.equal(ids('{from:"2026-11-03"}'), 'DE');
     assert.equal(ids('{to:"2026-10-21"}'), 'P');
     assert.equal(ids('{from:"",to:""}'), 'ABCDEP');
+});
+
+// Text pieces as pdf.js hands them over, laid out like a VPBank statement (see
+// tests/fixtures/make-statement-pdfs.py): dates centred, descriptions left-aligned and wrapped,
+// numbers right-aligned, a header in Vietnamese and English.
+const PDF_GLYPH = 3.8;
+const pdfPiece = (text, x, y) => ({ text, x, y, width: text.length * PDF_GLYPH, height: 7.5 });
+const pdfRight = (text, right, y) => pdfPiece(text, right - text.length * PDF_GLYPH, y);
+const pdfCentre = (text, centre, y) => pdfPiece(text, centre - (text.length * PDF_GLYPH) / 2, y);
+const PDF_HEADER = (y) =>
+    [
+        [55, 'Ngày giao dịch', 'Tnx date'],
+        [130, 'Ngày hạch toán', 'Posting date'],
+        [245, 'Chi tiết giao dịch', 'Tnx details'],
+        [430, 'Số tiền giao dịch', 'Txn amount'],
+        [500, 'Loại tiền', 'CCY'],
+        [557, 'Phí (VND)', 'Fee (VND)'],
+        [635, 'Số tiền thanh toán (VND)', 'Payment amount (VND)'],
+    ].flatMap(([centre, vi, en]) => [pdfCentre(vi, centre, y), pdfCentre(en, centre, y - 10)]);
+/** One table row: [date, posting date, description lines, amount, currency, fee, payment]. */
+const pdfRow = ([date, posting, lines, amount, currency, fee, payment], y) => [
+    pdfCentre(date, 55, y),
+    pdfCentre(posting, 130, y),
+    ...lines.map((line, index) => pdfPiece(line, 165, y - index * 10)),
+    pdfRight(amount, 465, y),
+    pdfCentre(currency, 500, y),
+    ...(fee ? [pdfRight(fee, 575, y)] : []),
+    pdfRight(payment, 680, y),
+];
+const PDF_ROWS = [
+    [
+        '21/09/26',
+        '21/09/26',
+        ['Credit Account I2B Virtual Card', 'payment;'],
+        '1,200,000.00',
+        'VND',
+        '',
+        '1,200,000.00',
+    ],
+    [
+        '23/09/26',
+        '24/09/26',
+        ['Retail: : MasterCard Acq in 704', 'International Custom Fee'],
+        '0.00',
+        'VND',
+        '-10,000.00',
+        '-10,000.00',
+    ],
+    [
+        '30/09/26',
+        '01/10/26',
+        ['Retail USA ANTHROPIC* CLAUDE SUB'],
+        '-22.22',
+        'USD',
+        '',
+        '-582,719.50',
+    ],
+];
+const pdfFooter = (page) => [
+    pdfPiece('Ngân hàng Việt Nam Thịnh Vượng © 2024', 60, 27),
+    pdfRight(`Page ${page} of 2`, 640, 17),
+];
+const pdfTable = (pages) => plain(run(`buildPdfStatementTable(${JSON.stringify(pages)})`));
+
+test('pdfPageLines: ghép các mảnh chữ cùng dòng (lệch y nhỏ), tách ô khi cách xa, bỏ mảnh trống', () => {
+    const lines = plain(
+        run(
+            `pdfPageLines(${JSON.stringify([
+                { text: 'Số tiền', x: 100, y: 500.4, width: 26, height: 8 },
+                { text: ' giao dịch', x: 126, y: 500, width: 36, height: 8 },
+                { text: '1,000', x: 300, y: 500.2, width: 20, height: 8 },
+                { text: '   ', x: 400, y: 500, width: 5, height: 8 },
+                { text: 'Dòng dưới', x: 100, y: 480, width: 36, height: 8 },
+                { text: 'A', x: 50, y: 480.3, width: 4, height: 8 },
+                { text: 'gần', x: 106, y: 460, width: 12, height: 8 },
+                { text: 'nhau', x: 119, y: 460, width: 16, height: 8 },
+            ])})`,
+        ),
+    );
+
+    // Lines from the top; pieces a space apart (or touching) are one piece, far ones are not.
+    assert.deepEqual(
+        lines.map((line) => line.segments.map((segment) => segment.text)),
+        [['Số tiền giao dịch', '1,000'], ['A', 'Dòng dưới'], ['gần nhau']],
+    );
+    assert.equal(lines[0].segments[0].x0, 100);
+    assert.equal(Math.round(lines[0].segments[0].x1), 162);
+});
+
+test('buildPdfStatementTable: bảng sao kê VPBank — mô tả xuống dòng, ô phí trống, dòng phí, dòng USD, hai trang', () => {
+    const page1 = [
+        ...PDF_HEADER(600),
+        ...pdfRow(PDF_ROWS[0], 560),
+        ...pdfRow(PDF_ROWS[1], 520),
+        ...pdfFooter(1),
+    ];
+    const page2 = [...pdfRow(PDF_ROWS[2], 760), ...pdfFooter(2)];
+    const table = pdfTable([page1, page2]);
+
+    assert.deepEqual(table.rows, [
+        [
+            'Ngày giao dịch Tnx date',
+            'Ngày hạch toán Posting date',
+            'Chi tiết giao dịch Tnx details',
+            'Số tiền giao dịch Txn amount',
+            'Loại tiền CCY',
+            'Phí (VND) Fee (VND)',
+            'Số tiền thanh toán (VND) Payment amount (VND)',
+        ],
+        // The wrapped description is one cell; the blank fee cell stays blank, so the payment is not shifted.
+        [
+            '21/09/26',
+            '21/09/26',
+            'Credit Account I2B Virtual Card payment;',
+            '1,200,000.00',
+            'VND',
+            '',
+            '1,200,000.00',
+        ],
+        // "704" is part of the description, not an amount; the fee is in the fee column.
+        [
+            '23/09/26',
+            '24/09/26',
+            'Retail: : MasterCard Acq in 704 International Custom Fee',
+            '0.00',
+            'VND',
+            '-10,000.00',
+            '-10,000.00',
+        ],
+        // Page 2 has no header, and a USD purchase keeps its original amount and its VND amount.
+        [
+            '30/09/26',
+            '01/10/26',
+            'Retail USA ANTHROPIC* CLAUDE SUB',
+            '-22.22',
+            'USD',
+            '',
+            '-582,719.50',
+        ],
+    ]);
+});
+
+test('buildPdfStatementTable: tiêu đề lặp ở đầu trang bị bỏ, chân trang và dòng lạ không dính vào dòng giao dịch', () => {
+    const page1 = [
+        ...PDF_HEADER(600),
+        ...pdfRow(PDF_ROWS[0], 560),
+        // A line right under a row that starts at the description column is the rest of it...
+        pdfPiece('ghi chú thêm', 165, 540),
+        // ...but one far below, or one that starts at the left margin, is not.
+        pdfPiece('Lưu ý quan trọng', 165, 300),
+        pdfPiece('Cảm ơn quý khách', 60, 530),
+        ...pdfFooter(1),
+    ];
+    const page2 = [...PDF_HEADER(780), ...pdfRow(PDF_ROWS[2], 740), ...pdfFooter(2)];
+    const { rows } = pdfTable([page1, page2]);
+
+    assert.equal(rows.length, 3);
+    assert.equal(rows[1][2], 'Credit Account I2B Virtual Card payment; ghi chú thêm');
+    assert.equal(rows[2][2], 'Retail USA ANTHROPIC* CLAUDE SUB');
+    assert.ok(
+        rows.every((row) => !row.join(' ').includes('Cảm ơn') && !row.join(' ').includes('Page ')),
+    );
+});
+
+test('buildPdfStatementTable: một ngày trong mô tả không mở dòng mới; không có bảng thì null', () => {
+    const page = [
+        ...PDF_HEADER(600),
+        ...pdfRow(
+            ['21/09/26', '21/09/26', ['Hoan tien giao dich'], '5,000.00', 'VND', '', '5,000.00'],
+            560,
+        ),
+        pdfPiece('30/09/26 qua mang', 165, 550),
+    ];
+
+    assert.equal(pdfTable([page]).rows.length, 2);
+    assert.equal(pdfTable([page]).rows[1][2], 'Hoan tien giao dich 30/09/26 qua mang');
+    assert.equal(
+        run(`buildPdfStatementTable(${JSON.stringify([[pdfPiece('Thư cảm ơn', 60, 700)], []])})`),
+        null,
+    );
+    assert.equal(run('buildPdfStatementTable([])'), null);
+    // A table header with no description column is not one.
+    assert.equal(
+        run(
+            `buildPdfStatementTable(${JSON.stringify([
+                [
+                    pdfCentre('Ngày', 55, 600),
+                    pdfCentre('Số tiền', 400, 600),
+                    pdfCentre('Số dư', 500, 600),
+                    pdfCentre('Loại', 600, 600),
+                ],
+            ])})`,
+        ),
+        null,
+    );
+});
+
+test('parsePdfStatementSummary và reconcilePdfStatement: phần tóm tắt trang 1 của sao kê VPBank', () => {
+    // The first page of the owner's statement: box with the due date, then the summary table.
+    const page = [
+        pdfCentre('Kỳ sao kê / Statement cycle : 21/09/2026 - 20/10/2026', 350, 770),
+        pdfPiece('Ngày đến hạn thanh toán', 40, 700),
+        pdfPiece('Giá trị thanh toán tối thiểu (VND)', 190, 700),
+        pdfPiece('Số dư cuối kỳ', 400, 700),
+        pdfPiece('Due date', 40, 690),
+        pdfPiece('Minimum Amount Due (VND)', 190, 690),
+        pdfPiece('04/11/2026', 40, 665),
+        pdfPiece('-84,771.00', 190, 665),
+        pdfPiece('-1,695,414.00', 400, 665),
+        pdfPiece('-1,695,414.00', 520, 665),
+        pdfPiece('Dư nợ đầu kỳ', 40, 600),
+        pdfPiece('Beginning Balance', 40, 590),
+        pdfPiece('-1,614,164.00', 40, 565),
+        pdfPiece('+', 150, 565),
+        pdfPiece('-1,695,414.50', 190, 565),
+        pdfPiece('+', 320, 565),
+        pdfPiece('1,614,164.00', 360, 565),
+        pdfPiece('=', 490, 565),
+        pdfPiece('-1,695,414.00', 520, 565),
+    ];
+    const summary = plain(run(`parsePdfStatementSummary(pdfPageLines(${JSON.stringify(page)},0))`));
+
+    assert.deepEqual(summary, {
+        cycleFrom: '2026-09-21',
+        cycleTo: '2026-10-20',
+        dueDate: '2026-11-04',
+        minimumDue: 84771,
+        closingBalance: 1695414,
+        beginningBalance: 1614164,
+        totalDebit: 1695414.5,
+        paid: 1614164,
+    });
+
+    // Nothing of that in a page: empty summary, no reconciliation.
+    const empty = plain(
+        run(
+            `parsePdfStatementSummary(pdfPageLines(${JSON.stringify([pdfPiece('Xin chào', 0, 0)])},0))`,
+        ),
+    );
+
+    assert.deepEqual([empty.cycleTo, empty.dueDate, empty.totalDebit], ['', '', null]);
+
+    const layout =
+        '{headerIndex:0,columns:{date:0,description:2,debit:-1,credit:-1,amount:3,balance:-1,reference:-1}}';
+    const rows = JSON.stringify([
+        ['h', 'h', 'h', 'h'],
+        ['21/09/26', 'x', 'thanh toán', '1,614,164.00'],
+        ['22/09/26', 'x', 'chi 1', '-1,000,000.00'],
+        ['23/09/26', 'x', 'chi 2', '-695,414.50'],
+    ]);
+    const reconcile = (summaryValue, positive = false) =>
+        plain(run(`reconcilePdfStatement(${rows},${layout},${summaryValue},${positive})`));
+
+    // What went out is added up exactly (the .50 counts), what came in too.
+    assert.deepEqual(reconcile(JSON.stringify(summary)), {
+        charges: 1695414.5,
+        payments: 1614164,
+        expectedCharges: 1695414.5,
+        expectedPayments: 1614164,
+        chargesOk: true,
+        paymentsOk: true,
+    });
+    // A row missed: the totals no longer match.
+    const missed = reconcile(JSON.stringify({ ...summary, totalDebit: 1795414.5 }));
+
+    assert.equal(missed.chargesOk, false);
+    assert.equal(missed.paymentsOk, true);
+    // With the other sign convention what went out is what is positive.
+    assert.equal(reconcile(JSON.stringify(summary), true).chargesOk, false);
+    // No totals in the statement, or no amount column: nothing to compare.
+    assert.equal(run(`reconcilePdfStatement(${rows},${layout},null)`), null);
+    assert.equal(
+        run(
+            `reconcilePdfStatement(${rows},{headerIndex:0,columns:{amount:-1}},${JSON.stringify(summary)})`,
+        ),
+        null,
+    );
+});
+
+test('planCardStatementUpdate: chỉ trả về những gì sao kê làm đổi trên thẻ', () => {
+    const summary = {
+        cycleFrom: '2026-09-21',
+        cycleTo: '2026-10-20',
+        dueDate: '2026-11-04',
+        closingBalance: 1695414,
+    };
+    const plan = (source, value = summary) =>
+        plain(run(`planCardStatementUpdate(${JSON.stringify(source)},${JSON.stringify(value)})`));
+    const card = { name: 'T', kind: 'credit', statementDay: null, dueDay: null };
+
+    // A card without any of it: all three are written.
+    assert.deepEqual(plan(card), {
+        statementDay: 20,
+        dueDay: 4,
+        lastStatement: { date: '2026-10-20', balance: 1695414 },
+    });
+    // A wrong statement day (21 instead of 20) is corrected.
+    assert.equal(plan({ ...card, statementDay: 21, dueDay: 4 }).statementDay, 20);
+    // Already right: only the balance is new.
+    assert.deepEqual(plan({ ...card, statementDay: 20, dueDay: 4 }), {
+        lastStatement: { date: '2026-10-20', balance: 1695414 },
+    });
+    // Already holds exactly this: nothing to do.
+    assert.equal(
+        plan({
+            ...card,
+            statementDay: 20,
+            dueDay: 4,
+            lastStatement: { date: '2026-10-20', balance: 1695414 },
+        }),
+        null,
+    );
+    // The same statement with another number replaces it; an older statement does not.
+    assert.deepEqual(
+        plan({
+            ...card,
+            statementDay: 20,
+            dueDay: 4,
+            lastStatement: { date: '2026-10-20', balance: 5 },
+        }).lastStatement,
+        { date: '2026-10-20', balance: 1695414 },
+    );
+    assert.equal(
+        plan({
+            ...card,
+            statementDay: 20,
+            dueDay: 4,
+            lastStatement: { date: '2026-11-20', balance: 5 },
+        }),
+        null,
+    );
+    // A card whose statement day is 31 closes on the 28th in February: the same day.
+    assert.equal(
+        plan(
+            { ...card, statementDay: 31, dueDay: 15 },
+            { cycleTo: '2027-02-28', dueDate: '2027-03-15', closingBalance: null },
+        ),
+        null,
+    );
+    // Only credit cards; no cycle end means no statement to apply.
+    assert.equal(plan({ ...card, kind: 'bank' }), null);
+    assert.equal(plan(card, { ...summary, cycleTo: '' }), null);
+    assert.equal(run('planCardStatementUpdate(null, {})'), null);
+    // Fractions of a đồng are rounded, a missing balance is left alone.
+    assert.equal(
+        plan(card, { ...summary, closingBalance: 944052.5 }).lastStatement.balance,
+        944053,
+    );
+    assert.equal(
+        Object.hasOwn(plan(card, { ...summary, closingBalance: null }), 'lastStatement'),
+        false,
+    );
+});
+
+test('parseBankNumber: giá trị đúng không làm tròn, parseBankAmount làm tròn theo độ lớn', () => {
+    assert.equal(run('parseBankNumber("-582,719.50")'), -582719.5);
+    assert.equal(run('parseBankNumber("1,695,414.00")'), 1695414);
+    assert.equal(run('parseBankNumber("-22.22")'), -22.22);
+    assert.ok(Number.isNaN(run('parseBankNumber("abc")')));
+    assert.equal(run('parseBankAmount("-582,719.50")'), -582720);
+    assert.equal(run('parseBankAmount("582,719.50")'), 582720);
 });
 
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {
