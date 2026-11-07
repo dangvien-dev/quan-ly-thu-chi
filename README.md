@@ -8,7 +8,7 @@
 - **Điện thoại**: thanh dưới gọn 4 mục (Tổng quan, Sổ GD, Nguồn, Vay nợ) với nút `+` thêm giao dịch tròn nhô lên ở giữa; các trang còn lại (Danh mục, Định kỳ, Cài đặt…) nằm trong menu trái mở bằng nút ☰ ở đầu trang. Kéo làm mới vẫn ở đúng trang đang xem. Danh mục cũng là một dòng gọn mỗi mục. Mỗi giao dịch là một dòng (ngày · ghi chú · số tiền, viền màu theo loại thu / chi / chuyển); chạm vào dòng để xem nguồn tiền, danh mục và nút sửa / xóa.
 - **Nhập liệu dễ đọc**: ngày hiển thị `dd/mm/yyyy` ở mọi nơi (kể cả CSV); các ô tiền tự thêm dấu chấm ngăn cách hàng nghìn khi gõ (`1500000` → `1.500.000`).
 - **Nguồn tiền**: tiền mặt, ngân hàng, ví điện tử, thẻ tín dụng / trả sau (hạn mức, ngày chốt sao kê, hạn thanh toán), khoản nợ; lưu trữ, đổi tên (cập nhật mọi giao dịch). Nút **Khớp số dư** nhập số thực tế trong ứng dụng ngân hàng / ví (thẻ tín dụng có hạn mức thì nhập số **khả dụng**), app tự tính số dư ban đầu, không phải trừ tay.
-- **Nhập sao kê ngân hàng (CSV)**: Cài đặt → _Nhập sao kê_. Chọn file CSV tải từ internet banking và nguồn tiền; ứng dụng tự nhận dòng tiêu đề và các cột (ngày, nội dung, ghi nợ / ghi có hoặc một cột số tiền), đọc được ngày dd/mm/yyyy, số kiểu `1.234.567` hay `1,234,567`, file UTF-8 / UTF-16 / Windows-1258. Bước xem trước cho sửa loại, danh mục từng dòng (gợi ý từ giao dịch bạn đã nhập và vài cửa hàng quen) và **bỏ chọn sẵn các dòng trùng với giao dịch bạn đã gõ tay** (cùng nguồn, cùng số tiền, lệch tối đa 2 ngày). Nhập lại cùng file không bị nhân đôi; có nút **Hoàn tác lần nhập vừa rồi**. Các cột đã xác nhận được nhớ cho lần sau.
+- **Nhập sao kê ngân hàng (CSV hoặc PDF)**: Cài đặt → _Nhập sao kê_. Chọn file CSV tải từ internet banking (hoặc file PDF sao kê, kể cả file có mật khẩu: app hỏi mật khẩu, chỉ dùng để mở file ngay trên máy và không lưu) và nguồn tiền; ứng dụng tự nhận dòng tiêu đề và các cột (ngày, nội dung, ghi nợ / ghi có hoặc một cột số tiền), đọc được ngày dd/mm/yyyy, số kiểu `1.234.567` hay `1,234,567`, file UTF-8 / UTF-16 / Windows-1258. Bước xem trước cho sửa loại, danh mục từng dòng (gợi ý từ giao dịch bạn đã nhập và vài cửa hàng quen) và **bỏ chọn sẵn các dòng trùng với giao dịch bạn đã gõ tay** (cùng nguồn, cùng số tiền, lệch tối đa 2 ngày). Nhập lại cùng file không bị nhân đôi; có nút **Hoàn tác lần nhập vừa rồi**. Các cột đã xác nhận được nhớ cho lần sau. Với sao kê PDF app còn **đối chiếu tổng** các dòng đọc được với "Nợ phát sinh trong kỳ" / "Đã thanh toán" của sao kê để biết có sót dòng không, và có thể **cập nhật thẻ tín dụng theo sao kê** (ngày chốt, ngày đến hạn, dư nợ cuối kỳ) để dòng "Cần trả" đúng với ngân hàng. PDF ảnh chụp / scan chưa đọc được.
 - **Thẻ (tag)**: gắn thẻ cho giao dịch (ô Thẻ trong biểu mẫu, gõ `khachA dh102` hoặc chạm các thẻ đã dùng) để theo dõi một khách hay một đơn hàng. Thẻ hiện thành chip cạnh ghi chú, chạm chip hoặc dùng bộ lọc **Thẻ** ở Sổ Giao Dịch để xem riêng; dòng tóm tắt (Thu / Chi / Chênh lệch) cho biết lãi lỗ của thẻ đó. Thẻ được lưu dạng `#thẻ` ngay trong ghi chú nên Google Sheet, CSV và sao lưu đều mang theo (CSV còn có cột **Thẻ** riêng). Trang **Thẻ & Khách Hàng** liệt kê mọi thẻ với thu, chi và lãi / lỗ (tất cả thời gian, năm nay hoặc tháng này) để biết mỗi khách hay đơn hàng lãi bao nhiêu; ở đó đổi tên thẻ, hoặc đổi thành tên một thẻ đang có để gộp hai thẻ.
 - **Sắp xếp**: nút **Sắp xếp** ở trang Nguồn Tiền và Danh Mục chuyển sang chế độ chỉ có Lên / Xuống để đặt thứ tự; thứ tự này dùng ở mọi ô chọn nguồn tiền / danh mục và bộ lọc, được lưu cùng sao lưu và đồng bộ giữa các máy.
 - **Ô nhập tiền**: mọi ô nhập số tiền (giao dịch, hạn mức, số dư ban đầu, lương, tiết kiệm, vay nợ, định kỳ) và các hộp hỏi số tiền (Sửa số dư, Khớp số dư, ngân sách danh mục, trả nợ) đều tự thêm dấu chấm hàng nghìn khi gõ.
@@ -27,27 +27,27 @@ Chạy thử: `npm run serve` rồi mở http://127.0.0.1:4173/ (hoặc host th�
 
 ## Cấu trúc
 
-| File                                                | Vai trò                                                                                               |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `index.html`, `css/style.css`                       | Giao diện                                                                                             |
-| `js/utils.js`                                       | Hàm thuần dùng chung: escape HTML, định dạng, ngày, chuẩn hoá dữ liệu, lọc, CSV, lịch định kỳ, vay nợ |
-| `js/data.js`                                        | State dùng chung, đọc / ghi `localStorage` an toàn, dữ liệu "meta" (`saveMeta`)                       |
-| `js/ui.js`                                          | Chuyển tab, hộp thoại, loại giao dịch, thông báo (toast)                                              |
-| `js/categories.js`, `js/budgets.js`, `js/salary.js` | Danh mục, ngân sách và chi tiêu trên lương                                                            |
-| `js/recurring.js`, `js/debts.js`                    | Giao dịch định kỳ và sổ vay nợ                                                                        |
-| `js/savings.js`                                     | Sổ tiết kiệm: tự động gửi khi lãnh lương, các sổ và lịch sử gửi / rút                                 |
-| `js/transactions.js`, `js/sources.js`               | Giao dịch (bộ lọc, xuất CSV) và nguồn tiền                                                            |
-| `js/tags.js`                                        | Trang Thẻ & Khách Hàng: báo cáo theo thẻ, đổi tên / gộp thẻ                                           |
-| `js/import.js`                                      | Nhập sao kê ngân hàng (CSV): chọn file, nhận cột, xem trước, ghi giao dịch, hoàn tác                  |
-| `js/charts.js`                                      | Biểu đồ Chart.js                                                                                      |
-| `js/sync.js`                                        | Đồng bộ Google Sheets                                                                                 |
-| `js/backup.js`                                      | Sao lưu / khôi phục JSON                                                                              |
-| `js/app.js`                                         | Khởi tạo, tổng quan, xóa dữ liệu                                                                      |
-| `js/pwa.js`, `sw.js`, `manifest.json`               | PWA: cài đặt và chạy offline                                                                          |
-| `vendor/`                                           | Chart.js 4.4.1 (MIT) và Font Awesome Free 6.4.0 (đi kèm giấy phép)                                    |
-| `apps-script/Code.gs`                               | Mã Google Apps Script (giao thức v2)                                                                  |
-| `tests/`                                            | Test e2e (Playwright) và test đơn vị / Apps Script (`node:test`)                                      |
-| `CLAUDE.md`                                         | Bộ nhớ dự án cho các phiên làm việc với Claude Code                                                   |
+| File                                                | Vai trò                                                                                                  |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `index.html`, `css/style.css`                       | Giao diện                                                                                                |
+| `js/utils.js`                                       | Hàm thuần dùng chung: escape HTML, định dạng, ngày, chuẩn hoá dữ liệu, lọc, CSV, lịch định kỳ, vay nợ    |
+| `js/data.js`                                        | State dùng chung, đọc / ghi `localStorage` an toàn, dữ liệu "meta" (`saveMeta`)                          |
+| `js/ui.js`                                          | Chuyển tab, hộp thoại, loại giao dịch, thông báo (toast)                                                 |
+| `js/categories.js`, `js/budgets.js`, `js/salary.js` | Danh mục, ngân sách và chi tiêu trên lương                                                               |
+| `js/recurring.js`, `js/debts.js`                    | Giao dịch định kỳ và sổ vay nợ                                                                           |
+| `js/savings.js`                                     | Sổ tiết kiệm: tự động gửi khi lãnh lương, các sổ và lịch sử gửi / rút                                    |
+| `js/transactions.js`, `js/sources.js`               | Giao dịch (bộ lọc, xuất CSV) và nguồn tiền                                                               |
+| `js/tags.js`                                        | Trang Thẻ & Khách Hàng: báo cáo theo thẻ, đổi tên / gộp thẻ                                              |
+| `js/import.js`                                      | Nhập sao kê ngân hàng (CSV, PDF): chọn file, nhận cột, xem trước, ghi giao dịch, hoàn tác                |
+| `js/charts.js`                                      | Biểu đồ Chart.js                                                                                         |
+| `js/sync.js`                                        | Đồng bộ Google Sheets                                                                                    |
+| `js/backup.js`                                      | Sao lưu / khôi phục JSON                                                                                 |
+| `js/app.js`                                         | Khởi tạo, tổng quan, xóa dữ liệu                                                                         |
+| `js/pwa.js`, `sw.js`, `manifest.json`               | PWA: cài đặt và chạy offline                                                                             |
+| `vendor/`                                           | Chart.js 4.4.1 (MIT), Font Awesome Free 6.4.0 và pdf.js 3.11.174 (Apache-2.0, chỉ nạp khi chọn file PDF) |
+| `apps-script/Code.gs`                               | Mã Google Apps Script (giao thức v2)                                                                     |
+| `tests/`                                            | Test e2e (Playwright) và test đơn vị / Apps Script (`node:test`)                                         |
+| `CLAUDE.md`                                         | Bộ nhớ dự án cho các phiên làm việc với Claude Code                                                      |
 
 ## Kiểm thử
 
