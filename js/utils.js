@@ -285,6 +285,84 @@ function normalizeSearchText(value) {
         .trim();
 }
 
+// --- TAGS ---
+// A tag is a word written in the note: "#khachA". It lives in the note, not in a field of its own,
+// so the Sheet (old and new script), the CSV and a backup all carry it, and searching the note
+// finds it. A tag starts with a letter and goes on with letters, digits, "_" or "-" (30 at most);
+// "#12" (a room number) is plain text.
+const MAX_TAGS = 10;
+const TAG_WORD = /^\p{L}[\p{L}\p{N}_-]{0,29}$/u;
+
+const tagKey = (tag) => String(tag).toLocaleLowerCase('vi');
+
+/** The tags without repeats ("KhachA" and "khacha" are one tag; the first spelling stays). */
+function uniqueTags(tags) {
+    const seen = new Set();
+
+    return tags.filter((tag) => {
+        const key = tagKey(tag);
+
+        if (seen.has(key)) return false;
+
+        seen.add(key);
+
+        return true;
+    });
+}
+
+/** Split a note into its plain text and its tags (words "#tag"); the other words keep their order. */
+function extractTags(note) {
+    const tags = [];
+    const rest = [];
+
+    String(note ?? '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .forEach((word) => {
+            if (word.startsWith('#') && TAG_WORD.test(word.slice(1))) tags.push(word.slice(1));
+            else rest.push(word);
+        });
+
+    return { text: rest.join(' '), tags: uniqueTags(tags) };
+}
+
+/** Read what was typed in the tags field: "khachA, #dh102  hoa-don" → tags, plus the bad words. */
+function parseTagInput(input) {
+    const tags = [];
+    const invalid = [];
+
+    String(input ?? '')
+        .split(/[\s,;]+/)
+        .map((word) => word.replace(/^#+/, ''))
+        .filter(Boolean)
+        .forEach((word) => (TAG_WORD.test(word) ? tags : invalid).push(word));
+
+    return { tags: uniqueTags(tags), invalid };
+}
+
+/** The note as it is stored: the text, then the tags as "#tag" words. */
+function composeNote(text, tags) {
+    return [String(text ?? '').trim(), ...tags.map((tag) => `#${tag}`)].filter(Boolean).join(' ');
+}
+
+/** Every tag in use with how many transactions carry it, the most used first. */
+function collectTags(list) {
+    const found = new Map();
+
+    list.forEach((transaction) => {
+        extractTags(transaction.note).tags.forEach((tag) => {
+            const entry = found.get(tagKey(tag));
+
+            if (entry) entry.count++;
+            else found.set(tagKey(tag), { tag, count: 1 });
+        });
+    });
+
+    return [...found.values()].sort(
+        (a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'vi'),
+    );
+}
+
 function transactionSearchText(transaction) {
     return normalizeSearchText(
         [
@@ -301,8 +379,8 @@ function transactionSearchText(transaction) {
 }
 
 /**
- * filters: { month: 'YYYY-MM', type, category, source, sources, search }; empty or 'ALL' means no
- * filter. source matches either side of a transfer; sources (a list of names) keeps transactions
+ * filters: { month: 'YYYY-MM', type, category, source, sources, tag, search }; empty or 'ALL' means
+ * no filter. tag keeps the transactions that carry that tag (spelling and case do not matter). source matches either side of a transfer; sources (a list of names) keeps transactions
  * that touch any of them on either side; every word of search must match.
  */
 function filterTransactions(list, filters = {}) {
@@ -320,6 +398,14 @@ function filterTransactions(list, filters = {}) {
             transaction.targetSource !== filters.source
         ) {
             return false;
+        }
+
+        if (active(filters.tag)) {
+            const wanted = tagKey(filters.tag);
+
+            if (!extractTags(transaction.note).tags.some((tag) => tagKey(tag) === wanted)) {
+                return false;
+            }
         }
 
         if (
@@ -1085,13 +1171,14 @@ function formatDateDisplay(dateKey) {
 /**
  * Group the digits typed in a money field: "1234567" -> "1.234.567". Everything that is not a
  * digit is dropped; a leading "-" is kept only when negative numbers are allowed.
+ * Zeros in front ("007") are dropped too, unless keepLeadingZeros is set: deleting the first digit
+ * of "20.000" leaves "0.000", and that must stay so a new first digit can be typed ("50.000")
+ * instead of the three zeros vanishing.
  */
-function formatMoneyDigits(text, allowNegative = false) {
+function formatMoneyDigits(text, allowNegative = false, { keepLeadingZeros = false } = {}) {
     const negative = allowNegative && /^\s*-/.test(String(text ?? ''));
-    const digits = String(text ?? '')
-        .replace(/\D/g, '')
-        .replace(/^0+(?=\d)/, '')
-        .slice(0, 15);
+    const typed = String(text ?? '').replace(/\D/g, '');
+    const digits = (keepLeadingZeros ? typed : typed.replace(/^0+(?=\d)/, '')).slice(0, 15);
 
     if (!digits) return negative ? '-' : '';
 

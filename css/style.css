@@ -645,6 +645,48 @@ canvas {
     align-items: center;
     gap: 8px;
 }
+/* Tags: "#word" in a note, shown as chips. */
+.tag-chip {
+    display: inline-block;
+    margin: 2px 4px 2px 0;
+    padding: 2px 8px;
+    border: 0;
+    border-radius: 12px;
+    background: #eef2ff;
+    color: var(--primary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    cursor: pointer;
+}
+/* The note and its tags are one block, so a phone's label-and-value row keeps them together. */
+.note-cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 768px) {
+    .note-cell {
+        text-align: right;
+    }
+}
+.tag-chip:hover {
+    background: #e0e7ff;
+}
+.tag-toggle.selected {
+    background: var(--primary);
+    color: #fff;
+}
+.tag-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 0;
+    margin-top: -4px;
+}
+.tag-suggestions[hidden] {
+    display: none;
+}
+
 .reorder-hint {
     margin: 0 0 16px;
     font-size: 13px;

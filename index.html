@@ -270,6 +270,10 @@
                         <label for="filter-source">Nguồn tiền</label>
                         <select id="filter-source" class="form-control"></select>
                     </div>
+                    <div class="filter-item" id="filter-tag-item" hidden>
+                        <label for="filter-tag">Thẻ</label>
+                        <select id="filter-tag" class="form-control"></select>
+                    </div>
                     <div class="filter-item grow">
                         <label for="filter-search">Tìm kiếm</label>
                         <input
@@ -732,6 +736,28 @@
                     <div class="form-group">
                         <label for="txNote">Mô Tả</label
                         ><input type="text" id="txNote" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label for="txTags">Thẻ (tag)</label>
+                        <input
+                            type="text"
+                            id="txTags"
+                            class="form-control"
+                            autocomplete="off"
+                            placeholder="vd: khachA dh102"
+                            aria-describedby="txTagsHint"
+                        />
+                        <p id="txTagsHint" class="hint">
+                            Cách nhau bằng dấu cách hoặc dấu phẩy. Lọc theo thẻ ở Sổ Giao Dịch để
+                            xem thu / chi của từng khách hay đơn hàng.
+                        </p>
+                        <div
+                            id="tx-tag-suggestions"
+                            class="tag-suggestions"
+                            role="group"
+                            aria-label="Thẻ đã dùng"
+                            hidden
+                        ></div>
                     </div>
                     <button type="submit" class="btn" style="width: 100%; justify-content: center">
                         Lưu Giao Dịch

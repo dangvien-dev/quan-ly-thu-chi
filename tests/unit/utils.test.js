@@ -1182,3 +1182,101 @@ test('normalizeSources / normalizeCategories giữ nguyên thứ tự người d
         '312',
     );
 });
+
+test('extractTags: thẻ là từ "#chữ…", tách khỏi phần ghi chú còn lại và không lặp (không phân biệt hoa thường)', () => {
+    const extract = (note) =>
+        JSON.parse(JSON.stringify(run(`extractTags(${JSON.stringify(note)})`)));
+
+    assert.deepEqual(extract('Mua keo #KhachA #dh-102'), {
+        text: 'Mua keo',
+        tags: ['KhachA', 'dh-102'],
+    });
+    // The tags can be anywhere in the note; the other words keep their order.
+    assert.deepEqual(extract('#khachA mua keo 502 #Đơn_hàng'), {
+        text: 'mua keo 502',
+        tags: ['khachA', 'Đơn_hàng'],
+    });
+    // The first spelling stays, the repeat goes.
+    assert.deepEqual(extract('a #KhachA b #khacha').tags, ['KhachA']);
+    // Not tags: a number ("#12" is a room), a tag with punctuation stuck to it, a lone "#",
+    // a "#" inside a word, 31 characters.
+    assert.deepEqual(extract('Phòng #12, tầng #3').tags, []);
+    assert.deepEqual(extract('xong #khach, #').tags, []);
+    assert.deepEqual(extract('mail a#b').tags, []);
+    assert.deepEqual(extract(`#${'a'.repeat(31)}`).tags, []);
+    assert.equal(extract(`#${'a'.repeat(30)}`).tags.length, 1);
+    // No tag: the text comes back with single spaces, empty or missing notes are fine.
+    assert.deepEqual(extract('Cafe   sáng'), { text: 'Cafe sáng', tags: [] });
+    assert.deepEqual(extract(''), { text: '', tags: [] });
+    assert.deepEqual(JSON.parse(JSON.stringify(run('extractTags(null)'))), { text: '', tags: [] });
+});
+
+test('parseTagInput / composeNote: đọc ô thẻ (dấu cách, phẩy, # tùy ý), báo từ sai, ghép lại vào ghi chú', () => {
+    const parse = (input) =>
+        JSON.parse(JSON.stringify(run(`parseTagInput(${JSON.stringify(input)})`)));
+
+    assert.deepEqual(parse('khachA, #dh102  hoa-don;KhachA'), {
+        tags: ['khachA', 'dh102', 'hoa-don'],
+        invalid: [],
+    });
+    assert.deepEqual(parse('12abc ok a$b'), { tags: ['ok'], invalid: ['12abc', 'a$b'] });
+    assert.deepEqual(parse('  ,  '), { tags: [], invalid: [] });
+
+    assert.equal(run('composeNote("Mua keo", ["khachA","dh102"])'), 'Mua keo #khachA #dh102');
+    assert.equal(run('composeNote("", ["khachA"])'), '#khachA');
+    assert.equal(run('composeNote("  Mua keo  ", [])'), 'Mua keo');
+    // Writing a note and reading it back gives the same text and tags.
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(run('extractTags(composeNote("Mua keo", ["a","B"]))'))),
+        { text: 'Mua keo', tags: ['a', 'B'] },
+    );
+});
+
+test('collectTags: đếm số giao dịch của mỗi thẻ, thẻ dùng nhiều nhất trước, gộp hoa thường', () => {
+    const list =
+        '[{note:"a #KhachA #dh1"},{note:"b #khacha"},{note:"c #dh1 #Zeta"},{note:"d"},{note:"e #khacha #dh1"}]';
+    const found = JSON.parse(JSON.stringify(run(`collectTags(${list})`)));
+
+    assert.deepEqual(found, [
+        { tag: 'dh1', count: 3 },
+        { tag: 'KhachA', count: 3 },
+        { tag: 'Zeta', count: 1 },
+    ]);
+    assert.deepEqual(JSON.parse(JSON.stringify(run('collectTags([])'))), []);
+});
+
+test('filterTransactions: tag giữ giao dịch có đúng thẻ đó (không phân biệt hoa thường, không khớp một phần)', () => {
+    const list =
+        '[{id:"a",date:"2026-10-01",type:"expense",source:"x",category:"c",amount:1,note:"mua #KhachA"},{id:"b",date:"2026-10-01",type:"income",source:"x",category:"c",amount:1,note:"thu #khach"},{id:"c",date:"2026-10-01",type:"expense",source:"x",category:"c",amount:1,note:"khachA không có dấu #"}]';
+    const ids = (filters) =>
+        run(`filterTransactions(${list},${filters}).map((t) => t.id).join("")`);
+
+    assert.equal(ids('{tag:"khacha"}'), 'a');
+    assert.equal(ids('{tag:"KHACH"}'), 'b');
+    assert.equal(ids('{tag:"kha"}'), '');
+    assert.equal(ids('{tag:"ALL"}'), 'abc');
+    assert.equal(ids('{tag:""}'), 'abc');
+    assert.equal(ids('{tag:"khacha",type:"income"}'), '');
+});
+
+test('formatMoneyDigits: số 0 đứng đầu bị bỏ khi gõ ở cuối, được giữ khi sửa ở đầu / giữa (keepLeadingZeros)', () => {
+    const keep = (text, negative = false) =>
+        run(`formatMoneyDigits(${JSON.stringify(text)},${negative},{keepLeadingZeros:true})`);
+
+    // Gõ ở cuối: như cũ.
+    assert.equal(run('formatMoneyDigits("007")'), '7');
+    assert.equal(run('formatMoneyDigits("0.000")'), '0');
+    assert.equal(run('formatMoneyDigits("0")'), '0');
+    // Xóa chữ số đầu của "20.000" để lại "0.000": giữ đủ ba số 0 để gõ chữ số mới.
+    assert.equal(keep('0.000'), '0.000');
+    assert.equal(keep('000'), '000');
+    assert.equal(keep('050000'), '050.000');
+    assert.equal(keep('-0.000', true), '-0.000');
+    // Không có số 0 đứng đầu thì hai cách giống nhau; vẫn cắt ở 15 chữ số và bỏ ký tự lạ.
+    assert.equal(keep('1500000'), '1.500.000');
+    assert.equal(keep(`${'9'.repeat(20)}`).replace(/\./g, '').length, 15);
+    assert.equal(keep('a1b0'), '10');
+    // Đọc lại số có số 0 đứng đầu vẫn đúng giá trị.
+    assert.equal(run('parseMoneyText("0.000")'), 0);
+    assert.equal(run('parseMoneyText("050.000")'), 50000);
+});

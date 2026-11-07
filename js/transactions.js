@@ -11,12 +11,31 @@ function handleFormSubmit(e) {
     const category =
         type === 'transfer' ? TRANSFER_CATEGORY : document.getElementById('txCategory').value;
     const amount = readMoneyInput('txAmount') || 0;
-    const note = document.getElementById('txNote').value.trim();
+    const noteInput = document.getElementById('txNote').value;
+    const typedTags = parseTagInput(document.getElementById('txTags').value);
 
     if (!dateInput || amount <= 0) {
         alert('Vui lòng nhập ngày và số tiền hợp lệ!');
         return;
     }
+
+    if (typedTags.invalid.length) {
+        alert(
+            `Thẻ không hợp lệ: ${typedTags.invalid.join(', ')}.\nThẻ bắt đầu bằng chữ, chỉ gồm chữ, số, "_" hoặc "-", tối đa 30 ký tự.`,
+        );
+        return;
+    }
+
+    // "#tag" words typed straight into the note count too; all tags end up at the end of the note.
+    const inline = extractTags(noteInput);
+    const tags = uniqueTags([...typedTags.tags, ...inline.tags]);
+
+    if (tags.length > MAX_TAGS) {
+        alert(`Mỗi giao dịch tối đa ${MAX_TAGS} thẻ.`);
+        return;
+    }
+
+    const note = tags.length ? composeNote(inline.text, tags) : noteInput.trim();
 
     if (type === 'transfer' && source === targetSource) {
         alert('Nguồn chuyển và nguồn nhận phải khác nhau!');
@@ -91,7 +110,11 @@ function editTransaction(id) {
     }
 
     setMoneyInput('txAmount', transaction.amount);
-    document.getElementById('txNote').value = transaction.note || '';
+
+    const { text, tags } = extractTags(transaction.note);
+
+    document.getElementById('txNote').value = tags.length ? text : transaction.note || '';
+    document.getElementById('txTags').value = tags.map((tag) => `#${tag}`).join(' ');
 
     const modalTitle = document.querySelector('#transactionModal .modal-header h3');
 
@@ -148,6 +171,8 @@ function handleTransactionTableClick(event) {
         editTransaction(button.dataset.id);
     } else if (button.dataset.action === 'delete') {
         deleteTransaction(button.dataset.id);
+    } else if (button.dataset.action === 'tag') {
+        filterByTag(button.dataset.tag);
     }
 }
 
@@ -173,9 +198,15 @@ function renderTransactionRow(transaction) {
     const id = escapeHtml(transaction.id);
     const date = escapeHtml(formatDateDisplay(transaction.date));
     const expanded = expandedTransactionIds.has(transaction.id);
+    const { text: noteText, tags } = extractTags(transaction.note);
+    const tagChips = tags
+        .map(
+            (tag) =>
+                `<button type="button" class="tag-chip" data-action="tag" data-tag="${escapeHtml(tag)}" aria-label="Lọc theo thẻ #${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`,
+        )
+        .join('');
     // The one-line phone row shows the note, or what the money was for when there is none.
-    const title =
-        transaction.type === 'transfer' ? sourceText : transaction.note || transaction.category;
+    const title = transaction.type === 'transfer' ? sourceText : noteText || transaction.category;
 
     return `<tr data-id="${id}" class="${expanded ? 'expanded' : ''}" style="--row-color:${colorStyle}">
             <td data-label="Ngày">${date}</td>
@@ -184,7 +215,7 @@ function renderTransactionRow(transaction) {
             <td data-label="Danh mục">${escapeHtml(transaction.category)}</td>
             <td data-label="Loại"><span style="color:${colorStyle}; font-weight:600;">${typeLabel}</span></td>
             <td data-label="Số tiền" style="font-weight:700; color:${colorStyle};">${sign}${formatMoney(transaction.amount)}</td>
-            <td data-label="Mô tả">${escapeHtml(transaction.note)}</td>
+            <td data-label="Mô tả"><span class="note-cell">${escapeHtml(tags.length ? noteText : transaction.note)}${tagChips}</span></td>
             <td class="row-actions" style="text-align:right; white-space:nowrap;">
                 <button class="btn btn-outline" style="padding:4px 8px; font-size:12px; margin-right:4px;" data-action="edit" data-id="${id}" title="Sửa" aria-label="Sửa giao dịch ${date} ${formatMoney(transaction.amount)}">
                     <i class="fa-solid fa-pen"></i>
@@ -221,6 +252,7 @@ function readTransactionFilters() {
         category: value('filter-category'),
         source: byDebt ? 'ALL' : source,
         sources: byDebt ? debtSourceNames() : null,
+        tag: value('filter-tag'),
         search: value('filter-search'),
     };
 }
@@ -278,6 +310,42 @@ function renderTransactionFilterOptions() {
     });
 }
 
+/** The tag filter lists the tags in use (and hides itself while there are none). */
+function renderTagFilterOptions() {
+    const select = document.getElementById('filter-tag');
+    const item = document.getElementById('filter-tag-item');
+
+    if (!select || !item) return;
+
+    const previous = select.value || 'ALL';
+    const tags = collectTags(transactions).sort((a, b) => a.tag.localeCompare(b.tag, 'vi'));
+    const same = tags.find((entry) => tagKey(entry.tag) === tagKey(previous));
+
+    item.hidden = tags.length === 0;
+    select.innerHTML =
+        '<option value="ALL">Tất cả thẻ</option>' +
+        tags
+            .map(
+                ({ tag, count }) =>
+                    `<option value="${escapeHtml(tag)}">#${escapeHtml(tag)} (${count})</option>`,
+            )
+            .join('');
+    select.value = same ? same.tag : 'ALL';
+}
+
+/** Show only the transactions with this tag (the other filters stay as they are). */
+function filterByTag(tag) {
+    renderTagFilterOptions();
+
+    const select = document.getElementById('filter-tag');
+    const match = [...select.options].find((option) => tagKey(option.value) === tagKey(tag));
+
+    if (!match) return;
+
+    select.value = match.value;
+    handleTransactionFilterChange();
+}
+
 function renderTransactionSummary(filtered, shown) {
     const summary = document.getElementById('transaction-summary');
 
@@ -307,6 +375,7 @@ function renderTransactions() {
     if (!tbody) return;
 
     renderTransactionFilterOptions();
+    renderTagFilterOptions();
 
     const filtered = getFilteredTransactions();
     const visible = filtered.slice(0, visibleTransactionCount);
@@ -345,13 +414,21 @@ function showMoreTransactions() {
  * Open Sổ Giao Dịch already filtered, e.g. from a card of the overview. Every filter not given is
  * cleared, so what is listed is exactly what was asked for.
  */
-function showTransactionsFor({ month = '', type = 'ALL', category = 'ALL', source = 'ALL' } = {}) {
+function showTransactionsFor({
+    month = '',
+    type = 'ALL',
+    category = 'ALL',
+    source = 'ALL',
+    tag = 'ALL',
+} = {}) {
     renderTransactionFilterOptions();
+    renderTagFilterOptions();
     document.getElementById('filter-month').value = month;
     document.getElementById('filter-search').value = '';
     document.getElementById('filter-type').value = type;
     document.getElementById('filter-category').value = category;
     document.getElementById('filter-source').value = source;
+    document.getElementById('filter-tag').value = tag;
     handleTransactionFilterChange();
     switchTab('transactions');
 }
@@ -360,7 +437,7 @@ function resetTransactionFilters() {
     ['filter-month', 'filter-search'].forEach((id) => {
         document.getElementById(id).value = '';
     });
-    ['filter-type', 'filter-category', 'filter-source'].forEach((id) => {
+    ['filter-type', 'filter-category', 'filter-source', 'filter-tag'].forEach((id) => {
         document.getElementById(id).value = 'ALL';
     });
     handleTransactionFilterChange();
@@ -395,10 +472,56 @@ function exportTransactionsCsv() {
 }
 
 function initTransactionFilters() {
-    ['filter-month', 'filter-type', 'filter-category', 'filter-source'].forEach((id) => {
-        document.getElementById(id).addEventListener('change', handleTransactionFilterChange);
-    });
+    ['filter-month', 'filter-type', 'filter-category', 'filter-source', 'filter-tag'].forEach(
+        (id) => {
+            document.getElementById(id).addEventListener('change', handleTransactionFilterChange);
+        },
+    );
     document
         .getElementById('filter-search')
         .addEventListener('input', handleTransactionFilterChange);
+}
+
+// --- TAGS FIELD OF THE FORM ---
+/** Buttons for the tags used most, so a tag is a tap instead of typing it again. */
+function renderTagSuggestions() {
+    const box = document.getElementById('tx-tag-suggestions');
+
+    if (!box) return;
+
+    const chosen = new Set(parseTagInput(document.getElementById('txTags').value).tags.map(tagKey));
+    const popular = collectTags(transactions).slice(0, 10);
+
+    box.hidden = popular.length === 0;
+    box.innerHTML = popular
+        .map(({ tag, count }) => {
+            const selected = chosen.has(tagKey(tag));
+
+            return `<button type="button" class="tag-chip tag-toggle${selected ? ' selected' : ''}" data-tag="${escapeHtml(tag)}" aria-pressed="${selected}" title="Đã dùng ${count} lần">#${escapeHtml(tag)}</button>`;
+        })
+        .join('');
+}
+
+function toggleFormTag(tag) {
+    const input = document.getElementById('txTags');
+    const { tags } = parseTagInput(input.value);
+    const key = tagKey(tag);
+    const next = tags.some((item) => tagKey(item) === key)
+        ? tags.filter((item) => tagKey(item) !== key)
+        : [...tags, tag];
+
+    input.value = next.map((item) => `#${item}`).join(' ');
+    renderTagSuggestions();
+    input.focus();
+}
+
+function initTags() {
+    const box = document.getElementById('tx-tag-suggestions');
+
+    box.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-tag]');
+
+        if (button) toggleFormTag(button.dataset.tag);
+    });
+    document.getElementById('txTags').addEventListener('input', renderTagSuggestions);
 }

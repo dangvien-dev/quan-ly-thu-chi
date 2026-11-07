@@ -123,6 +123,7 @@ function initializeApp() {
 
     initMoneyInputs();
     initTransactionFilters();
+    initTags();
     initRecurring();
     initDebts();
     initSalary();
