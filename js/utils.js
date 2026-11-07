@@ -575,6 +575,11 @@ const MAX_IMPORT_ROWS = 2000;
 // A bank posts a purchase a day or two after the user typed it, so the same amount this close
 // is probably the same transaction.
 const IMPORT_DUPLICATE_DAYS = 2;
+// A statement rounds a fraction of a đồng (582.719,50 of a USD purchase) one way and a person types
+// it the other (582.719), so an amount 1 đ off is still the same one, from this size up (below it
+// 1 đ is a different amount: an interest of 1 đ is not one of 2 đ).
+const IMPORT_AMOUNT_TOLERANCE = 1;
+const IMPORT_AMOUNT_TOLERANCE_FROM = 1000;
 const IMPORT_FALLBACK_CATEGORIES = { expense: 'Chưa phân loại', income: 'Thu nhập khác' };
 
 function countOutsideQuotes(line, char) {
@@ -1148,10 +1153,11 @@ function guessPositiveIsExpense(rows, layout) {
 /**
  * Say which candidates the book already has, for the money source they are imported into.
  *  - status 'imported': this very row was imported before (same id), so it is left out for good;
- *  - status 'duplicate': a transaction with the same effect on the source within
- *    IMPORT_DUPLICATE_DAYS (typed by hand, or a transfer) is probably the same one; `match` is
- *    its id. Each existing transaction explains at most one row, and the closest dates are paired
- *    first, so with two rows of the same amount the one nearer to the typed entry gets it.
+ *  - status 'duplicate': a transaction with the same effect on the source (to the đồng, or 1 đ off
+ *    from IMPORT_AMOUNT_TOLERANCE_FROM up) within IMPORT_DUPLICATE_DAYS (typed by hand, or a
+ *    transfer) is probably the same one; `match` is its id. Each existing transaction explains at
+ *    most one row; the exact amounts are paired first, then the closest dates, so with two rows of
+ *    the same amount the one nearer to the typed entry gets it.
  * Both are unticked (`include` false) so a person decides; everything else is ticked.
  */
 function markImportDuplicates(items, existing, sourceName) {
@@ -1178,15 +1184,20 @@ function markImportDuplicates(items, existing, sourceName) {
 
         const effect = item.type === 'income' ? item.amount : -item.amount;
         const time = parseLocalDate(item.date).getTime();
+        const tolerance = item.amount >= IMPORT_AMOUNT_TOLERANCE_FROM ? IMPORT_AMOUNT_TOLERANCE : 0;
 
-        (pool.get(effect) || []).forEach((candidate) => {
-            const days = Math.abs(Math.round((candidate.time - time) / 86400000));
+        for (let gap = -tolerance; gap <= tolerance; gap++) {
+            (pool.get(effect + gap) || []).forEach((candidate) => {
+                const days = Math.abs(Math.round((candidate.time - time) / 86400000));
 
-            if (days <= IMPORT_DUPLICATE_DAYS) pairs.push({ position, candidate, days });
-        });
+                if (days <= IMPORT_DUPLICATE_DAYS) {
+                    pairs.push({ position, candidate, days, off: Math.abs(gap) });
+                }
+            });
+        }
     });
 
-    pairs.sort((a, b) => a.days - b.days || a.position - b.position);
+    pairs.sort((a, b) => a.off - b.off || a.days - b.days || a.position - b.position);
 
     const matchOf = new Map();
     const taken = new Set();
