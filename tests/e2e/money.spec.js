@@ -231,3 +231,105 @@ test.describe('Ô tiền ở các biểu mẫu khác', () => {
         await wait(50);
     });
 });
+
+test.describe('Xóa chữ số đầu của ô tiền', () => {
+    test('chọn giao dịch cài sẵn 20.000, xóa số 2: giữ đủ 0.000 rồi gõ số mới thành 50.000', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+
+        await page.click('header .btn');
+        await page.click('.chip:has-text("Cafe sáng")');
+
+        const input = page.locator('#txAmount');
+
+        await expect(input).toHaveValue('20.000');
+
+        await input.focus();
+        await page.keyboard.press('Home');
+        await page.keyboard.press('ArrowRight'); // after the "2"
+        await page.keyboard.press('Backspace');
+
+        // Used to collapse to "0": the three zeros after the deleted digit were lost.
+        await expect(input).toHaveValue('0.000');
+
+        await page.keyboard.type('5'); // the caret stays at the front
+        await expect(input).toHaveValue('50.000');
+
+        await page.click('#transactionForm button[type=submit]');
+        expect(await page.evaluate(() => transactions[0].amount)).toBe(50000);
+    });
+
+    test('phím Delete ở đầu ô cũng giữ các số 0; rời ô thì gọn lại; lưu số 0 đứng đầu vẫn đúng giá trị', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+
+        await page.click('header .btn');
+
+        const input = page.locator('#txAmount');
+
+        await input.fill('20000');
+        await input.focus();
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Delete');
+        await expect(input).toHaveValue('0.000');
+
+        // Leaving the field tidies the zeros in front ("0.000" is the number 0).
+        await page.locator('#txNote').focus();
+        await expect(input).toHaveValue('0');
+
+        await input.fill('20000');
+        await input.focus();
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Delete');
+        await page.keyboard.type('7');
+        await expect(input).toHaveValue('70.000');
+        await page.locator('#txNote').focus();
+        await expect(input).toHaveValue('70.000');
+    });
+
+    test('xóa số đầu của số khác: các số còn lại không đổi; gõ ở cuối vẫn bỏ số 0 thừa', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+
+        await page.click('header .btn');
+
+        const input = page.locator('#txAmount');
+
+        await input.fill('1500000');
+        await input.focus();
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Delete');
+        await expect(input).toHaveValue('500.000'); // no zero in front: nothing to keep
+
+        await input.fill('');
+        await input.pressSequentially('0007');
+        await expect(input).toHaveValue('7');
+    });
+
+    test('hộp nhập số tiền và ô số dư có dấu trừ cũng giữ số 0 khi xóa chữ số đầu', async ({
+        app,
+    }) => {
+        const { page } = await app({
+            now: NOW,
+            seed: { fm_initial_balances: JSON.stringify({ 'Tiền Mặt': 20000 }) },
+        });
+
+        await page.evaluate(() => switchTab('sources'));
+        await page
+            .locator('#sources-grid .card', { has: page.locator('[data-source="Tiền Mặt"]') })
+            .locator('button[data-action=edit-balance]')
+            .click();
+
+        const field = page.locator('#moneyPromptInput');
+
+        await expect(field).toHaveValue('20.000');
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Delete');
+        await expect(field).toHaveValue('0.000');
+        await page.keyboard.type('-'); // a minus in front of the kept zeros
+        await expect(field).toHaveValue('-0.000');
+    });
+});

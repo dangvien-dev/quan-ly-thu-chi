@@ -1258,3 +1258,25 @@ test('filterTransactions: tag giữ giao dịch có đúng thẻ đó (không ph
     assert.equal(ids('{tag:""}'), 'abc');
     assert.equal(ids('{tag:"khacha",type:"income"}'), '');
 });
+
+test('formatMoneyDigits: số 0 đứng đầu bị bỏ khi gõ ở cuối, được giữ khi sửa ở đầu / giữa (keepLeadingZeros)', () => {
+    const keep = (text, negative = false) =>
+        run(`formatMoneyDigits(${JSON.stringify(text)},${negative},{keepLeadingZeros:true})`);
+
+    // Gõ ở cuối: như cũ.
+    assert.equal(run('formatMoneyDigits("007")'), '7');
+    assert.equal(run('formatMoneyDigits("0.000")'), '0');
+    assert.equal(run('formatMoneyDigits("0")'), '0');
+    // Xóa chữ số đầu của "20.000" để lại "0.000": giữ đủ ba số 0 để gõ chữ số mới.
+    assert.equal(keep('0.000'), '0.000');
+    assert.equal(keep('000'), '000');
+    assert.equal(keep('050000'), '050.000');
+    assert.equal(keep('-0.000', true), '-0.000');
+    // Không có số 0 đứng đầu thì hai cách giống nhau; vẫn cắt ở 15 chữ số và bỏ ký tự lạ.
+    assert.equal(keep('1500000'), '1.500.000');
+    assert.equal(keep(`${'9'.repeat(20)}`).replace(/\./g, '').length, 15);
+    assert.equal(keep('a1b0'), '10');
+    // Đọc lại số có số 0 đứng đầu vẫn đúng giá trị.
+    assert.equal(run('parseMoneyText("0.000")'), 0);
+    assert.equal(run('parseMoneyText("050.000")'), 50000);
+});

@@ -442,7 +442,11 @@ function attachMoneyInput(input) {
         const typed = input.value;
         const caret = input.selectionStart ?? typed.length;
         // Read on every keystroke: the field of askMoney() switches between the two modes.
-        const formatted = formatMoneyDigits(typed, input.dataset.money === 'signed');
+        // An edit before the end (deleting the first digit) keeps the zeros in front; they go
+        // when the field is left. Typing at the end ("0" then "5") is "5" at once.
+        const formatted = formatMoneyDigits(typed, input.dataset.money === 'signed', {
+            keepLeadingZeros: caret < typed.length,
+        });
 
         if (formatted === typed) return;
 
@@ -459,6 +463,11 @@ function attachMoneyInput(input) {
         }
 
         input.setSelectionRange(position, position);
+    });
+
+    // Leaving the field: the zeros kept in front while editing go ("0.000" -> "0").
+    input.addEventListener('blur', () => {
+        input.value = formatMoneyDigits(input.value, input.dataset.money === 'signed');
     });
 }
 

@@ -1171,13 +1171,14 @@ function formatDateDisplay(dateKey) {
 /**
  * Group the digits typed in a money field: "1234567" -> "1.234.567". Everything that is not a
  * digit is dropped; a leading "-" is kept only when negative numbers are allowed.
+ * Zeros in front ("007") are dropped too, unless keepLeadingZeros is set: deleting the first digit
+ * of "20.000" leaves "0.000", and that must stay so a new first digit can be typed ("50.000")
+ * instead of the three zeros vanishing.
  */
-function formatMoneyDigits(text, allowNegative = false) {
+function formatMoneyDigits(text, allowNegative = false, { keepLeadingZeros = false } = {}) {
     const negative = allowNegative && /^\s*-/.test(String(text ?? ''));
-    const digits = String(text ?? '')
-        .replace(/\D/g, '')
-        .replace(/^0+(?=\d)/, '')
-        .slice(0, 15);
+    const typed = String(text ?? '').replace(/\D/g, '');
+    const digits = (keepLeadingZeros ? typed : typed.replace(/^0+(?=\d)/, '')).slice(0, 15);
 
     if (!digits) return negative ? '-' : '';
 
