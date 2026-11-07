@@ -1810,3 +1810,77 @@ main:focus {
     color: var(--text-muted);
     font-size: 14px;
 }
+
+/* --- Bank statement import --- */
+#importModal .modal-content {
+    max-width: 960px;
+}
+
+.import-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    column-gap: 14px;
+}
+
+.import-message {
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.import-message.import-error {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.import-raw {
+    max-height: 190px;
+    overflow: auto;
+    margin: 4px 0 14px;
+}
+
+.import-table {
+    min-width: 0;
+}
+
+.import-raw td {
+    white-space: nowrap;
+    font-size: 12px;
+    padding: 6px 10px;
+}
+
+.import-raw-header td {
+    font-weight: 700;
+    background: var(--bg-body);
+}
+
+.import-select {
+    padding: 6px 8px;
+    min-width: 96px;
+}
+
+.import-row-off td {
+    opacity: 0.6;
+}
+
+.import-flag {
+    margin-top: 2px;
+}
+
+.import-skipped {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.import-skipped ul {
+    margin: 6px 0 0 18px;
+}
+
+.import-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 16px;
+}

@@ -210,16 +210,7 @@ function updateDebtPayHint() {
 
 /** The category a payment is filed under; added to the list the first time it is needed. */
 function ensureDebtCategory(rule) {
-    if (categories.some((category) => category.name === rule.category)) return;
-
-    categories.push({
-        id: Date.now(),
-        name: rule.category,
-        type: rule.type,
-        icon: rule.icon,
-    });
-    saveMeta('categories');
-    updateCategoriesDropdown();
+    ensureCategory(rule.category, rule.type, rule.icon);
 }
 
 /**

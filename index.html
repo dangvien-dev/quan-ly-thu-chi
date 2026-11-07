@@ -611,6 +611,34 @@
 
                     <hr style="margin: 20px 0" />
 
+                    <h3 style="margin-bottom: 12px">Nhập sao kê ngân hàng (CSV)</h3>
+                    <p class="update-status">
+                        Chọn file CSV tải từ internet banking. Ứng dụng tự nhận các cột, bỏ qua giao
+                        dịch bạn đã nhập tay và để bạn kiểm tra lại trước khi lưu.
+                    </p>
+                    <div class="update-actions">
+                        <button
+                            type="button"
+                            class="btn"
+                            id="import-open-btn"
+                            onclick="openImportModal()"
+                        >
+                            <i class="fa-solid fa-file-import" aria-hidden="true"></i> Nhập sao kê
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            id="import-undo-btn"
+                            onclick="undoLastImport()"
+                            hidden
+                        >
+                            <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
+                            <span id="import-undo-label">Hoàn tác lần nhập vừa rồi</span>
+                        </button>
+                    </div>
+
+                    <hr style="margin: 20px 0" />
+
                     <h3 style="margin-bottom: 12px">Sao lưu & Khôi phục dữ liệu</h3>
 
                     <button class="btn" onclick="exportBackup()">
@@ -1147,6 +1175,159 @@
         </div>
 
         <div
+            id="importModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="importTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="importTitle">Nhập sao kê ngân hàng</h3>
+                    <button
+                        type="button"
+                        class="close-btn"
+                        onclick="closeImportModal()"
+                        aria-label="Đóng"
+                    >
+                        &times;
+                    </button>
+                </div>
+
+                <section id="import-step-file" aria-label="Chọn file và cột">
+                    <div class="import-grid">
+                        <div class="form-group">
+                            <label for="importFile">File sao kê (.csv)</label>
+                            <input
+                                type="file"
+                                id="importFile"
+                                class="form-control"
+                                accept=".csv,.txt,text/csv,text/plain"
+                            />
+                        </div>
+                        <div class="form-group">
+                            <label for="importSource">Nhập vào nguồn tiền</label>
+                            <select id="importSource" class="form-control"></select>
+                        </div>
+                    </div>
+                    <p id="importMessage" class="import-message" role="status"></p>
+
+                    <div id="import-mapping" hidden>
+                        <h4 class="subsection-title">Các cột trong file</h4>
+                        <p class="import-message">
+                            Kiểm tra ứng dụng đã nhận đúng cột chưa; sửa nếu cần. Với sao kê chỉ có
+                            một cột số tiền thì chọn cột đó (không chọn Ghi nợ / Ghi có).
+                        </p>
+                        <div class="import-grid">
+                            <div class="form-group">
+                                <label for="importHeaderRow">Dòng tiêu đề (0 = không có)</label>
+                                <input
+                                    type="number"
+                                    id="importHeaderRow"
+                                    class="form-control"
+                                    min="0"
+                                    step="1"
+                                    inputmode="numeric"
+                                />
+                            </div>
+                            <div class="form-group">
+                                <label for="importColDate">Ngày</label>
+                                <select id="importColDate" class="form-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="importColDescription">Nội dung</label>
+                                <select id="importColDescription" class="form-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="importColDebit">Ghi nợ (tiền ra)</label>
+                                <select id="importColDebit" class="form-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="importColCredit">Ghi có (tiền vào)</label>
+                                <select id="importColCredit" class="form-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="importColAmount">Số tiền (một cột)</label>
+                                <select id="importColAmount" class="form-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="importColReference">Mã giao dịch</label>
+                                <select id="importColReference" class="form-control"></select>
+                            </div>
+                            <div class="form-group" id="import-sign-group">
+                                <label for="importSign">Dấu của số tiền</label>
+                                <select id="importSign" class="form-control">
+                                    <option value="negative">Số âm là chi, số dương là thu</option>
+                                    <option value="positive">
+                                        Số dương là chi (sao kê thẻ tín dụng)
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="table-container import-raw">
+                            <table class="import-table" aria-label="Vài dòng đầu của file">
+                                <tbody id="import-raw-body"></tbody>
+                            </table>
+                        </div>
+                        <div class="import-actions">
+                            <button
+                                type="button"
+                                class="btn"
+                                id="import-continue"
+                                onclick="buildImportPreview()"
+                            >
+                                Xem trước
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="import-step-preview" aria-label="Xem trước giao dịch" hidden>
+                    <p id="import-summary" class="filter-summary" aria-live="polite"></p>
+                    <details id="import-skipped" class="import-skipped" hidden>
+                        <summary id="import-skipped-summary"></summary>
+                        <ul id="import-skipped-list"></ul>
+                    </details>
+                    <label class="check-label">
+                        <input type="checkbox" id="import-select-all" /> Chọn tất cả
+                    </label>
+                    <div class="table-container">
+                        <table class="responsive-table import-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Nhập</th>
+                                    <th scope="col">Ngày</th>
+                                    <th scope="col">Nội dung</th>
+                                    <th scope="col">Loại</th>
+                                    <th scope="col">Số tiền</th>
+                                    <th scope="col">Danh mục</th>
+                                </tr>
+                            </thead>
+                            <tbody id="import-table-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="import-actions">
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            onclick="backToImportMapping()"
+                        >
+                            Quay lại
+                        </button>
+                        <button
+                            type="button"
+                            class="btn"
+                            id="import-commit"
+                            onclick="commitImport()"
+                        >
+                            Nhập
+                        </button>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <div
             id="tagRenameModal"
             class="modal"
             role="dialog"
@@ -1508,6 +1689,7 @@
         <script src="js/debts.js"></script>
         <script src="js/transactions.js"></script>
         <script src="js/tags.js"></script>
+        <script src="js/import.js"></script>
         <script src="js/sources.js"></script>
         <script src="js/savings.js"></script>
         <script src="js/charts.js"></script>
