@@ -169,8 +169,10 @@ test.describe('CSV', () => {
             `buildTransactionsCsv([${JSON.stringify(tx({ amount: 17000, note: 'Cafe' }))}])`,
         );
 
-        assert.ok(csv.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú\r\n'));
-        assert.ok(csv.includes('27/10/2026,Chi,Tiền Mặt,,Ăn uống,17000,Cafe\r\n'));
+        assert.ok(
+            csv.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú,Thẻ\r\n'),
+        );
+        assert.ok(csv.includes('27/10/2026,Chi,Tiền Mặt,,Ăn uống,17000,Cafe,\r\n'));
     });
 
     test('escape dấu phẩy, nháy kép, xuống dòng', () => {
@@ -1120,6 +1122,110 @@ test('computeCardSpendStatus: mức 0 / 1 / 2, làm tròn xuống, đúng mốc 
     assert.equal(run('computeCardSpendStatus(10,null)'), null);
 });
 
+test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ khoản đã trả, hạn là ngày hạn sau kỳ chốt', () => {
+    // Spaylater: statement on the 24th, due on the 10th of the next month.
+    const spay = '{name:"Spay",kind:"credit",statementDay:24,dueDay:10}';
+    const row = (date, type, amount, extra = '') =>
+        `{id:"${date}${type}${amount}",date:"${date}",type:"${type}",source:"Spay",amount:${amount}${extra}}`;
+    const due = (list, today, source = spay, opening = 0) =>
+        JSON.parse(
+            JSON.stringify(run(`computeCardDue(${source},[${list}],${opening},"${today}")`)),
+        );
+    const october = [row('2026-10-05', 'expense', 1000000), row('2026-10-30', 'expense', 464140)];
+
+    // On 7/11 the 24/10 statement (1.000.000) is due on 10/11; the purchase of 30/10 is next month's.
+    assert.deepEqual(due(october, '2026-11-07'), {
+        name: 'Spay',
+        amount: 1000000,
+        statementDate: '2026-10-24',
+        dueDate: '2026-11-10',
+        daysLeft: 3,
+    });
+
+    // A part payment into the card after the statement lowers it; paying all of it clears it.
+    const paid = (amount) =>
+        `{id:"pay",date:"2026-11-05",type:"transfer",source:"Bank",targetSource:"Spay",amount:${amount}}`;
+
+    assert.equal(due([...october, paid(400000)], '2026-11-07').amount, 600000);
+    assert.equal(due([...october, paid(1000000)], '2026-11-07'), null);
+    // Money paid before the statement is already in the balance and is not counted twice.
+    assert.equal(
+        due(
+            [row('2026-10-05', 'expense', 1000000), row('2026-10-20', 'income', 300000)],
+            '2026-11-07',
+        ).amount,
+        700000,
+    );
+
+    // The due date passed and the statement is still unpaid: overdue, not "next month".
+    const late = due(october, '2026-11-11');
+
+    assert.equal(late.dueDate, '2026-11-10');
+    assert.equal(late.daysLeft, -1);
+    // After the next statement (24/11) the old debt rolls into it and the due date moves on.
+    const next = due(october, '2026-11-25');
+
+    assert.equal(next.statementDate, '2026-11-24');
+    assert.equal(next.dueDate, '2026-12-10');
+    assert.equal(next.amount, 1464140);
+    // Due today counts as 0 days left.
+    assert.equal(due(october, '2026-11-10').daysLeft, 0);
+
+    // No statement day: the whole debt and the next due day.
+    const plain = '{name:"Spay",kind:"credit",dueDay:10}';
+
+    assert.deepEqual(due(october, '2026-11-07', plain), {
+        name: 'Spay',
+        amount: 1464140,
+        statementDate: '',
+        dueDate: '2026-11-10',
+        daysLeft: 3,
+    });
+    // A positive opening balance offsets the spending, so nothing is owed.
+    assert.equal(due(october, '2026-11-07', spay, 5000000), null);
+    // Not a card, no due day, or archived: nothing to remind about.
+    assert.equal(due(october, '2026-11-07', '{name:"Spay",kind:"bank",dueDay:10}'), null);
+    assert.equal(due(october, '2026-11-07', '{name:"Spay",kind:"credit",statementDay:24}'), null);
+    assert.equal(
+        due(october, '2026-11-07', '{name:"Spay",kind:"credit",dueDay:10,archived:true}'),
+        null,
+    );
+    // Short months: a statement on the 31st falls on the last day of February.
+    assert.equal(
+        due(
+            [row('2027-02-10', 'expense', 100)],
+            '2027-03-02',
+            '{name:"Spay",kind:"credit",statementDay:31,dueDay:15}',
+        ).statementDate,
+        '2027-02-28',
+    );
+});
+
+test('cardDueLevel và cardDuesToRemind: nhắc từ 3 ngày trước hạn, quá hạn là mức 2, gấp nhất trước', () => {
+    assert.equal(run('cardDueLevel(null)'), 0);
+    assert.equal(run('cardDueLevel({daysLeft:4})'), 0);
+    assert.equal(run('cardDueLevel({daysLeft:3})'), 1);
+    assert.equal(run('cardDueLevel({daysLeft:0})'), 1);
+    assert.equal(run('cardDueLevel({daysLeft:-1})'), 2);
+
+    const sources =
+        '[{name:"A",kind:"credit",dueDay:12},{name:"B",kind:"credit",dueDay:9},{name:"C",kind:"credit",dueDay:30},{name:"D",kind:"bank",dueDay:8}]';
+    const list =
+        '[{date:"2026-11-01",type:"expense",source:"A",amount:10},{date:"2026-11-01",type:"expense",source:"B",amount:20},{date:"2026-11-01",type:"expense",source:"C",amount:30},{date:"2026-11-01",type:"expense",source:"D",amount:40}]';
+
+    // On 7/11: A is due in 5 days (not yet), B in 2 days, C in 23 days, D is not a card.
+    assert.equal(
+        run(`cardDuesToRemind(${sources},${list},{},"2026-11-07").map((d) => d.name).join("")`),
+        'B',
+    );
+    // On 10/11: B's 9th has passed, so its next due day is 9/12, far away (without a statement day
+    // there is no way to tell an unpaid 9/11 from a paid one); A is due in 2 days.
+    assert.equal(
+        run(`cardDuesToRemind(${sources},${list},{},"2026-11-10").map((d) => d.name).join("")`),
+        'A',
+    );
+});
+
 test('filterTransactions: sources giữ giao dịch chạm vào một trong các nguồn ở cả hai phía', () => {
     const list =
         '[{id:"a",date:"2026-10-01",type:"expense",source:"Spay",category:"x",amount:1,note:""},{id:"b",date:"2026-10-01",type:"expense",source:"Tiền Mặt",category:"x",amount:1,note:""},{id:"c",date:"2026-10-01",type:"transfer",source:"Ngân Hàng",targetSource:"Visa",category:"x",amount:1,note:""}]';
@@ -1132,6 +1238,126 @@ test('filterTransactions: sources giữ giao dịch chạm vào một trong các
     // null / missing means no such filter.
     assert.equal(ids('{sources:null}'), 'abc');
     assert.equal(ids('{}'), 'abc');
+});
+
+const TAG_ROWS = `[
+    {id:"A",date:"2026-10-20",type:"expense",amount:120000,note:"Mua keo #KhachA #dh102"},
+    {id:"B",date:"2026-10-21",type:"income",amount:500000,note:"Công sửa bàn #khacha"},
+    {id:"C",date:"2026-10-22",type:"expense",amount:30000,note:"Cafe sáng"},
+    {id:"D",date:"2026-10-23",type:"expense",amount:80000,note:"Sơn #dh102"},
+    {id:"E",date:"2026-09-15",type:"expense",amount:10000,note:"#khachA"},
+    {id:"F",date:"2026-10-24",type:"transfer",amount:99999,note:"#khachA"}
+]`;
+
+test('computeTagReport: thu, chi, lãi lỗ theo thẻ; khoảng thời gian; chuyển tiền chỉ tính số giao dịch', () => {
+    const report = (prefix = '') =>
+        JSON.parse(JSON.stringify(run(`computeTagReport(${TAG_ROWS},"${prefix}")`)));
+
+    // KhachA / khacha / khachA are one tag (first spelling stays); the transfer F is only counted.
+    assert.deepEqual(report(), [
+        {
+            tag: 'KhachA',
+            count: 4,
+            income: 500000,
+            expense: 130000,
+            last: '2026-10-24',
+            net: 370000,
+        },
+        { tag: 'dh102', count: 2, income: 0, expense: 200000, last: '2026-10-23', net: -200000 },
+    ]);
+    // A month and a year narrow it down; the transaction without a tag never shows up.
+    assert.deepEqual(
+        report('2026-10').map((row) => [row.tag, row.count, row.net]),
+        [
+            ['KhachA', 3, 380000],
+            ['dh102', 2, -200000],
+        ],
+    );
+    assert.deepEqual(
+        report('2026-09').map((row) => [row.tag, row.count, row.net]),
+        [['khachA', 1, -10000]],
+    );
+    assert.equal(report('2025').length, 0);
+    assert.equal(run('computeTagReport([],"").length'), 0);
+    // Most recently used first, then by name.
+    assert.equal(
+        run(
+            'computeTagReport([{date:"2026-01-01",type:"expense",amount:1,note:"#b #a"}],"").map((r) => r.tag).join("")',
+        ),
+        'ab',
+    );
+});
+
+test('renameTagInNote: đổi tên một thẻ, gộp khi đã có, ghi chú không có thẻ đó giữ nguyên', () => {
+    const rename = (note, from, to) =>
+        run(`renameTagInNote(${JSON.stringify(note)},${JSON.stringify(from)},"${to}")`);
+
+    assert.equal(rename('Mua keo #KhachA #dh102', 'khachA', 'Khach_A'), 'Mua keo #Khach_A #dh102');
+    // Only a change of capitals.
+    assert.equal(rename('x #khachA', 'khachA', 'KhachA'), 'x #KhachA');
+    // Both tags on the note: they become one.
+    assert.equal(rename('x #a #b', 'a', 'b'), 'x #b');
+    assert.equal(rename('x #a #B', 'a', 'b'), 'x #b');
+    // A note without the tag comes back as the very same text (spacing included).
+    assert.equal(rename('Cafe  sáng #z', 'a', 'b'), 'Cafe  sáng #z');
+    assert.equal(rename('', 'a', 'b'), '');
+    assert.equal(run('renameTagInNote(null,"a","b")'), null);
+    // "#12" is not a tag, so it is not touched.
+    assert.equal(rename('phòng #12 #a', 'a', 'b'), 'phòng #12 #b');
+});
+
+test('planTagRename: tên mới hợp lệ, trùng thẻ đang có thì gộp (dùng cách viết đang có)', () => {
+    const plan = (from, input) =>
+        JSON.parse(
+            JSON.stringify(
+                run(`planTagRename(${TAG_ROWS},${JSON.stringify(from)},${JSON.stringify(input)})`),
+            ),
+        );
+
+    assert.deepEqual(plan('dh102', 'don102'), { tag: 'don102', merge: false });
+    assert.deepEqual(plan('dh102', '#don102'), { tag: 'don102', merge: false });
+    // Another tag in use: merge, written the way it already is.
+    assert.deepEqual(plan('dh102', 'khacha'), { tag: 'KhachA', merge: true });
+    // Same tag with other capitals is a rename, never a merge.
+    assert.deepEqual(plan('dh102', 'DH102'), { tag: 'DH102', merge: false });
+    assert.match(plan('dh102', 'dh102').error, /giống tên cũ/);
+
+    for (const bad of ['', '   ', 'a b', '12ab', 'a@b', '#']) {
+        assert.match(plan('dh102', bad).error, /đúng một thẻ/, JSON.stringify(bad));
+    }
+});
+
+test('buildTransactionsCsv: cột Thẻ liệt kê các thẻ, ghi chú vẫn giữ nguyên', () => {
+    const csv = run(
+        `buildTransactionsCsv([{id:"1",date:"2026-10-27",type:"expense",source:"Tiền Mặt",category:"Ăn uống",amount:5000,note:"Cafe #a #B"},{id:"2",date:"2026-10-27",type:"expense",source:"Tiền Mặt",category:"Ăn uống",amount:5000,note:"Không thẻ"}])`,
+    );
+
+    assert.ok(csv.includes(',Cafe #a #B,#a #B\r\n'));
+    assert.ok(csv.includes(',Không thẻ,\r\n'));
+});
+
+test('normalizeDebt: lần thanh toán giữ transactionId khi có, không thêm trường khi không có', () => {
+    const payments = (list) =>
+        JSON.parse(
+            JSON.stringify(
+                run(
+                    `normalizeDebt({id:"d",party:"A",amount:1000,payments:${JSON.stringify(list)}}).payments`,
+                ),
+            ),
+        );
+
+    assert.deepEqual(
+        payments([
+            { id: 'p1', date: '2026-10-05', amount: 100, transactionId: 'TX_DEBT_p1' },
+            { id: 'p2', date: '2026-10-06', amount: 200 },
+            { id: 'p3', date: '2026-10-07', amount: 300, transactionId: '' },
+        ]),
+        [
+            { id: 'p1', date: '2026-10-05', amount: 100, transactionId: 'TX_DEBT_p1' },
+            { id: 'p2', date: '2026-10-06', amount: 200 },
+            { id: 'p3', date: '2026-10-07', amount: 300 },
+        ],
+    );
 });
 
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {

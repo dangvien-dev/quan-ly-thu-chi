@@ -363,6 +363,77 @@ function collectTags(list) {
     );
 }
 
+/**
+ * Money per tag for the transactions whose date starts with `prefix` ('' = all, 'YYYY' = a year,
+ * 'YYYY-MM' = a month): how many, income, expense, net (income - expense) and the latest date.
+ * A transaction with two tags counts for both. Transfers are not profit or loss, so they only
+ * count as a transaction. Most recently used first.
+ */
+function computeTagReport(list, prefix = '') {
+    const rows = new Map();
+
+    list.forEach((transaction) => {
+        if (prefix && !transaction.date.startsWith(prefix)) return;
+
+        extractTags(transaction.note).tags.forEach((tag) => {
+            const key = tagKey(tag);
+            const row = rows.get(key) || { tag, count: 0, income: 0, expense: 0, last: '' };
+
+            row.count++;
+
+            if (transaction.type === 'income') row.income += transaction.amount;
+            else if (transaction.type === 'expense') row.expense += transaction.amount;
+
+            if (transaction.date > row.last) row.last = transaction.date;
+
+            rows.set(key, row);
+        });
+    });
+
+    return [...rows.values()]
+        .map((row) => ({ ...row, net: row.income - row.expense }))
+        .sort((a, b) => b.last.localeCompare(a.last) || a.tag.localeCompare(b.tag, 'vi'));
+}
+
+/**
+ * The note with one tag renamed. Giving a tag that is already on the note merges the two into
+ * one; the plain text is kept. A note without the tag comes back unchanged (the same string).
+ */
+function renameTagInNote(note, fromTag, toTag) {
+    const { text, tags } = extractTags(note);
+    const from = tagKey(fromTag);
+
+    if (!tags.some((tag) => tagKey(tag) === from)) return note;
+
+    return composeNote(text, uniqueTags(tags.map((tag) => (tagKey(tag) === from ? toTag : tag))));
+}
+
+/**
+ * Check a new name typed for a tag. Returns { error }, or { tag, merge }: `tag` is the spelling to
+ * write (the one already in use when the name is another existing tag) and `merge` is true when
+ * that other tag exists, so the transactions join it instead of getting a new name.
+ */
+function planTagRename(list, fromTag, input) {
+    const { tags, invalid } = parseTagInput(input);
+
+    if (invalid.length || tags.length !== 1) {
+        return {
+            error: 'Nhập đúng một thẻ: bắt đầu bằng chữ, chỉ gồm chữ, số, "_" hoặc "-", tối đa 30 ký tự.',
+        };
+    }
+
+    const wanted = tags[0];
+
+    if (wanted === fromTag) return { error: 'Tên mới giống tên cũ.' };
+
+    // Only a change of capitals ("khachA" → "KhachA") keeps the same tag, so it is never a merge.
+    if (tagKey(wanted) === tagKey(fromTag)) return { tag: wanted, merge: false };
+
+    const existing = collectTags(list).find((entry) => tagKey(entry.tag) === tagKey(wanted));
+
+    return existing ? { tag: existing.tag, merge: true } : { tag: wanted, merge: false };
+}
+
 function transactionSearchText(transaction) {
     return normalizeSearchText(
         [
@@ -426,7 +497,16 @@ function filterTransactions(list, filters = {}) {
     });
 }
 
-const CSV_HEADER = ['Ngày', 'Loại', 'Nguồn tiền', 'Nguồn nhận', 'Danh mục', 'Số tiền', 'Ghi chú'];
+const CSV_HEADER = [
+    'Ngày',
+    'Loại',
+    'Nguồn tiền',
+    'Nguồn nhận',
+    'Danh mục',
+    'Số tiền',
+    'Ghi chú',
+    'Thẻ',
+];
 const CSV_TYPE_LABELS = { income: 'Thu', expense: 'Chi', transfer: 'Chuyển' };
 
 /**
@@ -453,7 +533,13 @@ function buildTransactionsCsv(list) {
             csvCell(transaction.targetSource),
             csvCell(transaction.category),
             csvCell(transaction.amount, { isText: false }),
+            // The note keeps its #tags as typed; the last column lists them again for a pivot table.
             csvCell(transaction.note),
+            csvCell(
+                extractTags(transaction.note)
+                    .tags.map((tag) => `#${tag}`)
+                    .join(' '),
+            ),
         ]),
     );
 
@@ -663,6 +749,112 @@ function computeCardSpendStatus(spent, plan) {
         limit: Math.round((plan.amount * plan.cardWarnPercent) / 100),
         level,
     };
+}
+
+// --- CARD STATEMENT DUE DATES ---
+
+/** Remind (and colour the card) from this many days before the due day. */
+const CARD_DUE_WARN_DAYS = 3;
+
+/** How a transaction changes the balance of one source; the same rules as calculateSourceBalances. */
+function sourceEffect(transaction, name) {
+    if (transaction.type === 'income') return transaction.source === name ? transaction.amount : 0;
+    if (transaction.type === 'expense')
+        return transaction.source === name ? -transaction.amount : 0;
+    if (transaction.type !== 'transfer') return 0;
+
+    return (
+        (transaction.targetSource === name ? transaction.amount : 0) -
+        (transaction.source === name ? transaction.amount : 0)
+    );
+}
+
+/** The latest date on or before `from` whose day of the month is `day` (short months use their last day). */
+function previousDayOfMonth(day, from) {
+    const base = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+
+    for (let offset = 0; offset < 3; offset++) {
+        const month = new Date(base.getFullYear(), base.getMonth() - offset, 1);
+        const candidate = new Date(
+            month.getFullYear(),
+            month.getMonth(),
+            Math.min(day, daysInMonth(month)),
+        );
+
+        if (candidate <= base) return candidate;
+    }
+
+    return base;
+}
+
+/**
+ * What a credit source must pay next, and by when; null when it has no due day or owes nothing.
+ * With a statement day the amount is what was owed on the last statement day minus what has been
+ * paid into the card since, and the due date is the first due day after that statement (so a
+ * statement that was not paid shows as overdue instead of jumping to next month). Without one it
+ * is the whole debt and the next due day.
+ * `opening` is the source's initial balance. daysLeft is negative once the due date has passed.
+ */
+function computeCardDue(source, list, opening, todayKey) {
+    if (!source || source.kind !== 'credit' || source.archived || !source.dueDay) return null;
+
+    const today = parseLocalDate(todayKey);
+    const base = Number(opening) || 0;
+    const balanceUpTo = (dateKey) =>
+        list.reduce(
+            (total, transaction) =>
+                transaction.date <= dateKey
+                    ? total + sourceEffect(transaction, source.name)
+                    : total,
+            base,
+        );
+    let amount;
+    let due;
+    let statementKey = '';
+
+    if (source.statementDay) {
+        const statement = previousDayOfMonth(source.statementDay, today);
+
+        statementKey = toLocalDateString(statement);
+        due = nextDayOfMonth(source.dueDay, addDays(statement, 1));
+
+        const paidSince = list.reduce((total, transaction) => {
+            if (transaction.date <= statementKey || transaction.date > todayKey) return total;
+
+            return total + Math.max(0, sourceEffect(transaction, source.name));
+        }, 0);
+
+        amount = Math.max(0, -balanceUpTo(statementKey) - paidSince);
+    } else {
+        due = nextDayOfMonth(source.dueDay, today);
+        amount = Math.max(0, -balanceUpTo(todayKey));
+    }
+
+    if (!(amount > 0)) return null;
+
+    return {
+        name: source.name,
+        amount,
+        statementDate: statementKey,
+        dueDate: toLocalDateString(due),
+        daysLeft: daysUntil(due, today),
+    };
+}
+
+/** 0 = nothing to worry about yet, 1 = due within CARD_DUE_WARN_DAYS, 2 = the due date has passed. */
+function cardDueLevel(due) {
+    if (!due) return 0;
+    if (due.daysLeft < 0) return 2;
+
+    return due.daysLeft <= CARD_DUE_WARN_DAYS ? 1 : 0;
+}
+
+/** The dues that need attention (level 1 or 2), the most urgent first. */
+function cardDuesToRemind(sourceList, list, openings, todayKey) {
+    return sourceList
+        .map((source) => computeCardDue(source, list, openings[source.name], todayKey))
+        .filter((due) => cardDueLevel(due) > 0)
+        .sort((a, b) => a.daysLeft - b.daysLeft);
 }
 
 const isExpenseInMonth = (transaction, monthKey) =>
@@ -1088,6 +1280,10 @@ function normalizeDebt(raw) {
             id: String(payment && payment.id ? payment.id : `${id}_P${index}`),
             date: normalizeDate(payment && payment.date),
             amount: parseAmount(payment && payment.amount),
+            // The transaction this payment wrote into a money source, when it was asked to.
+            ...(payment && payment.transactionId
+                ? { transactionId: String(payment.transactionId) }
+                : {}),
         }))
         .filter((payment) => payment.amount > 0);
 

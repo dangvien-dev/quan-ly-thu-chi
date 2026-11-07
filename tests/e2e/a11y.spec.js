@@ -264,6 +264,7 @@ test.describe('Giao diện điện thoại (390 × 844)', () => {
 
         for (const [tab, title] of [
             ['categories', 'Danh Mục Thu / Chi'],
+            ['tags', 'Thẻ & Khách Hàng'],
             ['recurring', 'Giao Dịch Định Kỳ'],
             ['settings', 'Cài Đặt & Dữ Liệu'],
         ]) {

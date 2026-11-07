@@ -194,15 +194,17 @@ test.describe('Hộp thoại nhập số tiền', () => {
 
         await goTab(page, 'debts');
         await page.click('#debt-table-body [data-action=pay]');
-        await expect(page.locator('#moneyPromptTitle')).toHaveText('Trả nợ');
-        await expect(page.locator(FIELD)).toHaveValue('1.000.000');
+        await expect(page.locator('#debtPayTitle')).toHaveText('Trả nợ');
+        await expect(page.locator('#debtPayAmount')).toHaveValue('1.000.000');
 
-        await page.keyboard.type('1500000');
+        await page.keyboard.type('1500000'); // the offered amount is selected, so this replaces it
+        await expect(page.locator('#debtPayAmount')).toHaveValue('1.500.000');
         await page.keyboard.press('Enter');
         expect(state.alerts.at(-1)).toContain('vượt quá số còn lại');
 
-        await page.click('#debt-table-body [data-action=pay]');
-        await page.keyboard.press('Enter'); // the amount offered: everything that is left
+        await page.fill('#debtPayAmount', '');
+        await page.keyboard.type('1000000');
+        await page.keyboard.press('Enter'); // everything that is left
 
         await expect(page.locator('#debt-table-body')).toContainText('Không có khoản nào đang nợ');
     });

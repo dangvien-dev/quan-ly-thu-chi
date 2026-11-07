@@ -3,6 +3,16 @@
 let editingDebtId = null;
 const expandedDebtIds = new Set();
 const DEBT_REMINDER_KEY = 'fm_debt_reminder_day';
+// The money source last chosen when paying a debt (on this device), offered again next time.
+const DEBT_PAY_SOURCE_KEY = 'fm_debt_pay_source';
+let payingDebtId = null;
+
+// What a payment writes into the money sources: paying what I owe is an expense, collecting what
+// is owed to me is income.
+const DEBT_PAY_RULES = {
+    owe: { type: 'expense', category: 'Trả nợ', verb: 'Trả nợ', icon: 'fa-hand-holding-dollar' },
+    owed: { type: 'income', category: 'Thu nợ', verb: 'Thu nợ', icon: 'fa-hand-holding-dollar' },
+};
 
 const DEBT_DIRECTION_LABELS = { owe: 'Tôi nợ', owed: 'Họ nợ tôi' };
 
@@ -27,15 +37,23 @@ function renderDebtDetails(debt) {
     const id = escapeHtml(debt.id);
     const payments = debt.payments.length
         ? debt.payments
-              .map(
-                  (payment) => `<li>
+              .map((payment) => {
+                  const written = payment.transactionId
+                      ? transactions.find((item) => item.id === payment.transactionId)
+                      : null;
+                  const where = written
+                      ? `<span class="source-meta">đã ghi vào ${escapeHtml(written.source)}</span>`
+                      : '';
+
+                  return `<li>
                     <span>${escapeHtml(formatDateDisplay(payment.date))}</span>
                     <b>${formatMoney(payment.amount)}</b>
+                    ${where}
                     <button class="btn btn-outline btn-small" data-action="delete-payment" data-id="${id}" data-payment="${escapeHtml(payment.id)}" title="Xóa lần thanh toán này" aria-label="Xóa lần thanh toán ${formatMoney(payment.amount)}">
                         <i class="fa-solid fa-trash"></i>
                     </button>
-                </li>`,
-              )
+                </li>`;
+              })
               .join('')
         : '<li class="source-meta">Chưa có lần thanh toán nào.</li>';
 
@@ -106,7 +124,7 @@ function handleDebtTableClick(event) {
 
     const { action, id, payment } = button.dataset;
     const actions = {
-        pay: () => addDebtPayment(id),
+        pay: () => openDebtPayModal(id),
         history: () => toggleDebtHistory(id),
         edit: () => openDebtModal(id),
         delete: () => deleteDebt(id),
@@ -130,47 +148,200 @@ function toggleDebtHistory(id) {
     renderDebts();
 }
 
-async function addDebtPayment(id) {
+// --- PAYMENT DIALOG ---
+/** Sources a payment can be written into: any that is in use, except the savings books. */
+function debtPaySources() {
+    return sourceNames().filter((name) => !isSavingsKind(findSource(name)));
+}
+
+function openDebtPayModal(id) {
     const debt = debts.find((item) => item.id === id);
 
     if (!debt) return;
 
+    const rule = DEBT_PAY_RULES[debt.direction];
     const remaining = debtRemaining(debt);
-    const amount = await askMoney({
-        title: debt.direction === 'owe' ? 'Trả nợ' : 'Thu nợ',
-        message: `${debt.direction === 'owe' ? 'Số tiền đã trả cho' : 'Số tiền đã thu từ'} [${debt.party}] (còn ${formatMoney(remaining)}):`,
-        value: remaining,
-    });
+    const remembered = readStoredText(DEBT_PAY_SOURCE_KEY);
+    const select = document.getElementById('debtPaySource');
 
-    if (amount === null) return;
+    payingDebtId = id;
+    document.getElementById('debtPayTitle').innerText = rule.verb;
+    document.getElementById('debtPayMessage').innerText =
+        `${debt.direction === 'owe' ? 'Số tiền đã trả cho' : 'Số tiền đã thu từ'} [${debt.party}] (còn ${formatMoney(remaining)}):`;
+    setMoneyInput('debtPayAmount', remaining);
+    document.getElementById('debtPayDate').value = toLocalDateString();
+    select.innerHTML =
+        '<option value="">Không ghi giao dịch</option>' +
+        debtPaySources()
+            .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+            .join('');
+    select.value = debtPaySources().includes(remembered) ? remembered : '';
+    updateDebtPayHint();
+    openDialog('debtPayModal', 'debtPayAmount');
+    document.getElementById('debtPayAmount').select();
+}
+
+function closeDebtPayModal() {
+    payingDebtId = null;
+    closeDialog('debtPayModal');
+}
+
+/** Say what choosing a source does, so the money is not written twice by mistake. */
+function updateDebtPayHint() {
+    const debt = debts.find((item) => item.id === payingDebtId);
+    const source = document.getElementById('debtPaySource').value;
+    const hint = document.getElementById('debtPaySourceHint');
+
+    if (!debt) return;
+
+    if (!source) {
+        hint.textContent =
+            'Chỉ ghi vào sổ vay nợ, không tạo giao dịch và không đổi số dư nguồn tiền.';
+        return;
+    }
+
+    const rule = DEBT_PAY_RULES[debt.direction];
+
+    hint.textContent =
+        debt.direction === 'owe'
+            ? `Tạo giao dịch Chi "${rule.category}" từ ${source}: số dư ${source} giảm tương ứng.`
+            : `Tạo giao dịch Thu "${rule.category}" vào ${source}: số dư ${source} tăng tương ứng.`;
+}
+
+/** The category a payment is filed under; added to the list the first time it is needed. */
+function ensureDebtCategory(rule) {
+    if (categories.some((category) => category.name === rule.category)) return;
+
+    categories.push({
+        id: Date.now(),
+        name: rule.category,
+        type: rule.type,
+        icon: rule.icon,
+    });
+    saveMeta('categories');
+    updateCategoriesDropdown();
+}
+
+/**
+ * `P_<ms>` for a new payment. The id of the transaction it writes is derived from it, so a counter
+ * is added when that id is already taken (two payments in the same millisecond must not share one).
+ */
+function newDebtPaymentId(debt) {
+    const taken = new Set(debt.payments.map((payment) => payment.id));
+    const base = `P_${Date.now()}`;
+    let id = base;
+    let counter = 1;
+
+    while (taken.has(id) || transactions.some((item) => item.id === `TX_DEBT_${id}`)) {
+        id = `${base}_${counter++}`;
+    }
+
+    return id;
+}
+
+/** Write a payment into a money source as a transaction; returns its id. */
+function recordDebtTransaction(debt, payment, sourceName) {
+    const rule = DEBT_PAY_RULES[debt.direction];
+    const id = `TX_DEBT_${payment.id}`;
+
+    ensureDebtCategory(rule);
+    transactions.unshift({
+        id,
+        date: payment.date,
+        type: rule.type,
+        source: sourceName,
+        targetSource: null,
+        category: rule.category,
+        amount: payment.amount,
+        note: `${rule.verb} ${debt.party}`,
+        updatedAt: new Date().toISOString(),
+    });
+    saveDataLocally();
+    queueUpsert([id]);
+
+    return id;
+}
+
+function handleDebtPaySubmit(event) {
+    event.preventDefault();
+
+    // A sync may have replaced the list while the dialog was open: work on what is there now.
+    const debt = debts.find((item) => item.id === payingDebtId);
+
+    if (!debt) {
+        closeDebtPayModal();
+        return;
+    }
+
+    const amount = readMoneyInput('debtPayAmount');
+    const date = normalizeDate(document.getElementById('debtPayDate').value);
+    const sourceName = document.getElementById('debtPaySource').value;
 
     if (!(amount > 0)) {
         alert('Số tiền không hợp lệ!');
         return;
     }
 
-    // A sync may have replaced the list while the question was open: work on what is there now.
-    const current = debts.find((item) => item.id === id);
-
-    if (!current) return;
-
-    if (amount > debtRemaining(current)) {
-        alert(`Số tiền vượt quá số còn lại (${formatMoney(debtRemaining(current))}).`);
+    if (amount > debtRemaining(debt)) {
+        alert(`Số tiền vượt quá số còn lại (${formatMoney(debtRemaining(debt))}).`);
         return;
     }
 
-    current.payments.push({ id: `P_${Date.now()}`, date: toLocalDateString(), amount });
-    current.updatedAt = new Date().toISOString();
-    expandedDebtIds.add(id);
+    if (!date) {
+        alert('Vui lòng chọn ngày hợp lệ!');
+        return;
+    }
+
+    if (sourceName && !debtPaySources().includes(sourceName)) {
+        alert('Nguồn tiền này không còn dùng được. Hãy chọn nguồn khác.');
+        return;
+    }
+
+    const payment = { id: newDebtPaymentId(debt), date, amount };
+
+    if (sourceName) payment.transactionId = recordDebtTransaction(debt, payment, sourceName);
+
+    try {
+        localStorage.setItem(DEBT_PAY_SOURCE_KEY, sourceName);
+    } catch {
+        // Not being able to remember the choice is harmless.
+    }
+
+    debt.payments.push(payment);
+    debt.updatedAt = new Date().toISOString();
+    expandedDebtIds.add(debt.id);
+    closeDebtPayModal();
     saveDebts();
+
+    if (sourceName) {
+        showToast(
+            `Đã ghi giao dịch ${DEBT_PAY_RULES[debt.direction].type === 'expense' ? 'Chi' : 'Thu'} ${formatMoney(amount)} ${debt.direction === 'owe' ? 'từ' : 'vào'} ${sourceName}.`,
+            'success',
+        );
+    }
 }
 
 function deleteDebtPayment(debtId, paymentId) {
     const debt = debts.find((item) => item.id === debtId);
+    const payment = debt && debt.payments.find((item) => item.id === paymentId);
 
-    if (!debt || !confirm('Xóa lần thanh toán này?')) return;
+    if (!payment) return;
 
-    debt.payments = debt.payments.filter((payment) => payment.id !== paymentId);
+    const written =
+        payment.transactionId && transactions.some((item) => item.id === payment.transactionId);
+    const question = written
+        ? 'Xóa lần thanh toán này? Giao dịch đã ghi từ lần này cũng sẽ bị xóa.'
+        : 'Xóa lần thanh toán này?';
+
+    if (!confirm(question)) return;
+
+    if (written) {
+        transactions = transactions.filter((item) => item.id !== payment.transactionId);
+        queueDelete([payment.transactionId]);
+        saveDataLocally();
+    }
+
+    debt.payments = debt.payments.filter((item) => item.id !== paymentId);
     debt.updatedAt = new Date().toISOString();
     saveDebts();
 }
@@ -273,4 +444,5 @@ function remindOverdueDebts() {
 function initDebts() {
     document.getElementById('debt-table-body').addEventListener('click', handleDebtTableClick);
     document.getElementById('debt-hide-settled').addEventListener('change', renderDebts);
+    document.getElementById('debtPaySource').addEventListener('change', updateDebtPayHint);
 }

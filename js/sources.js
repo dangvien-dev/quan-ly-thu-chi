@@ -95,7 +95,68 @@ function describeCredit(source, balance) {
         }
     });
 
-    return lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
+    const html = lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
+
+    return html + describeCardDue(source);
+}
+
+/** "Cần trả X trước dd/mm" under a card, in red from CARD_DUE_WARN_DAYS before the due date. */
+function describeCardDue(source) {
+    const due = computeCardDue(
+        source,
+        transactions,
+        initialBalances[source.name],
+        toLocalDateString(),
+    );
+
+    if (!due) return '';
+
+    const level = cardDueLevel(due);
+    const when =
+        due.daysLeft < 0 ? `quá hạn ${-due.daysLeft} ngày` : describeDaysUntil(due.daysLeft);
+    const text = `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)} (${when})`;
+
+    return `<div class="source-meta card-due${level ? ' source-warn' : ''}">${level ? '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> ' : ''}${escapeHtml(text)}</div>`;
+}
+
+const CARD_DUE_REMINDER_KEY = 'fm_card_due_reminder_day';
+
+/**
+ * Remind once a day (on this device) about cards whose statement is due within CARD_DUE_WARN_DAYS
+ * or already overdue. Run after the Sheet has been read, so a payment made on another device is
+ * already counted.
+ */
+function remindCardDues() {
+    const today = toLocalDateString();
+
+    if (readStoredText(CARD_DUE_REMINDER_KEY) === today) return;
+
+    const dues = cardDuesToRemind(sources, transactions, initialBalances, today);
+
+    if (dues.length === 0) return;
+
+    try {
+        localStorage.setItem(CARD_DUE_REMINDER_KEY, today);
+    } catch {
+        // Not being able to remember the reminder is harmless.
+    }
+
+    const describe = (due) => {
+        const when =
+            due.daysLeft < 0
+                ? `quá hạn ${-due.daysLeft} ngày`
+                : `hạn ${formatDateDisplay(due.dueDate)}, ${describeDaysUntil(due.daysLeft)}`;
+
+        return `${due.name}: cần trả ${formatMoney(due.amount)} (${when})`;
+    };
+
+    const overdue = dues.some((due) => due.daysLeft < 0);
+
+    showToast(
+        `${overdue ? 'Có thẻ đã quá hạn thanh toán' : 'Sắp đến hạn trả thẻ'}. ${dues.map(describe).join('; ')}.`,
+        overdue ? 'danger' : 'warning',
+        12000,
+    );
 }
 
 /**

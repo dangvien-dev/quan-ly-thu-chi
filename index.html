@@ -61,6 +61,11 @@
                             <i class="fa-solid fa-tags"></i> Danh Mục
                         </button>
                     </li>
+                    <li data-tab="tags">
+                        <button type="button" class="menu-link" onclick="switchTab('tags')">
+                            <i class="fa-solid fa-hashtag"></i> Thẻ & Khách Hàng
+                        </button>
+                    </li>
                     <li data-tab="recurring">
                         <button type="button" class="menu-link" onclick="switchTab('recurring')">
                             <i class="fa-solid fa-repeat"></i> Định Kỳ
@@ -437,6 +442,45 @@
                             </tr>
                         </thead>
                         <tbody id="category-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- TAB: THẺ & KHÁCH HÀNG -->
+            <section id="tab-tags" class="view-section">
+                <div class="section-head">
+                    <h3>Báo Cáo Theo Thẻ</h3>
+                </div>
+                <p class="hint">
+                    Gõ thẻ (ví dụ <b>khachA</b>, <b>don102</b>) vào ô Thẻ khi nhập giao dịch. Mỗi
+                    thẻ cho biết đã thu, đã chi và lãi hay lỗ. Giao dịch có nhiều thẻ được tính vào
+                    từng thẻ; chuyển tiền giữa các nguồn không tính là thu hay chi.
+                </p>
+                <div class="filter-bar">
+                    <div class="filter-item">
+                        <label for="tags-period">Khoảng thời gian</label>
+                        <select id="tags-period" class="form-control">
+                            <option value="all">Mọi thời gian</option>
+                            <option value="year">Năm nay</option>
+                            <option value="month">Tháng này</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="tags-summary" class="filter-summary" aria-live="polite"></div>
+                <div class="table-container">
+                    <table class="responsive-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Thẻ</th>
+                                <th scope="col">Giao Dịch</th>
+                                <th scope="col">Thu</th>
+                                <th scope="col">Chi</th>
+                                <th scope="col">Lãi / Lỗ</th>
+                                <th scope="col">Gần Nhất</th>
+                                <th scope="col" style="text-align: right">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tag-table-body"></tbody>
                     </table>
                 </div>
             </section>
@@ -1049,6 +1093,105 @@
         </div>
 
         <div
+            id="debtPayModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="debtPayTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="debtPayTitle">Trả nợ</h3>
+                    <button
+                        type="button"
+                        class="close-btn"
+                        onclick="closeDebtPayModal()"
+                        aria-label="Đóng"
+                    >
+                        &times;
+                    </button>
+                </div>
+                <form id="debtPayForm" onsubmit="handleDebtPaySubmit(event)">
+                    <p id="debtPayMessage" class="money-prompt-message"></p>
+                    <div class="form-group">
+                        <label for="debtPayAmount">Số tiền (VNĐ)</label>
+                        <input
+                            type="text"
+                            id="debtPayAmount"
+                            class="form-control"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            data-money="positive"
+                            placeholder="0"
+                            aria-describedby="debtPayMessage"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="debtPayDate">Ngày</label>
+                        <input type="date" id="debtPayDate" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="debtPaySource">Ghi vào nguồn tiền</label>
+                        <select
+                            id="debtPaySource"
+                            class="form-control"
+                            aria-describedby="debtPaySourceHint"
+                        ></select>
+                        <p id="debtPaySourceHint" class="hint" aria-live="polite"></p>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
+            id="tagRenameModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tagRenameTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="tagRenameTitle">Đổi tên thẻ</h3>
+                    <button
+                        type="button"
+                        class="close-btn"
+                        onclick="closeTagRenameModal()"
+                        aria-label="Đóng"
+                    >
+                        &times;
+                    </button>
+                </div>
+                <form id="tagRenameForm" onsubmit="handleTagRenameSubmit(event)">
+                    <div class="form-group">
+                        <label for="tagRenameInput">Tên mới</label>
+                        <input
+                            type="text"
+                            id="tagRenameInput"
+                            class="form-control"
+                            autocomplete="off"
+                            autocapitalize="off"
+                            spellcheck="false"
+                            aria-describedby="tagRenameHint"
+                        />
+                    </div>
+                    <p class="money-prompt-message" id="tagRenameHint" aria-live="polite"></p>
+                    <button
+                        type="submit"
+                        class="btn"
+                        id="tagRenameSubmit"
+                        style="width: 100%; justify-content: center"
+                    >
+                        Đổi tên
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
             id="salaryModal"
             class="modal"
             role="dialog"
@@ -1364,6 +1507,7 @@
         <script src="js/recurring.js"></script>
         <script src="js/debts.js"></script>
         <script src="js/transactions.js"></script>
+        <script src="js/tags.js"></script>
         <script src="js/sources.js"></script>
         <script src="js/savings.js"></script>
         <script src="js/charts.js"></script>

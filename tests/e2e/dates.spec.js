@@ -73,7 +73,7 @@ test.describe('Ngày dd/mm/yyyy', () => {
         ]);
         const csv = fs.readFileSync(await download.path(), 'utf8');
 
-        expect(csv).toContain('\r\n05/10/2026,Chi,Tiền Mặt,,Ăn uống,1000,cafe\r\n');
+        expect(csv).toContain('\r\n05/10/2026,Chi,Tiền Mặt,,Ăn uống,1000,cafe,\r\n');
     });
 
     test('định kỳ và vay nợ hiển thị ngày dd/mm/yyyy', async ({ app }) => {

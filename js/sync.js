@@ -690,10 +690,22 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
 
 /** Read the Sheet again when the user returns to this window or tab (see REFRESH_MIN_INTERVAL_MS). */
 function refreshFromSheet() {
-    if (document.visibilityState !== 'visible' || !webAppUrl || !remoteReady) return;
-    if (pushInFlight || Date.now() - lastPullAt < REFRESH_MIN_INTERVAL_MS) return;
+    if (document.visibilityState !== 'visible' || !webAppUrl || !remoteReady) {
+        return Promise.resolve();
+    }
 
-    syncFromGoogleSheet({ quiet: true });
+    if (pushInFlight || Date.now() - lastPullAt < REFRESH_MIN_INTERVAL_MS) {
+        return Promise.resolve();
+    }
+
+    return syncFromGoogleSheet({ quiet: true });
+}
+
+/** The user came back to the window: refresh, then remind about card dues with fresh data. */
+function handleReturnToApp() {
+    refreshFromSheet().then(() => {
+        if (document.visibilityState === 'visible') remindCardDues();
+    });
 }
 
 /** Retry after the connection comes back: read the Sheet first, or flush pending changes. */
