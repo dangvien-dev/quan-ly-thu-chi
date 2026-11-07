@@ -1984,7 +1984,7 @@ test('markImportDuplicates: đã nhập trước đó, trùng với giao dịch 
     assert.equal(
         mark(
             [item('a', '2026-10-27', 'expense', 20000)],
-            [tx('T', '2026-10-27', 'expense', 20001)],
+            [tx('T', '2026-10-27', 'expense', 20002)],
         )[0].status,
         'new',
     );
@@ -2003,6 +2003,44 @@ test('markImportDuplicates: đã nhập trước đó, trùng với giao dịch 
     );
 
     assert.deepEqual(status(two), ['far:new:true', 'near:duplicate:false']);
+
+    // A statement rounds 582.719,50 up to 582.720 where the book has 582.719: the same purchase.
+    const claude = mark(
+        [item('claude', '2026-09-30', 'expense', 582720)],
+        [tx('T1', '2026-09-30', 'expense', 582719)],
+    );
+
+    assert.deepEqual(status(claude), ['claude:duplicate:false']);
+    assert.equal(claude[0].match, 'T1');
+    // 2 đ off is another amount, and so is 1 đ off for a small amount (an interest of 1 đ vs 2 đ).
+    assert.equal(
+        mark(
+            [item('a', '2026-09-30', 'expense', 582721)],
+            [tx('T', '2026-09-30', 'expense', 582719)],
+        )[0].status,
+        'new',
+    );
+    assert.equal(
+        mark([item('a', '2026-09-30', 'income', 2)], [tx('T', '2026-09-30', 'income', 1)])[0]
+            .status,
+        'new',
+    );
+    assert.equal(
+        mark([item('a', '2026-09-30', 'expense', 999)], [tx('T', '2026-09-30', 'expense', 998)])[0]
+            .status,
+        'new',
+    );
+    // The exact amount wins the typed transaction over a row that is only 1 đ off, even if that row
+    // is nearer in date.
+    const exact = mark(
+        [
+            item('off', '2026-10-27', 'expense', 20001),
+            item('exact', '2026-10-25', 'expense', 20000),
+        ],
+        [tx('T1', '2026-10-27', 'expense', 20000)],
+    );
+
+    assert.deepEqual(status(exact), ['off:new:true', 'exact:duplicate:false']);
 
     // A transfer out of the bank is the same money as a bank debit; one into it, as a credit.
     const transfer = (extra) => tx('TR', '2026-10-27', 'transfer', 500000, extra);

@@ -334,7 +334,7 @@ test.describe('Nhập sao kê PDF: ghi giao dịch và cập nhật thẻ', () =
             ['D', '2026-09-23', 'expense', 10000],
             ['E', '2026-09-23', 'expense', 1000],
             ['F', '2026-09-23', 'expense', 73333],
-            ['G', '2026-09-30', 'expense', 582720],
+            ['G', '2026-09-30', 'expense', 582719], // the statement rounds 582.719,50 up to 582.720
             ['H', '2026-10-02', 'expense', 45000],
         ].map(([id, date, type, amount]) => tx({ id, date, type, source: CARD, amount }));
         const { page } = await open(app, { fm_transactions: JSON.stringify(existing) });
