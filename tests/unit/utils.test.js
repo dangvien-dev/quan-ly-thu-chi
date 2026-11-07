@@ -2740,6 +2740,87 @@ test('parseBankNumber: giá trị đúng không làm tròn, parseBankAmount làm
     assert.equal(run('parseBankAmount("582,719.50")'), 582720);
 });
 
+test('evaluateMoneyExpression và parseMoneyText: phép tính trong ô tiền, dấu phẩy là thập phân, làm tròn đồng', () => {
+    const calc = (text) => run(`parseMoneyText(${JSON.stringify(text)})`);
+
+    // + - * / (x and × ÷ too) with the usual precedence.
+    assert.equal(calc('582719+11000'), 593719);
+    assert.equal(calc('1200000/3'), 400000);
+    assert.equal(calc('100000*2+50000'), 250000);
+    assert.equal(calc('50000+100000*2'), 250000);
+    assert.equal(calc('5x3'), 15);
+    assert.equal(calc('3×5'), 15);
+    assert.equal(calc('10÷4'), 3); // 2,5 rounds away from zero
+    assert.equal(calc('5 + 3'), 8);
+    assert.equal(calc('7-10'), -3);
+    assert.equal(calc('7−10'), -3); // a typographic minus
+    // A leading sign belongs to the first number.
+    assert.equal(calc('-500000+20000'), -480000);
+    assert.equal(calc('-5*2'), -10);
+    assert.equal(calc('+5+2'), 7);
+    // Vietnamese numbers: dots group, the comma is the decimal mark.
+    assert.equal(calc('582.719,50'), 582720);
+    assert.equal(calc('582719,50'), 582720);
+    assert.equal(calc('22,22*26225'), 582720); // 22,22 USD at 26.225
+    assert.equal(calc('1.500,50+3'), 1504);
+    assert.equal(calc('0,1+0,2'), 0); // 0,3 with no float noise
+    assert.equal(calc('0,5'), 1);
+    assert.equal(calc('1,5'), 2);
+    assert.equal(calc('-1,5'), -2);
+    assert.equal(calc('22,'), 22); // still being typed
+    // Plain amounts are what they always were, including thousands marks of either kind.
+    assert.equal(calc('1.500.000'), 1500000);
+    assert.equal(calc('1,500,000'), 1500000);
+    assert.equal(calc('1,500'), 1500);
+    assert.equal(calc('-20.000'), -20000);
+    assert.equal(calc('12.345'), 12345);
+    assert.ok(Number.isNaN(calc('')));
+    assert.ok(Number.isNaN(calc('-')));
+    assert.ok(Number.isNaN(calc('abc')));
+    // What cannot be worked out is NaN, never a guess.
+    for (const bad of ['5+', '2*', '5/0', '*5', '5++3', '5*-3', '1+a', '5+3)', '(5+3)*2']) {
+        assert.ok(Number.isNaN(calc(bad)), bad);
+    }
+
+    assert.ok(Number.isNaN(calc('999999999999999+1')));
+    assert.equal(calc('999999999999998+1'), 999999999999999);
+    // Nothing is passed to eval.
+    assert.ok(Number.isNaN(calc('process.exit()')));
+    assert.ok(Number.isNaN(calc('1;2')));
+});
+
+test('isMoneyExpression: toán tử sau ký tự đầu hoặc một dấu phẩy thập phân; dấu trừ đầu chỉ là dấu', () => {
+    const expression = (text) => run(`isMoneyExpression(${JSON.stringify(text)})`);
+
+    for (const yes of [
+        '582.719+11000',
+        '5-3',
+        '5x3',
+        '5*3',
+        '5/3',
+        '5÷3',
+        '1,5',
+        '22,',
+        '582.719,50',
+    ]) {
+        assert.equal(expression(yes), true, yes);
+    }
+
+    for (const no of [
+        '',
+        '-',
+        '-20.000',
+        '+5',
+        '1.500.000',
+        '1,500',
+        '1,500,000',
+        '12345',
+        'abc',
+    ]) {
+        assert.equal(expression(no), false, no);
+    }
+});
+
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {
     const move = (list, index, step, predicate = '') =>
         run(`moveInList(${list},${index},${step}${predicate && `,${predicate}`}).join("")`);

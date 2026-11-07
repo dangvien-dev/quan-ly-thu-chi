@@ -1095,6 +1095,22 @@ canvas {
     margin: -8px 0 16px;
 }
 
+/* What a calculation typed in a money field comes to (js/ui.js, showMoneyResult). */
+.money-calc {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: -8px 0 16px;
+}
+
+.money-calc[hidden] {
+    display: none;
+}
+
+.money-calc-error {
+    color: var(--danger);
+    font-weight: 600;
+}
+
 .check-label {
     display: flex !important;
     align-items: center;

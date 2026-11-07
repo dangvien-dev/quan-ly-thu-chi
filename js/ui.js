@@ -434,12 +434,92 @@ function setMoneyInput(id, value) {
 }
 
 function readMoneyInput(id) {
-    return parseMoneyText(document.getElementById(id).value);
+    const input = document.getElementById(id);
+    const value = parseMoneyText(input.value);
+
+    // A calculation that comes out negative is not an amount in a field that cannot be negative.
+    return value < 0 && input.dataset.money !== 'signed' ? NaN : value;
+}
+
+/** Under a money field that holds a calculation: what it comes to, or why it cannot be worked out. */
+function showMoneyResult(input, hint) {
+    const text = input.value;
+    const result = parseMoneyText(text);
+    const negative = Number.isFinite(result) && result < 0 && input.dataset.money !== 'signed';
+    let message = `= ${formatMoney(result)}`;
+    let problem = false;
+
+    if (!Number.isFinite(result) || negative) {
+        // Still being typed ("582.719+"): wait, do not scold.
+        problem = !/[-+*/x×÷X−–,]\s*$/.test(text);
+        message = !problem
+            ? 'Gõ tiếp phép tính…'
+            : negative
+              ? 'Kết quả âm: ô này không nhận số âm'
+              : 'Chưa tính được phép tính này';
+    }
+
+    hint.hidden = false;
+    hint.textContent = message;
+    hint.classList.toggle('money-calc-error', problem);
+}
+
+function hideMoneyResult(hint) {
+    hint.hidden = true;
+    hint.textContent = '';
+    hint.classList.remove('money-calc-error');
+}
+
+/**
+ * Leaving the field (or Enter): a calculation is replaced by its answer ("582.719+11000" becomes
+ * "593.719"); one that cannot be worked out stays as typed so it can be fixed, and the field then
+ * reads as invalid; plain digits lose the zeros kept in front while editing ("0.000" -> "0").
+ */
+function settleMoneyInput(input, hint) {
+    const signed = input.dataset.money === 'signed';
+
+    if (!isMoneyExpression(input.value)) {
+        input.value = formatMoneyDigits(input.value, signed);
+        hideMoneyResult(hint);
+        return;
+    }
+
+    const result = parseMoneyText(input.value);
+
+    if (Number.isFinite(result) && (signed || result >= 0)) {
+        input.value = formatMoneyDigits(String(result), signed);
+        hideMoneyResult(hint);
+    } else {
+        showMoneyResult(input, hint);
+    }
 }
 
 /** Reformat on every keystroke and keep the caret after the same number of digits. */
 function attachMoneyInput(input) {
+    // Calculations ("582719+11000", "22,22*26225", a decimal comma) are worked out under the field.
+    const hint = document.createElement('div');
+
+    hint.className = 'money-calc';
+    hint.id = `${input.id}-calc`;
+    hint.hidden = true;
+    hint.setAttribute('role', 'status');
+    input.insertAdjacentElement('afterend', hint);
+    input.setAttribute(
+        'aria-describedby',
+        [...(input.getAttribute('aria-describedby') || '').split(/\s+/), hint.id]
+            .filter(Boolean)
+            .join(' '),
+    );
+
     input.addEventListener('input', () => {
+        // A calculation is left as typed (no thousands dots) until the field is left.
+        if (isMoneyExpression(input.value)) {
+            showMoneyResult(input, hint);
+            return;
+        }
+
+        hideMoneyResult(hint);
+
         const typed = input.value;
         const caret = input.selectionStart ?? typed.length;
         // Read on every keystroke: the field of askMoney() switches between the two modes.
@@ -466,9 +546,27 @@ function attachMoneyInput(input) {
         input.setSelectionRange(position, position);
     });
 
-    // Leaving the field: the zeros kept in front while editing go ("0.000" -> "0").
-    input.addEventListener('blur', () => {
-        input.value = formatMoneyDigits(input.value, input.dataset.money === 'signed');
+    input.addEventListener('blur', () => settleMoneyInput(input, hint));
+
+    // Enter submits the form: let it find the answer in the field, not the calculation.
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && isMoneyExpression(input.value)) settleMoneyInput(input, hint);
+    });
+
+    // Pasting "582719.50" or "22,22" is a number with a decimal part, not 58.271.950 / 2.222.
+    input.addEventListener('paste', (event) => {
+        const pasted = event.clipboardData ? event.clipboardData.getData('text') : '';
+
+        if (!/^\s*[-−–]?\d[\d.,\s]*[.,]\d{1,2}\s*$/.test(pasted)) return;
+
+        const value = roundMoney(parseBankNumber(pasted));
+
+        if (!Number.isFinite(value)) return;
+
+        event.preventDefault();
+        input.value = formatMoneyDigits(String(value), input.dataset.money === 'signed');
+        hideMoneyResult(hint);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
     });
 }
 
