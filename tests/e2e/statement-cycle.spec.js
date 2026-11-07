@@ -248,7 +248,10 @@ test.describe('Lọc giao dịch theo kỳ sao kê', () => {
                 })
                 .locator('.card-due-actions button');
 
-        await expect(actions(CARD)).toHaveCount(2); // 10.000 of the 20/10 statement still owed
+        // 10.000 of the 20/10 statement still owed: "Đã trả" and "Xem theo kỳ", and because the amount
+        // is only worked out from the initial balance (no closing balance entered) also the button
+        // that enters the closing balance of the statement.
+        await expect(actions(CARD)).toHaveCount(3);
         await expect(actions(SPAY)).toHaveCount(1); // a statement day but nothing due
     });
 
