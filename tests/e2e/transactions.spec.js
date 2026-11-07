@@ -260,7 +260,7 @@ test.describe('Xuất CSV (trong Cài đặt)', () => {
         const { content } = await exportCsv(page);
 
         expect(
-            content.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú'),
+            content.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú,Thẻ'),
         ).toBe(true);
 
         const lines = content.trim().split('\r\n');

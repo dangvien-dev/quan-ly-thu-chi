@@ -9,6 +9,7 @@ const PAGES = [
     ['sources', 'Nguồn Tiền & Tài Khoản'],
     ['savings', 'Sổ Tiết Kiệm'],
     ['categories', 'Danh Mục Thu / Chi'],
+    ['tags', 'Thẻ & Khách Hàng'],
     ['recurring', 'Giao Dịch Định Kỳ'],
     ['debts', 'Vay Nợ & Công Ty'],
     ['settings', 'Cài Đặt & Dữ Liệu'],

@@ -12,6 +12,7 @@ const PAGES = [
     ['sources', 'Nguồn Tiền & Tài Khoản'],
     ['savings', 'Sổ Tiết Kiệm'],
     ['categories', 'Danh Mục Thu / Chi'],
+    ['tags', 'Thẻ & Khách Hàng'],
     ['recurring', 'Giao Dịch Định Kỳ'],
     ['debts', 'Vay Nợ & Công Ty'],
     ['settings', 'Cài Đặt & Dữ Liệu'],
@@ -204,7 +205,7 @@ test.describe('Menu trái trên điện thoại', () => {
         await expect(page.locator('.drawer-backdrop')).toHaveCSS('pointer-events', 'none');
     });
 
-    test('mở bằng nút menu: hiện đủ 8 trang, focus vào trang hiện tại, có lớp nền mờ, khóa cuộn', async ({
+    test('mở bằng nút menu: hiện đủ 9 trang, focus vào trang hiện tại, có lớp nền mờ, khóa cuộn', async ({
         app,
     }) => {
         const { page } = await app(phone);
@@ -214,7 +215,7 @@ test.describe('Menu trái trên điện thoại', () => {
         await expect(page.locator('#sidebar')).toBeVisible();
         await expect(page.locator('#menu-toggle')).toHaveAttribute('aria-expanded', 'true');
         await expect(page.locator('#menu-toggle')).toHaveAccessibleName('Đóng menu');
-        await expect(page.locator('aside .menu-link')).toHaveCount(8);
+        await expect(page.locator('aside .menu-link')).toHaveCount(9);
         await expect(menuItem(page, 'overview')).toBeFocused();
         await expect(page.locator('.drawer-backdrop')).toHaveCSS('opacity', '1');
         await expect(page.locator('body')).toHaveCSS('overflow', 'hidden');
@@ -341,7 +342,7 @@ test.describe('Menu trái trên điện thoại', () => {
         await expect(page.locator('#menu-toggle')).toBeHidden();
         await expect(page.locator('#sidebar')).toBeVisible();
         await expect(page.locator('header .header-add')).toBeVisible();
-        await expect(page.locator('aside .menu-link')).toHaveCount(8);
+        await expect(page.locator('aside .menu-link')).toHaveCount(9);
     });
 });
 
@@ -401,7 +402,7 @@ test.describe('Trợ năng và bố cục', () => {
 });
 
 test.describe('Đầu trang trên điện thoại có chiều cao cố định', () => {
-    test('đổi qua lại giữa 8 trang: đầu trang luôn cao như nhau, nội dung luôn bắt đầu cùng một chỗ', async ({
+    test('đổi qua lại giữa 9 trang: đầu trang luôn cao như nhau, nội dung luôn bắt đầu cùng một chỗ', async ({
         app,
     }) => {
         const { page } = await app(phone);

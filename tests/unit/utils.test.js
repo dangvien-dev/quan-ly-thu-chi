@@ -169,8 +169,10 @@ test.describe('CSV', () => {
             `buildTransactionsCsv([${JSON.stringify(tx({ amount: 17000, note: 'Cafe' }))}])`,
         );
 
-        assert.ok(csv.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú\r\n'));
-        assert.ok(csv.includes('27/10/2026,Chi,Tiền Mặt,,Ăn uống,17000,Cafe\r\n'));
+        assert.ok(
+            csv.startsWith('﻿Ngày,Loại,Nguồn tiền,Nguồn nhận,Danh mục,Số tiền,Ghi chú,Thẻ\r\n'),
+        );
+        assert.ok(csv.includes('27/10/2026,Chi,Tiền Mặt,,Ăn uống,17000,Cafe,\r\n'));
     });
 
     test('escape dấu phẩy, nháy kép, xuống dòng', () => {
@@ -1236,6 +1238,102 @@ test('filterTransactions: sources giữ giao dịch chạm vào một trong các
     // null / missing means no such filter.
     assert.equal(ids('{sources:null}'), 'abc');
     assert.equal(ids('{}'), 'abc');
+});
+
+const TAG_ROWS = `[
+    {id:"A",date:"2026-10-20",type:"expense",amount:120000,note:"Mua keo #KhachA #dh102"},
+    {id:"B",date:"2026-10-21",type:"income",amount:500000,note:"Công sửa bàn #khacha"},
+    {id:"C",date:"2026-10-22",type:"expense",amount:30000,note:"Cafe sáng"},
+    {id:"D",date:"2026-10-23",type:"expense",amount:80000,note:"Sơn #dh102"},
+    {id:"E",date:"2026-09-15",type:"expense",amount:10000,note:"#khachA"},
+    {id:"F",date:"2026-10-24",type:"transfer",amount:99999,note:"#khachA"}
+]`;
+
+test('computeTagReport: thu, chi, lãi lỗ theo thẻ; khoảng thời gian; chuyển tiền chỉ tính số giao dịch', () => {
+    const report = (prefix = '') =>
+        JSON.parse(JSON.stringify(run(`computeTagReport(${TAG_ROWS},"${prefix}")`)));
+
+    // KhachA / khacha / khachA are one tag (first spelling stays); the transfer F is only counted.
+    assert.deepEqual(report(), [
+        {
+            tag: 'KhachA',
+            count: 4,
+            income: 500000,
+            expense: 130000,
+            last: '2026-10-24',
+            net: 370000,
+        },
+        { tag: 'dh102', count: 2, income: 0, expense: 200000, last: '2026-10-23', net: -200000 },
+    ]);
+    // A month and a year narrow it down; the transaction without a tag never shows up.
+    assert.deepEqual(
+        report('2026-10').map((row) => [row.tag, row.count, row.net]),
+        [
+            ['KhachA', 3, 380000],
+            ['dh102', 2, -200000],
+        ],
+    );
+    assert.deepEqual(
+        report('2026-09').map((row) => [row.tag, row.count, row.net]),
+        [['khachA', 1, -10000]],
+    );
+    assert.equal(report('2025').length, 0);
+    assert.equal(run('computeTagReport([],"").length'), 0);
+    // Most recently used first, then by name.
+    assert.equal(
+        run(
+            'computeTagReport([{date:"2026-01-01",type:"expense",amount:1,note:"#b #a"}],"").map((r) => r.tag).join("")',
+        ),
+        'ab',
+    );
+});
+
+test('renameTagInNote: đổi tên một thẻ, gộp khi đã có, ghi chú không có thẻ đó giữ nguyên', () => {
+    const rename = (note, from, to) =>
+        run(`renameTagInNote(${JSON.stringify(note)},${JSON.stringify(from)},"${to}")`);
+
+    assert.equal(rename('Mua keo #KhachA #dh102', 'khachA', 'Khach_A'), 'Mua keo #Khach_A #dh102');
+    // Only a change of capitals.
+    assert.equal(rename('x #khachA', 'khachA', 'KhachA'), 'x #KhachA');
+    // Both tags on the note: they become one.
+    assert.equal(rename('x #a #b', 'a', 'b'), 'x #b');
+    assert.equal(rename('x #a #B', 'a', 'b'), 'x #b');
+    // A note without the tag comes back as the very same text (spacing included).
+    assert.equal(rename('Cafe  sáng #z', 'a', 'b'), 'Cafe  sáng #z');
+    assert.equal(rename('', 'a', 'b'), '');
+    assert.equal(run('renameTagInNote(null,"a","b")'), null);
+    // "#12" is not a tag, so it is not touched.
+    assert.equal(rename('phòng #12 #a', 'a', 'b'), 'phòng #12 #b');
+});
+
+test('planTagRename: tên mới hợp lệ, trùng thẻ đang có thì gộp (dùng cách viết đang có)', () => {
+    const plan = (from, input) =>
+        JSON.parse(
+            JSON.stringify(
+                run(`planTagRename(${TAG_ROWS},${JSON.stringify(from)},${JSON.stringify(input)})`),
+            ),
+        );
+
+    assert.deepEqual(plan('dh102', 'don102'), { tag: 'don102', merge: false });
+    assert.deepEqual(plan('dh102', '#don102'), { tag: 'don102', merge: false });
+    // Another tag in use: merge, written the way it already is.
+    assert.deepEqual(plan('dh102', 'khacha'), { tag: 'KhachA', merge: true });
+    // Same tag with other capitals is a rename, never a merge.
+    assert.deepEqual(plan('dh102', 'DH102'), { tag: 'DH102', merge: false });
+    assert.match(plan('dh102', 'dh102').error, /giống tên cũ/);
+
+    for (const bad of ['', '   ', 'a b', '12ab', 'a@b', '#']) {
+        assert.match(plan('dh102', bad).error, /đúng một thẻ/, JSON.stringify(bad));
+    }
+});
+
+test('buildTransactionsCsv: cột Thẻ liệt kê các thẻ, ghi chú vẫn giữ nguyên', () => {
+    const csv = run(
+        `buildTransactionsCsv([{id:"1",date:"2026-10-27",type:"expense",source:"Tiền Mặt",category:"Ăn uống",amount:5000,note:"Cafe #a #B"},{id:"2",date:"2026-10-27",type:"expense",source:"Tiền Mặt",category:"Ăn uống",amount:5000,note:"Không thẻ"}])`,
+    );
+
+    assert.ok(csv.includes(',Cafe #a #B,#a #B\r\n'));
+    assert.ok(csv.includes(',Không thẻ,\r\n'));
 });
 
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {

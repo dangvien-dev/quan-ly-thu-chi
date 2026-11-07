@@ -10,6 +10,7 @@ const TABS = [
     'sources',
     'savings',
     'categories',
+    'tags',
     'recurring',
     'debts',
     'settings',
