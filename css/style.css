@@ -1893,5 +1893,8 @@ main:focus {
 
 /* --- "Đã trả" under the due line of a card --- */
 .card-due-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     margin-top: 8px;
 }

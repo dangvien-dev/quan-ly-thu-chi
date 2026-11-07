@@ -2063,6 +2063,170 @@ test('buildCategoryGuesser: học từ giao dịch đã có, rồi tới cửa h
     );
 });
 
+const CARD_20 = '{name:"Thẻ Tín Dụng",kind:"credit",statementDay:20,dueDay:4';
+const CARD_ROWS = `[
+    {id:"A",date:"2026-10-22",type:"expense",source:"Thẻ Tín Dụng",amount:587160},
+    {id:"B",date:"2026-10-23",type:"expense",source:"Thẻ Tín Dụng",amount:73333},
+    {id:"C",date:"2026-10-24",type:"expense",source:"Thẻ Tín Dụng",amount:30000},
+    {id:"D",date:"2026-11-03",type:"expense",source:"Thẻ Tín Dụng",amount:87778},
+    {id:"E",date:"2026-11-05",type:"expense",source:"Thẻ Tín Dụng",amount:604390},
+    {id:"P",date:"2026-10-21",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:1695414}
+]`;
+
+test('computeCardDue với mốc sao kê: số cần trả không còn dính số dư ban đầu bị Khớp số dư làm lệch', () => {
+    const due = (card, opening, today = '2026-11-07', rows = CARD_ROWS) =>
+        plain(run(`computeCardDue(${card},${rows},${opening},"${today}")`));
+
+    // Without the closing balance: the opening balance that "Khớp số dư" pushed to -1.747.180 (the
+    // book was missing 51.766 of charges) makes the paid statement look 51.766 short.
+    assert.equal(due(`${CARD_20}}`, -1747180).amount, 51766);
+    assert.equal(due(`${CARD_20}}`, -1695414), null);
+
+    // With the closing balance of the 20/10 statement the opening balance does not matter.
+    const anchored = `${CARD_20},lastStatement:{date:"2026-10-20",balance:1695414}}`;
+
+    assert.equal(due(anchored, -1747180), null);
+    assert.equal(due(anchored, -999), null);
+    assert.equal(due(anchored, 5000000), null);
+
+    // Not paid yet (the payment is not in the book): the whole statement is due, overdue by 3 days.
+    const unpaid = CARD_ROWS.replace(/,\s*\{id:"P"[^}]*\}/, '');
+
+    assert.deepEqual(due(anchored, -1747180, '2026-11-07', unpaid), {
+        name: 'Thẻ Tín Dụng',
+        amount: 1695414,
+        statementDate: '2026-10-20',
+        dueDate: '2026-11-04',
+        daysLeft: -3,
+    });
+
+    // A payment of less than the statement leaves the rest.
+    assert.equal(
+        due(
+            anchored,
+            0,
+            '2026-11-07',
+            '[{id:"P",date:"2026-10-25",type:"transfer",source:"X",targetSource:"Thẻ Tín Dụng",amount:1000000}]',
+        ).amount,
+        695414,
+    );
+
+    // A balance from an older statement is rolled forward by what happened since: 1.614.164 on 20/9,
+    // paid on 21/9, then 1.695.414 of charges, makes 1.695.414 owed on 20/10.
+    const older = `${CARD_20},lastStatement:{date:"2026-09-20",balance:1614164}}`;
+    const cycle = `[
+        {id:"P0",date:"2026-09-21",type:"transfer",source:"X",targetSource:"Thẻ Tín Dụng",amount:1614164},
+        {id:"C1",date:"2026-09-23",type:"expense",source:"Thẻ Tín Dụng",amount:1000000},
+        {id:"C2",date:"2026-10-20",type:"expense",source:"Thẻ Tín Dụng",amount:695414}
+    ]`;
+
+    assert.equal(due(older, 0, '2026-11-07', cycle).amount, 1695414);
+
+    // A closing balance dated after the latest statement day is not used (the date was mistyped).
+    const future = `${CARD_20},lastStatement:{date:"2026-10-21",balance:1}}`;
+
+    assert.equal(due(future, -1747180).amount, 51766);
+});
+
+test('normalizeSource: mốc sao kê chỉ có với thẻ tín dụng, được làm tròn, bỏ khi không hợp lệ', () => {
+    const normalize = (raw) => plain(run(`normalizeSource(${JSON.stringify(raw)})`));
+    const card = { name: 'Thẻ', kind: 'credit', statementDay: 20 };
+
+    assert.deepEqual(
+        normalize({ ...card, lastStatement: { date: '2026-10-20', balance: '1695414.4' } })
+            .lastStatement,
+        { date: '2026-10-20', balance: 1695414 },
+    );
+    assert.deepEqual(
+        normalize({ ...card, lastStatement: { date: '20/10/2026', balance: 0 } }).lastStatement,
+        { date: '2026-10-20', balance: 0 },
+    );
+    // Not usable: no property at all, so older sources keep their shape.
+    for (const bad of [
+        null,
+        5,
+        {},
+        { date: '', balance: 5 },
+        { date: '2026-10-20', balance: -1 },
+        { date: '2026-10-20', balance: 'x' },
+    ]) {
+        assert.equal(
+            Object.hasOwn(normalize({ ...card, lastStatement: bad }), 'lastStatement'),
+            false,
+        );
+    }
+    // Only credit cards have a statement.
+    assert.equal(
+        Object.hasOwn(
+            normalize({
+                name: 'NH',
+                kind: 'bank',
+                lastStatement: { date: '2026-10-20', balance: 5 },
+            }),
+            'lastStatement',
+        ),
+        false,
+    );
+});
+
+test('statementCycles: các kỳ sao kê từ kỳ đang mở lùi về trước; ngày chốt thuộc kỳ nó đóng', () => {
+    const cycles = (day, today, count) => plain(run(`statementCycles(${day},"${today}",${count})`));
+
+    assert.deepEqual(cycles(20, '2026-11-07', 3), [
+        { start: '2026-10-21', end: '2026-11-20', open: true },
+        { start: '2026-09-21', end: '2026-10-20', open: false },
+        { start: '2026-08-21', end: '2026-09-20', open: false },
+    ]);
+    // On the statement day itself that cycle is closed and a new one has opened.
+    assert.deepEqual(cycles(20, '2026-11-20', 2), [
+        { start: '2026-11-21', end: '2026-12-20', open: true },
+        { start: '2026-10-21', end: '2026-11-20', open: false },
+    ]);
+    assert.equal(cycles(20, '2026-11-19', 1)[0].end, '2026-11-20');
+    // Short months: a statement on the 31st closes on the last day.
+    assert.deepEqual(cycles(31, '2026-03-10', 3), [
+        { start: '2026-03-01', end: '2026-03-31', open: true },
+        { start: '2026-02-01', end: '2026-02-28', open: false },
+        { start: '2026-01-01', end: '2026-01-31', open: false },
+    ]);
+    // Over a year end, and no statement day means no cycles.
+    assert.equal(cycles(24, '2027-01-05', 2)[1].start, '2026-11-25');
+    assert.equal(run('statementCycles(null,"2026-11-07").length'), 0);
+    assert.equal(run('statementCycles(20,"2026-11-07").length'), 12);
+    assert.equal(run('latestStatementDate(20,"2026-11-07")'), '2026-10-20');
+    assert.equal(run('latestStatementDate(20,"2026-11-20")'), '2026-11-20');
+});
+
+test('computeCardCycleTotals và lọc theo khoảng ngày: phát sinh và đã trả của một kỳ, tính cả hai đầu', () => {
+    const totals = plain(
+        run(`computeCardCycleTotals(${CARD_ROWS},"Thẻ Tín Dụng","2026-10-21","2026-11-05")`),
+    );
+
+    // The 21/10 transfer is the payment; the five expenses are charges.
+    assert.deepEqual(totals, { charges: 1382661, payments: 1695414, count: 6 });
+    assert.deepEqual(
+        plain(run(`computeCardCycleTotals(${CARD_ROWS},"Thẻ Tín Dụng","2026-10-22","2026-10-24")`)),
+        { charges: 690493, payments: 0, count: 3 },
+    );
+    // Cash taken from the card (a transfer out) is a charge; other sources are not counted.
+    assert.deepEqual(
+        plain(
+            run(
+                `computeCardCycleTotals([{date:"2026-10-25",type:"transfer",source:"Thẻ Tín Dụng",targetSource:"Tiền Mặt",amount:500000},{date:"2026-10-25",type:"expense",source:"Tiền Mặt",amount:9}],"Thẻ Tín Dụng","2026-10-21","2026-10-25")`,
+            ),
+        ),
+        { charges: 500000, payments: 0, count: 1 },
+    );
+
+    const ids = (filters) =>
+        run(`filterTransactions(${CARD_ROWS},${filters}).map((t) => t.id).join("")`);
+
+    assert.equal(ids('{from:"2026-10-22",to:"2026-10-24"}'), 'ABC');
+    assert.equal(ids('{from:"2026-11-03"}'), 'DE');
+    assert.equal(ids('{to:"2026-10-21"}'), 'P');
+    assert.equal(ids('{from:"",to:""}'), 'ABCDEP');
+});
+
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {
     const move = (list, index, step, predicate = '') =>
         run(`moveInList(${list},${index},${step}${predicate && `,${predicate}`}).join("")`);

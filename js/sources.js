@@ -107,31 +107,46 @@ function describeCredit(source, balance) {
         );
     });
 
+    if (source.lastStatement) {
+        lines.push(
+            `Sao kê chốt ${formatDateDisplay(source.lastStatement.date)}: dư nợ ${formatMoney(source.lastStatement.balance)}`,
+        );
+    }
+
     const html = lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
 
     return html + describeCardDue(source, due);
 }
 
 /**
- * "Cần trả X trước dd/mm" under a card, in red from CARD_DUE_WARN_DAYS before the due date, with
- * the "Đã trả" button that records the payment.
+ * Under a card: "Cần trả X trước dd/mm" (red from CARD_DUE_WARN_DAYS before the due date) with the
+ * "Đã trả" button that records the payment, and "Xem theo kỳ" which lists the transactions of a
+ * statement cycle (only for a card that has a statement day).
  */
 function describeCardDue(source, due) {
-    if (!due) return '';
-
-    const level = cardDueLevel(due);
-    const when =
-        due.daysLeft < 0 ? `quá hạn ${-due.daysLeft} ngày` : describeDaysUntil(due.daysLeft);
-    const text = `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)} (${when})`;
-
     const name = escapeHtml(source.name);
+    const buttons = [];
+    let line = '';
 
-    return `<div class="source-meta card-due${level ? ' source-warn' : ''}">${level ? '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> ' : ''}${escapeHtml(text)}</div>
-            <div class="card-due-actions">
-                <button type="button" class="btn btn-outline btn-small" data-action="pay-card" data-source="${name}" aria-label="Ghi khoản đã trả cho thẻ ${name}">
+    if (due) {
+        const level = cardDueLevel(due);
+        const when =
+            due.daysLeft < 0 ? `quá hạn ${-due.daysLeft} ngày` : describeDaysUntil(due.daysLeft);
+        const text = `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)} (${when})`;
+
+        line = `<div class="source-meta card-due${level ? ' source-warn' : ''}">${level ? '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> ' : ''}${escapeHtml(text)}</div>`;
+        buttons.push(`<button type="button" class="btn btn-outline btn-small" data-action="pay-card" data-source="${name}" aria-label="Ghi khoản đã trả cho thẻ ${name}">
                     <i class="fa-solid fa-circle-check" aria-hidden="true"></i> Đã trả
-                </button>
-            </div>`;
+                </button>`);
+    }
+
+    if (source.statementDay) {
+        buttons.push(`<button type="button" class="btn btn-outline btn-small" data-action="view-cycle" data-source="${name}" aria-label="Xem theo kỳ sao kê của ${name}">
+                    <i class="fa-solid fa-calendar-days" aria-hidden="true"></i> Xem theo kỳ
+                </button>`);
+    }
+
+    return buttons.length ? `${line}<div class="card-due-actions">${buttons.join('')}</div>` : line;
 }
 
 const CARD_DUE_REMINDER_KEY = 'fm_card_due_reminder_day';
@@ -306,6 +321,7 @@ function handleSourceGridClick(event) {
         'restore-source': () => archiveSource(name, false),
         'delete-source': () => deleteSource(name),
         'pay-card': () => openCardPayModal(name),
+        'view-cycle': () => showTransactionsFor({ source: name, cycle: 'closed' }),
         'move-source-up': () => moveSource(name, -1),
         'move-source-down': () => moveSource(name, 1),
     };
@@ -606,6 +622,15 @@ function openSourceModal(name = null) {
     document.getElementById('srcStatementDay').value =
         source && source.statementDay ? source.statementDay : '';
     document.getElementById('srcDueDay').value = source && source.dueDay ? source.dueDay : '';
+    setMoneyInput(
+        'srcStatementBalance',
+        source && source.lastStatement ? source.lastStatement.balance : '',
+    );
+    document.getElementById('srcStatementBalanceHint').textContent =
+        'Số "Dư nợ cuối kỳ" (Outstanding Balance) in trên sao kê. Điền thì "Cần trả" lấy số này, không còn phụ thuộc số dư ban đầu; để trống thì app tự tính.' +
+        (source && source.lastStatement
+            ? ` Đang dùng sao kê chốt ngày ${formatDateDisplay(source.lastStatement.date)}.`
+            : '');
     setMoneyInput('srcInitialBalance', source ? Number(initialBalances[source.name]) || 0 : '');
     updateSourceFormVisibility();
     openDialog('sourceModal', 'srcName');
@@ -674,6 +699,32 @@ function handleSourceSubmit(event) {
         return;
     }
 
+    // The closing balance belongs to the latest statement day: today's, unless it is the number
+    // already saved for the same statement day, which keeps its own date.
+    const statementDay = dayOfMonthOrNull(document.getElementById('srcStatementDay').value);
+    const statementBalance = kind === 'credit' ? readMoneyInput('srcStatementBalance') : NaN;
+    let lastStatement = null;
+
+    if (!Number.isNaN(statementBalance)) {
+        if (!statementDay) {
+            alert('Hãy nhập ngày chốt sao kê để app biết dư nợ cuối kỳ này thuộc sao kê nào.');
+            return;
+        }
+
+        const kept =
+            existing &&
+            existing.lastStatement &&
+            existing.lastStatement.balance === statementBalance &&
+            existing.statementDay === statementDay;
+
+        lastStatement = kept
+            ? existing.lastStatement
+            : {
+                  date: latestStatementDate(statementDay, toLocalDateString()),
+                  balance: statementBalance,
+              };
+    }
+
     const updated = normalizeSource({
         name,
         kind,
@@ -681,6 +732,7 @@ function handleSourceSubmit(event) {
         statementDay: document.getElementById('srcStatementDay').value,
         dueDay: document.getElementById('srcDueDay').value,
         archived: existing ? existing.archived : false,
+        lastStatement,
     });
 
     if (existing && existing.name !== name) {

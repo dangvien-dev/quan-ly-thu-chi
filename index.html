@@ -275,6 +275,10 @@
                         <label for="filter-source">Nguồn tiền</label>
                         <select id="filter-source" class="form-control"></select>
                     </div>
+                    <div class="filter-item" id="filter-cycle-item" hidden>
+                        <label for="filter-cycle">Kỳ sao kê</label>
+                        <select id="filter-cycle" class="form-control"></select>
+                    </div>
                     <div class="filter-item" id="filter-tag-item" hidden>
                         <label for="filter-tag">Thẻ</label>
                         <select id="filter-tag" class="form-control"></select>
@@ -298,6 +302,7 @@
                     </button>
                 </div>
                 <div id="transaction-summary" class="filter-summary" aria-live="polite"></div>
+                <div id="cycle-summary" class="filter-summary" aria-live="polite" hidden></div>
                 <div class="table-container">
                     <table class="responsive-table compact-rows">
                         <thead>
@@ -933,6 +938,22 @@
                                     inputmode="numeric"
                                 />
                             </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="srcStatementBalance">
+                                Dư nợ cuối kỳ của sao kê gần nhất (không bắt buộc)
+                            </label>
+                            <input
+                                type="text"
+                                id="srcStatementBalance"
+                                class="form-control"
+                                inputmode="numeric"
+                                autocomplete="off"
+                                data-money="positive"
+                                placeholder="0"
+                                aria-describedby="srcStatementBalanceHint"
+                            />
+                            <p id="srcStatementBalanceHint" class="hint"></p>
                         </div>
                     </div>
                     <div class="form-group">

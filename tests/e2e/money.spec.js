@@ -145,6 +145,7 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
             'savAmount',
             'srcCreditLimit',
             'srcInitialBalance',
+            'srcStatementBalance',
             'txAmount',
         ]);
         expect(fields.every((field) => field.type === 'text')).toBe(true);

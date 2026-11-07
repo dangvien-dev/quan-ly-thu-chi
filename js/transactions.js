@@ -237,6 +237,88 @@ const DEBT_SOURCES_FILTER = '__debt__';
 const debtSourceNames = () =>
     sources.filter((source) => SOURCE_KINDS[source.kind].debt).map((source) => source.name);
 
+// --- STATEMENT CYCLE FILTER ---
+// For a single credit card with a statement day, the source filter is joined by "Kỳ sao kê": the
+// transactions between two statement days, which is how the bank groups them.
+const STATEMENT_CYCLE_COUNT = 12;
+
+/** The card whose cycles the filter offers: the chosen source, if a credit card with a statement day. */
+function cycleSource() {
+    const select = document.getElementById('filter-source');
+    const name = select ? select.value : '';
+    const source = name && name !== 'ALL' && name !== DEBT_SOURCES_FILTER ? findSource(name) : null;
+
+    return source && source.kind === 'credit' && source.statementDay ? source : null;
+}
+
+/** [from, to] of the chosen cycle, or ['', ''] when none is chosen. */
+function selectedCycleRange() {
+    const select = document.getElementById('filter-cycle');
+    const value = select && cycleSource() ? select.value : '';
+
+    return value.includes('|') ? value.split('|') : ['', ''];
+}
+
+function cycleLabel(cycle, index) {
+    const start = formatDateDisplay(cycle.start).slice(0, 5);
+    const name = cycle.open ? 'Kỳ này' : index === 1 ? 'Kỳ trước' : 'Kỳ';
+
+    return `${name}: ${start} – ${formatDateDisplay(cycle.end)}`;
+}
+
+/** Fill the cycle list for the chosen card (and hide it for anything else), keeping the choice. */
+function renderCycleFilterOptions() {
+    const item = document.getElementById('filter-cycle-item');
+    const select = document.getElementById('filter-cycle');
+
+    if (!item || !select) return;
+
+    const source = cycleSource();
+
+    item.hidden = !source;
+
+    if (!source) {
+        select.innerHTML = '';
+        return;
+    }
+
+    const previous = select.value;
+    const cycles = statementCycles(source.statementDay, toLocalDateString(), STATEMENT_CYCLE_COUNT);
+
+    select.innerHTML =
+        '<option value="ALL">Tất cả các kỳ</option>' +
+        cycles
+            .map(
+                (cycle, index) =>
+                    `<option value="${cycle.start}|${cycle.end}">${escapeHtml(cycleLabel(cycle, index))}</option>`,
+            )
+            .join('');
+    select.value = [...select.options].some((option) => option.value === previous)
+        ? previous
+        : 'ALL';
+}
+
+/** What happened on the card in the chosen cycle, in the words of the statement's summary. */
+function renderCycleSummary() {
+    const box = document.getElementById('cycle-summary');
+    const source = cycleSource();
+    const [from, to] = selectedCycleRange();
+
+    if (!box) return;
+
+    if (!source || !from) {
+        box.hidden = true;
+        box.textContent = '';
+        return;
+    }
+
+    const totals = computeCardCycleTotals(transactions, source.name, from, to);
+    const open = to > toLocalDateString() ? ' (kỳ chưa chốt)' : '';
+
+    box.hidden = false;
+    box.innerHTML = `Sao kê ${escapeHtml(source.name)} ${formatDateDisplay(from)} – ${formatDateDisplay(to)}${open}: phát sinh <b>${formatMoney(totals.charges)}</b> · đã thanh toán <b>${formatMoney(totals.payments)}</b> · ${totals.count} giao dịch. Đối chiếu với "Nợ phát sinh trong kỳ" và "Đã thanh toán" trên sao kê.`;
+}
+
 function readTransactionFilters() {
     const value = (id) => {
         const element = document.getElementById(id);
@@ -245,9 +327,12 @@ function readTransactionFilters() {
     };
     const source = value('filter-source');
     const byDebt = source === DEBT_SOURCES_FILTER;
+    const [from, to] = selectedCycleRange();
 
     return {
         month: value('filter-month'),
+        from,
+        to,
         type: value('filter-type'),
         category: value('filter-category'),
         source: byDebt ? 'ALL' : source,
@@ -375,6 +460,7 @@ function renderTransactions() {
     if (!tbody) return;
 
     renderTransactionFilterOptions();
+    renderCycleFilterOptions();
     renderTagFilterOptions();
 
     const filtered = getFilteredTransactions();
@@ -382,6 +468,7 @@ function renderTransactions() {
     const loadMore = document.getElementById('load-more-btn');
 
     renderTransactionSummary(filtered, visible.length);
+    renderCycleSummary();
 
     if (loadMore) {
         loadMore.hidden = visible.length >= filtered.length;
@@ -420,6 +507,7 @@ function showTransactionsFor({
     category = 'ALL',
     source = 'ALL',
     tag = 'ALL',
+    cycle = 'ALL',
 } = {}) {
     renderTransactionFilterOptions();
     renderTagFilterOptions();
@@ -429,6 +517,17 @@ function showTransactionsFor({
     document.getElementById('filter-category').value = category;
     document.getElementById('filter-source').value = source;
     document.getElementById('filter-tag').value = tag;
+
+    // A card's statement cycle: 'current' (not closed yet) or 'closed' (the latest statement).
+    const cycleSelect = document.getElementById('filter-cycle');
+
+    cycleSelect.innerHTML = '';
+    renderCycleFilterOptions();
+
+    if (cycle !== 'ALL' && cycleSelect.options.length > 2) {
+        cycleSelect.selectedIndex = cycle === 'current' ? 1 : 2;
+    }
+
     handleTransactionFilterChange();
     switchTab('transactions');
 }
@@ -440,6 +539,7 @@ function resetTransactionFilters() {
     ['filter-type', 'filter-category', 'filter-source', 'filter-tag'].forEach((id) => {
         document.getElementById(id).value = 'ALL';
     });
+    document.getElementById('filter-cycle').value = 'ALL';
     handleTransactionFilterChange();
 }
 
@@ -448,6 +548,7 @@ function shiftFilterMonth(step) {
     const input = document.getElementById('filter-month');
 
     input.value = shiftMonthKey(input.value || currentMonthKey(), step);
+    document.getElementById('filter-cycle').value = 'ALL';
     handleTransactionFilterChange();
 }
 
@@ -472,11 +573,23 @@ function exportTransactionsCsv() {
 }
 
 function initTransactionFilters() {
-    ['filter-month', 'filter-type', 'filter-category', 'filter-source', 'filter-tag'].forEach(
-        (id) => {
-            document.getElementById(id).addEventListener('change', handleTransactionFilterChange);
-        },
-    );
+    ['filter-type', 'filter-category', 'filter-tag'].forEach((id) => {
+        document.getElementById(id).addEventListener('change', handleTransactionFilterChange);
+    });
+
+    // A month and a statement cycle are two ways to cut time: choosing one lets go of the other.
+    // Another card has other cycles, so changing the source starts over with all of them.
+    ['filter-month', 'filter-source'].forEach((id) => {
+        document.getElementById(id).addEventListener('change', () => {
+            document.getElementById('filter-cycle').value = 'ALL';
+            handleTransactionFilterChange();
+        });
+    });
+    document.getElementById('filter-cycle').addEventListener('change', (event) => {
+        if (event.target.value !== 'ALL') document.getElementById('filter-month').value = '';
+
+        handleTransactionFilterChange();
+    });
     document
         .getElementById('filter-search')
         .addEventListener('input', handleTransactionFilterChange);

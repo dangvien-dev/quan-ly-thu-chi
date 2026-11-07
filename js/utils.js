@@ -179,6 +179,7 @@ function normalizeSource(raw) {
     if (!name) return null;
 
     const kind = Object.hasOwn(SOURCE_KINDS, source.kind) ? source.kind : 'other';
+    const lastStatement = kind === 'credit' ? normalizeLastStatement(source.lastStatement) : null;
 
     return {
         name,
@@ -187,7 +188,24 @@ function normalizeSource(raw) {
         statementDay: kind === 'credit' ? dayOfMonthOrNull(source.statementDay) : null,
         dueDay: kind === 'credit' ? dayOfMonthOrNull(source.dueDay) : null,
         archived: Boolean(source.archived),
+        // Only present when the person gave it, so older sources keep their shape.
+        ...(lastStatement ? { lastStatement } : {}),
     };
+}
+
+/**
+ * The closing balance printed on a card's last statement: { date: statement day (YYYY-MM-DD),
+ * balance: what was owed that day, as a positive whole number }. Null when it is not usable.
+ */
+function normalizeLastStatement(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const date = normalizeDate(raw.date);
+    const balance = parseAmount(raw.balance);
+
+    if (!date || !Number.isFinite(balance) || balance < 0) return null;
+
+    return { date, balance: Math.round(balance) };
 }
 
 /** Returns null when the value is not a usable list, so callers can fall back to defaults. */
@@ -450,8 +468,8 @@ function transactionSearchText(transaction) {
 }
 
 /**
- * filters: { month: 'YYYY-MM', type, category, source, sources, tag, search }; empty or 'ALL' means
- * no filter. tag keeps the transactions that carry that tag (spelling and case do not matter). source matches either side of a transfer; sources (a list of names) keeps transactions
+ * filters: { month: 'YYYY-MM', from, to (YYYY-MM-DD, inclusive), type, category, source, sources,
+ * tag, search }; empty or 'ALL' means no filter. tag keeps the transactions that carry that tag (spelling and case do not matter). source matches either side of a transfer; sources (a list of names) keeps transactions
  * that touch any of them on either side; every word of search must match.
  */
 function filterTransactions(list, filters = {}) {
@@ -460,6 +478,8 @@ function filterTransactions(list, filters = {}) {
 
     return list.filter((transaction) => {
         if (filters.month && !transaction.date.startsWith(filters.month)) return false;
+        if (filters.from && transaction.date < filters.from) return false;
+        if (filters.to && transaction.date > filters.to) return false;
         if (active(filters.type) && transaction.type !== filters.type) return false;
         if (active(filters.category) && transaction.category !== filters.category) return false;
 
@@ -1525,6 +1545,9 @@ function previousDayOfMonth(day, from) {
  * statement that was not paid shows as overdue instead of jumping to next month). Without one it
  * is the whole debt and the next due day.
  * `opening` is the source's initial balance. daysLeft is negative once the due date has passed.
+ * When the source has `lastStatement` (the closing balance printed on a statement), what was owed
+ * on a later statement day is that balance plus what happened since, so the amount no longer depends
+ * on the initial balance, which absorbs every charge the book is missing ("Khớp số dư").
  */
 function computeCardDue(source, list, opening, todayKey) {
     if (!source || source.kind !== 'credit' || source.archived || !source.dueDay) return null;
@@ -1555,7 +1578,22 @@ function computeCardDue(source, list, opening, todayKey) {
             return total + Math.max(0, sourceEffect(transaction, source.name));
         }, 0);
 
-        amount = Math.max(0, -balanceUpTo(statementKey) - paidSince);
+        const anchor =
+            source.lastStatement && source.lastStatement.date <= statementKey
+                ? source.lastStatement
+                : null;
+        const owedAtStatement = anchor
+            ? anchor.balance -
+              list.reduce(
+                  (total, transaction) =>
+                      transaction.date > anchor.date && transaction.date <= statementKey
+                          ? total + sourceEffect(transaction, source.name)
+                          : total,
+                  0,
+              )
+            : -balanceUpTo(statementKey);
+
+        amount = Math.max(0, owedAtStatement - paidSince);
     } else {
         due = nextDayOfMonth(source.dueDay, today);
         amount = Math.max(0, -balanceUpTo(todayKey));
@@ -1570,6 +1608,59 @@ function computeCardDue(source, list, opening, todayKey) {
         dueDate: toLocalDateString(due),
         daysLeft: daysUntil(due, today),
     };
+}
+
+/** The statement day on or before `todayKey` (YYYY-MM-DD) for a card whose statement closes on `day`. */
+function latestStatementDate(day, todayKey) {
+    return toLocalDateString(previousDayOfMonth(day, parseLocalDate(todayKey)));
+}
+
+/**
+ * The statement cycles of a card, newest first: { start, end, open }. A cycle runs from the day
+ * after one statement day to the next statement day (statement day 20: 21/09 to 20/10); `open`
+ * marks the one that has not closed yet. The statement day itself belongs to the cycle it closes.
+ */
+function statementCycles(statementDay, todayKey, count = 12) {
+    if (!statementDay) return [];
+
+    const today = parseLocalDate(todayKey);
+    const cycles = [];
+    let end = nextDayOfMonth(statementDay, addDays(today, 1));
+
+    for (let index = 0; index < count; index++) {
+        const previous = previousDayOfMonth(statementDay, addDays(end, -1));
+
+        cycles.push({
+            start: toLocalDateString(addDays(previous, 1)),
+            end: toLocalDateString(end),
+            open: index === 0,
+        });
+        end = previous;
+    }
+
+    return cycles;
+}
+
+/**
+ * What happened on one source between two dates (inclusive), as a card statement counts it:
+ * `charges` is money that went out (purchases, fees, cash taken, transfers out), `payments` is
+ * money that came in (payments into the card, refunds), `count` the transactions that moved it.
+ */
+function computeCardCycleTotals(list, sourceName, from, to) {
+    const totals = { charges: 0, payments: 0, count: 0 };
+
+    list.forEach((transaction) => {
+        if (transaction.date < from || transaction.date > to) return;
+
+        const effect = sourceEffect(transaction, sourceName);
+
+        if (effect < 0) totals.charges -= effect;
+        else if (effect > 0) totals.payments += effect;
+
+        if (effect) totals.count++;
+    });
+
+    return totals;
 }
 
 /** 0 = nothing to worry about yet, 1 = due within CARD_DUE_WARN_DAYS, 2 = the due date has passed. */
