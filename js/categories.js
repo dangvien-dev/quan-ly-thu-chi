@@ -21,6 +21,21 @@ function selectCategory(name, keepMissing = false) {
     selectValue('txCategory', name, keepMissing);
 }
 
+/**
+ * Make sure a category of this name exists (a name used by either type counts), for features that
+ * file transactions on their own: debt payments, imported statements. Returns true when it was
+ * added; the caller syncs afterwards like for any change of the list.
+ */
+function ensureCategory(name, type, icon = 'fa-tag') {
+    if (categories.some((category) => category.name === name)) return false;
+
+    categories.push({ id: Date.now() + categories.length, name, type, icon });
+    saveMeta('categories');
+    updateCategoriesDropdown();
+
+    return true;
+}
+
 function handleCategorySubmit(e) {
     e.preventDefault();
 

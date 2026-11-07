@@ -88,6 +88,7 @@ function renderAll() {
         renderSavings,
         renderCategories,
         renderTagReport,
+        renderImportUndo,
         renderRecurring,
         renderDebts,
     ];
@@ -126,6 +127,8 @@ function initializeApp() {
     initTransactionFilters();
     initTags();
     initTagReport();
+    initImport();
+    initCardPay();
     initRecurring();
     initDebts();
     initSalary();

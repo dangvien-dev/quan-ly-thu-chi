@@ -136,6 +136,7 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
         );
 
         expect(fields.map((field) => field.id).sort()).toEqual([
+            'cardPayAmount',
             'debtAmount',
             'debtPayAmount',
             'moneyPromptInput',
@@ -144,6 +145,7 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
             'savAmount',
             'srcCreditLimit',
             'srcInitialBalance',
+            'srcStatementBalance',
             'txAmount',
         ]);
         expect(fields.every((field) => field.type === 'text')).toBe(true);

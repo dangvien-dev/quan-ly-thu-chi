@@ -84,39 +84,69 @@ function describeCredit(source, balance) {
         );
     }
 
-    [
-        ['Chốt sao kê', source.statementDay],
-        ['Hạn thanh toán', source.dueDay],
-    ].forEach(([label, day]) => {
-        if (day) {
-            lines.push(
-                `${label} ngày ${day} (${describeDaysUntil(daysUntil(nextDayOfMonth(day)))})`,
-            );
-        }
-    });
-
-    const html = lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
-
-    return html + describeCardDue(source);
-}
-
-/** "Cần trả X trước dd/mm" under a card, in red from CARD_DUE_WARN_DAYS before the due date. */
-function describeCardDue(source) {
     const due = computeCardDue(
         source,
         transactions,
         initialBalances[source.name],
         toLocalDateString(),
     );
+    // "Còn N ngày" counts to the next due day; next to "quá hạn" for the statement before it would
+    // read as a contradiction, so an overdue card shows the day alone.
+    const overdue = Boolean(due && due.daysLeft < 0);
 
-    if (!due) return '';
+    [
+        ['Chốt sao kê', source.statementDay, false],
+        ['Hạn thanh toán', source.dueDay, overdue],
+    ].forEach(([label, day, plainDay]) => {
+        if (!day) return;
 
-    const level = cardDueLevel(due);
-    const when =
-        due.daysLeft < 0 ? `quá hạn ${-due.daysLeft} ngày` : describeDaysUntil(due.daysLeft);
-    const text = `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)} (${when})`;
+        lines.push(
+            plainDay
+                ? `${label} ngày ${day} hằng tháng`
+                : `${label} ngày ${day} (${describeDaysUntil(daysUntil(nextDayOfMonth(day)))})`,
+        );
+    });
 
-    return `<div class="source-meta card-due${level ? ' source-warn' : ''}">${level ? '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> ' : ''}${escapeHtml(text)}</div>`;
+    if (source.lastStatement) {
+        lines.push(
+            `Sao kê chốt ${formatDateDisplay(source.lastStatement.date)}: dư nợ ${formatMoney(source.lastStatement.balance)}`,
+        );
+    }
+
+    const html = lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
+
+    return html + describeCardDue(source, due);
+}
+
+/**
+ * Under a card: "Cần trả X trước dd/mm" (red from CARD_DUE_WARN_DAYS before the due date) with the
+ * "Đã trả" button that records the payment, and "Xem theo kỳ" which lists the transactions of a
+ * statement cycle (only for a card that has a statement day).
+ */
+function describeCardDue(source, due) {
+    const name = escapeHtml(source.name);
+    const buttons = [];
+    let line = '';
+
+    if (due) {
+        const level = cardDueLevel(due);
+        const when =
+            due.daysLeft < 0 ? `quá hạn ${-due.daysLeft} ngày` : describeDaysUntil(due.daysLeft);
+        const text = `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)} (${when})`;
+
+        line = `<div class="source-meta card-due${level ? ' source-warn' : ''}">${level ? '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> ' : ''}${escapeHtml(text)}</div>`;
+        buttons.push(`<button type="button" class="btn btn-outline btn-small" data-action="pay-card" data-source="${name}" aria-label="Ghi khoản đã trả cho thẻ ${name}">
+                    <i class="fa-solid fa-circle-check" aria-hidden="true"></i> Đã trả
+                </button>`);
+    }
+
+    if (source.statementDay) {
+        buttons.push(`<button type="button" class="btn btn-outline btn-small" data-action="view-cycle" data-source="${name}" aria-label="Xem theo kỳ sao kê của ${name}">
+                    <i class="fa-solid fa-calendar-days" aria-hidden="true"></i> Xem theo kỳ
+                </button>`);
+    }
+
+    return buttons.length ? `${line}<div class="card-due-actions">${buttons.join('')}</div>` : line;
 }
 
 const CARD_DUE_REMINDER_KEY = 'fm_card_due_reminder_day';
@@ -290,6 +320,8 @@ function handleSourceGridClick(event) {
         'archive-source': () => archiveSource(name, true),
         'restore-source': () => archiveSource(name, false),
         'delete-source': () => deleteSource(name),
+        'pay-card': () => openCardPayModal(name),
+        'view-cycle': () => showTransactionsFor({ source: name, cycle: 'closed' }),
         'move-source-up': () => moveSource(name, -1),
         'move-source-down': () => moveSource(name, 1),
     };
@@ -297,6 +329,158 @@ function handleSourceGridClick(event) {
     if (actions[button.dataset.action]) {
         actions[button.dataset.action]();
     }
+}
+
+// --- PAYING A CARD STATEMENT ---
+// "Đã trả" on the due line: the payment is a transfer from a money source into the card, like the
+// one typed by hand, so both balances and the due line follow it.
+const CARD_PAY_SOURCE_KEY = 'fm_card_pay_source';
+let payingCardName = null;
+
+/** Where a card is paid from: any source in use that is not a card, a loan or a savings book. */
+function cardPaySourceNames(cardName) {
+    return sourceNames().filter((name) => {
+        const source = findSource(name);
+
+        return name !== cardName && !SOURCE_KINDS[source.kind].debt && !isSavingsKind(source);
+    });
+}
+
+function updateCardPayHint() {
+    const card = payingCardName;
+    const payer = document.getElementById('cardPaySource').value;
+    const hint = document.getElementById('cardPaySourceHint');
+
+    if (!card || !payer) {
+        hint.textContent = '';
+        return;
+    }
+
+    const amount = readMoneyInput('cardPayAmount') || 0;
+    const balance = calculateSourceBalances()[card] ?? 0;
+
+    hint.textContent = `Tạo giao dịch chuyển tiền từ ${payer} sang ${card}: số dư ${payer} giảm, nợ ${card} giảm. Số dư ${card} sau khi ghi: ${formatMoney(balance + amount)}.`;
+}
+
+function openCardPayModal(name) {
+    const card = findSource(name);
+
+    if (!card) return;
+
+    const payers = cardPaySourceNames(name);
+
+    if (payers.length === 0) {
+        alert('Chưa có nguồn tiền nào để trả từ đó. Hãy thêm nguồn tiền mặt hoặc ngân hàng trước.');
+        return;
+    }
+
+    const today = toLocalDateString();
+    const due = computeCardDue(card, transactions, initialBalances[name], today);
+    const owed = Math.max(0, -(calculateSourceBalances()[name] ?? 0));
+    const remembered = readStoredText(CARD_PAY_SOURCE_KEY);
+    const select = document.getElementById('cardPaySource');
+
+    payingCardName = name;
+    document.getElementById('cardPayTitle').innerText = `Trả sao kê ${name}`;
+    document.getElementById('cardPayMessage').innerText = due
+        ? `Cần trả ${formatMoney(due.amount)} trước ${formatDateDisplay(due.dueDate)}. Nhập số tiền bạn đã trả (có thể ít hơn).`
+        : `Nhập số tiền bạn đã trả vào thẻ ${name}.`;
+    setMoneyInput('cardPayAmount', due ? due.amount : owed);
+    document.getElementById('cardPayDate').value = today;
+    select.innerHTML = payers
+        .map((payer) => `<option value="${escapeHtml(payer)}">${escapeHtml(payer)}</option>`)
+        .join('');
+    select.value = payers.includes(remembered) ? remembered : payers[0];
+    updateCardPayHint();
+    openDialog('cardPayModal', 'cardPayAmount');
+    document.getElementById('cardPayAmount').select();
+}
+
+function closeCardPayModal() {
+    payingCardName = null;
+    closeDialog('cardPayModal');
+}
+
+/** `TX_CARDPAY_<ms>`; a counter is added if two payments share a millisecond. */
+function newCardPaymentId() {
+    const base = `TX_CARDPAY_${Date.now()}`;
+    let id = base;
+    let counter = 1;
+
+    while (transactions.some((transaction) => transaction.id === id)) {
+        id = `${base}_${counter++}`;
+    }
+
+    return id;
+}
+
+function initCardPay() {
+    document.getElementById('cardPayAmount').addEventListener('input', updateCardPayHint);
+    document.getElementById('cardPaySource').addEventListener('change', updateCardPayHint);
+}
+
+function handleCardPaySubmit(event) {
+    event.preventDefault();
+
+    // A sync may have archived or removed the card while the dialog was open.
+    const card = payingCardName && findSource(payingCardName);
+
+    if (!card || card.archived) {
+        closeCardPayModal();
+        return;
+    }
+
+    const amount = readMoneyInput('cardPayAmount');
+    const date = normalizeDate(document.getElementById('cardPayDate').value);
+    const payer = document.getElementById('cardPaySource').value;
+
+    if (!(amount > 0)) {
+        alert('Số tiền không hợp lệ!');
+        return;
+    }
+
+    if (!date) {
+        alert('Vui lòng chọn ngày hợp lệ!');
+        return;
+    }
+
+    if (!cardPaySourceNames(card.name).includes(payer)) {
+        alert('Nguồn trả này không còn dùng được. Hãy chọn nguồn khác.');
+        return;
+    }
+
+    const id = newCardPaymentId();
+
+    transactions.unshift({
+        id,
+        date,
+        type: 'transfer',
+        source: payer,
+        targetSource: card.name,
+        category: TRANSFER_CATEGORY,
+        amount,
+        note: `Trả sao kê ${card.name}`,
+        updatedAt: new Date().toISOString(),
+    });
+    saveDataLocally();
+    queueUpsert([id]);
+
+    try {
+        localStorage.setItem(CARD_PAY_SOURCE_KEY, payer);
+    } catch {
+        // Not being able to remember the choice is harmless.
+    }
+
+    const cardName = card.name;
+
+    closeCardPayModal();
+    renderAll();
+    // The "Đã trả" button is gone once the statement is paid: keep the focus on the same card.
+    refocusControl(
+        `#sources-grid button[data-action="edit-balance"][data-source="${CSS.escape(cardName)}"]`,
+    );
+    syncToGoogleSheet();
+    showToast(`Đã ghi trả ${formatMoney(amount)} cho ${cardName} từ ${payer}.`, 'success');
 }
 
 // --- REORDER ---
@@ -438,6 +622,15 @@ function openSourceModal(name = null) {
     document.getElementById('srcStatementDay').value =
         source && source.statementDay ? source.statementDay : '';
     document.getElementById('srcDueDay').value = source && source.dueDay ? source.dueDay : '';
+    setMoneyInput(
+        'srcStatementBalance',
+        source && source.lastStatement ? source.lastStatement.balance : '',
+    );
+    document.getElementById('srcStatementBalanceHint').textContent =
+        'Số "Dư nợ cuối kỳ" (Outstanding Balance) in trên sao kê. Điền thì "Cần trả" lấy số này, không còn phụ thuộc số dư ban đầu; để trống thì app tự tính.' +
+        (source && source.lastStatement
+            ? ` Đang dùng sao kê chốt ngày ${formatDateDisplay(source.lastStatement.date)}.`
+            : '');
     setMoneyInput('srcInitialBalance', source ? Number(initialBalances[source.name]) || 0 : '');
     updateSourceFormVisibility();
     openDialog('sourceModal', 'srcName');
@@ -506,6 +699,32 @@ function handleSourceSubmit(event) {
         return;
     }
 
+    // The closing balance belongs to the latest statement day: today's, unless it is the number
+    // already saved for the same statement day, which keeps its own date.
+    const statementDay = dayOfMonthOrNull(document.getElementById('srcStatementDay').value);
+    const statementBalance = kind === 'credit' ? readMoneyInput('srcStatementBalance') : NaN;
+    let lastStatement = null;
+
+    if (!Number.isNaN(statementBalance)) {
+        if (!statementDay) {
+            alert('Hãy nhập ngày chốt sao kê để app biết dư nợ cuối kỳ này thuộc sao kê nào.');
+            return;
+        }
+
+        const kept =
+            existing &&
+            existing.lastStatement &&
+            existing.lastStatement.balance === statementBalance &&
+            existing.statementDay === statementDay;
+
+        lastStatement = kept
+            ? existing.lastStatement
+            : {
+                  date: latestStatementDate(statementDay, toLocalDateString()),
+                  balance: statementBalance,
+              };
+    }
+
     const updated = normalizeSource({
         name,
         kind,
@@ -513,6 +732,7 @@ function handleSourceSubmit(event) {
         statementDay: document.getElementById('srcStatementDay').value,
         dueDay: document.getElementById('srcDueDay').value,
         archived: existing ? existing.archived : false,
+        lastStatement,
     });
 
     if (existing && existing.name !== name) {

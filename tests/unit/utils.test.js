@@ -1360,6 +1360,873 @@ test('normalizeDebt: lần thanh toán giữ transactionId khi có, không thêm
     );
 });
 
+test('parseCsvText: nháy kép, "" trong ô, xuống dòng trong ô, CRLF / LF / CR, BOM, dòng trống', () => {
+    const parse = (text, delimiter = '') =>
+        plain(run(`parseCsvText(${JSON.stringify(text)},${JSON.stringify(delimiter)})`));
+
+    assert.deepEqual(parse('a,b,c\r\n1,"x, y",3\r\n'), [
+        ['a', 'b', 'c'],
+        ['1', 'x, y', '3'],
+    ]);
+    assert.deepEqual(parse('a,b\n"he said ""hi""","line1\nline2"\n'), [
+        ['a', 'b'],
+        ['he said "hi"', 'line1\nline2'],
+    ]);
+    // Old Mac line breaks, a BOM, blank lines, no final line break, padded cells.
+    assert.deepEqual(parse('﻿a,b\r\r  1 ,  2  \r\n\r\n3,4'), [
+        ['a', 'b'],
+        ['1', '2'],
+        ['3', '4'],
+    ]);
+    // Empty cells stay as cells; a row of only empty cells is dropped.
+    assert.deepEqual(parse('a,,c\n,,\nd,e,'), [
+        ['a', '', 'c'],
+        ['d', 'e', ''],
+    ]);
+    assert.deepEqual(parse(''), []);
+    // A quote in the middle of a cell is just text.
+    assert.deepEqual(parse('5" pipe,x'), [['5" pipe', 'x']]);
+});
+
+test('parseCsvText: nhận dấu phân cách; số "1,234,567" trong file dùng ; không làm nhầm', () => {
+    const rows = (text) => plain(run(`parseCsvText(${JSON.stringify(text)})`));
+
+    assert.deepEqual(rows('a;b;c\n1;2;3'), [
+        ['a', 'b', 'c'],
+        ['1', '2', '3'],
+    ]);
+    assert.deepEqual(rows('a\tb\n1\t2'), [
+        ['a', 'b'],
+        ['1', '2'],
+    ]);
+    assert.deepEqual(rows('a|b\n1|2'), [
+        ['a', 'b'],
+        ['1', '2'],
+    ]);
+    assert.deepEqual(
+        rows('Ngày;Nội dung;Số tiền\n27/10/2026;Cafe;-1,234,567\n28/10/2026;Cơm;-45,000'),
+        [
+            ['Ngày', 'Nội dung', 'Số tiền'],
+            ['27/10/2026', 'Cafe', '-1,234,567'],
+            ['28/10/2026', 'Cơm', '-45,000'],
+        ],
+    );
+    // A comma inside quotes of a semicolon file does not count as a delimiter.
+    assert.equal(run('detectCsvDelimiter("a;\\"b,c,d\\";e\\n1;2;3")'), ';');
+    assert.equal(run('detectCsvDelimiter("")'), ',');
+});
+
+test('parseBankDate: ngày trước tháng, nhiều kiểu ngăn cách, năm 2 chữ số, có giờ, ngày sai', () => {
+    const date = (text) => run(`parseBankDate(${JSON.stringify(text)})`);
+
+    assert.equal(date('27/10/2026'), '2026-10-27');
+    assert.equal(date('7/1/2026'), '2026-01-07');
+    assert.equal(date('27-10-2026'), '2026-10-27');
+    assert.equal(date('27.10.2026'), '2026-10-27');
+    assert.equal(date('27/10/26'), '2026-10-27');
+    assert.equal(date('2026-10-27'), '2026-10-27');
+    assert.equal(date('2026/10/27'), '2026-10-27');
+    assert.equal(date('27/10/2026 14:30:12'), '2026-10-27');
+    assert.equal(date('2026-10-27T03:00:00Z'), '2026-10-27');
+    assert.equal(date(' 03/04/2026 '), '2026-04-03'); // day first: the 3rd of April
+    assert.equal(date('29/02/2028'), '2028-02-29');
+
+    for (const bad of [
+        '',
+        'Tổng cộng',
+        '31/02/2026',
+        '13/13/2026',
+        '27/10',
+        '2026',
+        '27/10/20266',
+    ]) {
+        assert.equal(date(bad), '', bad);
+    }
+});
+
+test('parseBankAmount: dấu chấm / phẩy hàng nghìn và thập phân, âm, ngoặc, đơn vị', () => {
+    const amount = (text) => run(`parseBankAmount(${JSON.stringify(text)})`);
+
+    assert.equal(amount('1.234.567'), 1234567);
+    assert.equal(amount('1,234,567'), 1234567);
+    assert.equal(amount('1.234.567,89'), 1234568);
+    assert.equal(amount('1,234,567.89'), 1234568);
+    assert.equal(amount('250000'), 250000);
+    assert.equal(amount('250000.00'), 250000);
+    assert.equal(amount('250.000'), 250000);
+    assert.equal(amount('250,000'), 250000);
+    assert.equal(amount('1.234'), 1234); // a lone separator + 3 digits is a thousands mark
+    assert.equal(amount('1234.5'), 1235);
+    assert.equal(amount('-1234.5'), -1235); // rounded by size, not toward +infinity
+    assert.equal(amount('0,5'), 1);
+    assert.equal(amount('-250.000'), -250000);
+    assert.equal(amount('−250.000'), -250000); // a real minus sign
+    assert.equal(amount('(250.000)'), -250000);
+    assert.equal(amount('250.000-'), -250000);
+    assert.equal(amount('+1.000.000'), 1000000);
+    assert.equal(amount(' 250.000 VND '), 250000);
+    assert.equal(amount('250.000 đ'), 250000);
+    assert.equal(amount('1 250 000'), 1250000);
+    assert.equal(amount('0'), 0);
+    assert.equal(amount(1500.4), 1500);
+
+    for (const bad of [
+        '',
+        '  ',
+        'abc',
+        '--5',
+        '1.2.3',
+        '1.234.56',
+        '12,34,56',
+        '1,2,3,4',
+        '1.234,56,7',
+    ]) {
+        assert.ok(Number.isNaN(amount(bad)), JSON.stringify(bad));
+    }
+});
+
+test('detectCsvLayout: tìm dòng tiêu đề sau phần giới thiệu tài khoản, nhận cột ghi nợ / ghi có / số tiền', () => {
+    const layout = (rows) => plain(run(`detectCsvLayout(${JSON.stringify(rows)})`));
+
+    // A statement with account lines first and separate debit / credit columns.
+    assert.deepEqual(
+        layout([
+            ['SAO KÊ TÀI KHOẢN'],
+            ['Số tài khoản', '0011004123456'],
+            [
+                'Ngày giao dịch',
+                'Số tham chiếu',
+                'Số tiền ghi nợ',
+                'Số tiền ghi có',
+                'Số dư',
+                'Nội dung',
+            ],
+            ['27/10/2026', 'FT123', '20.000', '', '1.000.000', 'Cafe'],
+        ]),
+        {
+            headerIndex: 2,
+            columns: {
+                date: 0,
+                description: 5,
+                debit: 2,
+                credit: 3,
+                amount: -1,
+                balance: 4,
+                reference: 1,
+            },
+        },
+    );
+    // Short headers: "Nợ" / "Có" are columns, "Nội dung" is not a debit.
+    assert.deepEqual(layout([['Ngày', 'Diễn giải', 'Nợ', 'Có']]).columns, {
+        date: 0,
+        description: 1,
+        debit: 2,
+        credit: 3,
+        amount: -1,
+        balance: -1,
+        reference: -1,
+    });
+    // One signed amount column, headers in English.
+    assert.deepEqual(
+        layout([
+            ['Transaction Date', 'Description', 'Amount', 'Balance'],
+            ['27/10/2026', 'x', '-5', '9'],
+        ]),
+        {
+            headerIndex: 0,
+            columns: {
+                date: 0,
+                description: 1,
+                debit: -1,
+                credit: -1,
+                amount: 2,
+                balance: 3,
+                reference: -1,
+            },
+        },
+    );
+    // Accents and case do not matter; "Số tiền" is the amount, "Số tiền ghi nợ" is not.
+    assert.equal(layout([['NGÀY', 'MÔ TẢ', 'SỐ TIỀN']]).columns.amount, 2);
+});
+
+test('detectCsvLayout: các kiểu tiêu đề sao kê thường gặp (song ngữ, có STT, ngày hiệu lực, một cột số tiền)', () => {
+    const columns = (header) =>
+        plain(run(`detectCsvLayout(${JSON.stringify([header, ['x']])})`)).columns;
+
+    // Bilingual headers: the long Vietnamese phrase beats the short English word.
+    assert.deepEqual(
+        columns([
+            'Ngày giao dịch / Date',
+            'Số tham chiếu / Reference',
+            'Số tiền ghi nợ / Debit',
+            'Số tiền ghi có / Credit',
+            'Số dư / Balance',
+            'Mô tả giao dịch / Description',
+        ]),
+        { date: 0, reference: 1, debit: 2, credit: 3, balance: 4, description: 5, amount: -1 },
+    );
+    // A running number column, and a value date next to the transaction date.
+    assert.deepEqual(
+        columns([
+            'STT',
+            'Ngày giao dịch',
+            'Ngày hiệu lực',
+            'Nội dung',
+            'Ghi nợ',
+            'Ghi có',
+            'Số dư',
+        ]),
+        { date: 1, description: 3, debit: 4, credit: 5, balance: 6, reference: -1, amount: -1 },
+    );
+    // Header cells with a unit or punctuation.
+    assert.deepEqual(columns(['Ngày GD', 'Nội dung', 'Số tiền (VND)', 'Số dư (VND)']), {
+        date: 0,
+        description: 1,
+        amount: 2,
+        balance: 3,
+        debit: -1,
+        credit: -1,
+        reference: -1,
+    });
+    // A card statement: "Số tiền" with a transaction date and details.
+    assert.deepEqual(columns(['Ngày giao dịch', 'Chi tiết giao dịch', 'Số tiền']), {
+        date: 0,
+        description: 1,
+        amount: 2,
+        debit: -1,
+        credit: -1,
+        balance: -1,
+        reference: -1,
+    });
+});
+
+test('Sao kê thẻ có cột ngoại tệ: lấy cột đồng Việt Nam, không lấy số đô; dòng Claude 22,22 USD', () => {
+    const layout = (rows) => plain(run(`detectCsvLayout(${JSON.stringify(rows)})`));
+    const claude = [
+        '30/09/26',
+        '01/10/26',
+        'Retail USA SAN FRANCISCO ANTHROPIC* CLAUDE SUB',
+        '-22.22',
+        'USD',
+        '-582,719.50',
+    ];
+    const coffee = [
+        '02/10/26',
+        '02/10/26',
+        'Retail VN HIGHLANDS COFFEE',
+        '-45000',
+        'VND',
+        '-45,000.00',
+    ];
+
+    // By header: "Số tiền ngoại tệ" is not the amount, "Số tiền VND" is.
+    const byHeader = layout([
+        [
+            'Ngày giao dịch',
+            'Ngày hạch toán',
+            'Nội dung',
+            'Số tiền ngoại tệ',
+            'Loại tiền',
+            'Số tiền VND',
+        ],
+        claude,
+        coffee,
+    ]);
+
+    assert.equal(byHeader.columns.amount, 5);
+    assert.equal(byHeader.columns.date, 0); // the transaction date, not the posting date
+    assert.equal(byHeader.columns.description, 2);
+
+    // Headers that do not say which is which: a column of currency codes (not all VND) after the
+    // amount means the amount is in that currency, so the next numeric column is the one in đồng.
+    const byContent = layout([
+        [
+            'Ngày giao dịch',
+            'Ngày hạch toán',
+            'Nội dung',
+            'Số tiền giao dịch',
+            'Loại tiền',
+            'Số tiền quy đổi',
+        ],
+        claude,
+        coffee,
+    ]);
+
+    assert.equal(byContent.columns.amount, 5);
+
+    const onlyDong = layout([
+        ['Ngày giao dịch', 'Ngày hạch toán', 'Nội dung', 'Số tiền giao dịch', 'Loại tiền'],
+        coffee.slice(0, 5),
+    ]);
+
+    // Every purchase in đồng: the detected column stays.
+    assert.equal(onlyDong.columns.amount, 3);
+
+    // The row of the screenshot becomes a 582.720 đ expense on 30/9 (the .50 is rounded).
+    const built = plain(
+        run(
+            `buildImportItems(${JSON.stringify([
+                [
+                    'Ngày giao dịch',
+                    'Ngày hạch toán',
+                    'Nội dung',
+                    'Số tiền ngoại tệ',
+                    'Loại tiền',
+                    'Số tiền VND',
+                ],
+                claude,
+                coffee,
+            ])},${JSON.stringify(byHeader)},{source:"Thẻ Tín Dụng"})`,
+        ),
+    );
+
+    assert.deepEqual(
+        built.items.map((item) => [item.date, item.type, item.amount]),
+        [
+            ['2026-09-30', 'expense', 582720],
+            ['2026-10-02', 'expense', 45000],
+        ],
+    );
+    assert.equal(built.items[0].note, 'Retail USA SAN FRANCISCO ANTHROPIC* CLAUDE SUB');
+});
+
+test('detectCsvLayout: bảng giao dịch thật của sao kê thẻ VPBank (tiêu đề song ngữ, cột phí, số tiền thanh toán)', () => {
+    const header = [
+        'Ngày giao dịch Tnx date',
+        'Ngày hạch toán Posting date',
+        'Chi tiết giao dịch Tnx details',
+        'Số tiền giao dịch Txn amount',
+        'Loại tiền CCY',
+        'Phí (VND) Fee (VND)',
+        'Số tiền thanh toán (VND) Payment amount (VND)',
+    ];
+    const rows = [
+        header,
+        [
+            '21/09/26',
+            '21/09/26',
+            'Credit Account I2B Virtual Card payment;',
+            '1,614,164.00',
+            'VND',
+            '',
+            '1,614,164.00',
+        ],
+        [
+            '23/09/26',
+            '24/09/26',
+            'Retail USA SAN FRANCISCO OPENAI *CHATGPT SUBSCR',
+            '-132,000.00',
+            'VND',
+            '',
+            '-132,000.00',
+        ],
+        ['23/09/26', '24/09/26', 'Custom Fee', '0.00', 'VND', '-10,000.00', '-10,000.00'],
+        ['23/09/26', '24/09/26', 'VAT', '0.00', 'VND', '-1,000.00', '-1,000.00'],
+    ];
+    const layout = plain(run(`detectCsvLayout(${JSON.stringify(rows)})`));
+
+    // The amount is the last column ("Số tiền thanh toán (VND)", fee included), not "Số tiền giao dịch":
+    // the fee and VAT lines have 0.00 there.
+    assert.deepEqual(layout, {
+        headerIndex: 0,
+        columns: {
+            date: 0,
+            description: 2,
+            amount: 6,
+            debit: -1,
+            credit: -1,
+            balance: -1,
+            reference: -1,
+        },
+    });
+
+    const built = plain(
+        run(
+            `buildImportItems(${JSON.stringify(rows)},${JSON.stringify(layout)},{source:"Thẻ Tín Dụng"})`,
+        ),
+    );
+
+    assert.deepEqual(
+        built.items.map((item) => [item.date, item.type, item.amount]),
+        [
+            ['2026-09-21', 'income', 1614164],
+            ['2026-09-23', 'expense', 132000],
+            ['2026-09-23', 'expense', 10000],
+            ['2026-09-23', 'expense', 1000],
+        ],
+    );
+    assert.equal(built.skipped.length, 0);
+});
+
+test('guessPositiveIsExpense: dấu mà đa số dòng có là chi (sao kê VPBank ghi chi là số âm)', () => {
+    const guess = (amounts, columns = 'amount:1,debit:-1,credit:-1') =>
+        run(
+            `guessPositiveIsExpense(${JSON.stringify([['h', 'h'], ...amounts.map((value) => ['d', value])])},{headerIndex:0,columns:{${columns}}})`,
+        );
+
+    assert.equal(guess(['-10.000', '-20.000', '5.000']), false); // charges are negative
+    assert.equal(guess(['10.000', '20.000', '-5.000']), true); // charges are positive
+    assert.equal(guess(['10.000', '-20.000']), false); // a tie: the usual bank account
+    assert.equal(guess([]), false);
+    assert.equal(guess(['abc', '', 'x']), false);
+    // Separate debit / credit columns, or no amount column: the sign does not matter.
+    assert.equal(guess(['10.000', '20.000'], 'amount:1,debit:1,credit:-1'), false);
+    assert.equal(guess(['10.000', '20.000'], 'amount:-1,debit:-1,credit:-1'), false);
+});
+
+test('detectCsvLayout: không có dòng tiêu đề thì đoán cột ngày và mô tả theo dữ liệu', () => {
+    const found = plain(
+        run(
+            `detectCsvLayout(${JSON.stringify([
+                ['27/10/2026', 'Thanh toan Highlands Coffee Q1', '-45.000'],
+                ['28/10/2026', 'Chuyen khoan tien nha', '-3.000.000'],
+                ['29/10/2026', 'Luong thang 10', '12.000.000'],
+            ])})`,
+        ),
+    );
+
+    assert.equal(found.headerIndex, -1);
+    assert.equal(found.columns.date, 0);
+    assert.equal(found.columns.description, 1);
+    assert.equal(found.columns.amount, -1); // left for the person to choose
+});
+
+const IMPORT_LAYOUT_SPLIT =
+    '{headerIndex:0,columns:{date:0,description:1,debit:2,credit:3,amount:-1,balance:-1,reference:-1}}';
+const IMPORT_LAYOUT_SIGNED =
+    '{headerIndex:0,columns:{date:0,description:1,debit:-1,credit:-1,amount:2,balance:-1,reference:-1}}';
+
+test('buildImportItems: cột ghi nợ / ghi có hoặc dấu của số tiền quyết định chi hay thu', () => {
+    const build = (rows, layout, options = '{source:"VCB"}') =>
+        plain(run(`buildImportItems(${JSON.stringify(rows)},${layout},${options})`));
+    const split = build(
+        [
+            ['Ngày', 'Nội dung', 'Nợ', 'Có'],
+            ['27/10/2026', 'Cafe', '20.000', ''],
+            ['28/10/2026', 'Lương', '', '12.000.000'],
+            ['29/10/2026', 'Hoàn tiền', '0', '5.000'],
+        ],
+        IMPORT_LAYOUT_SPLIT,
+    );
+
+    assert.deepEqual(
+        split.items.map((item) => [item.date, item.type, item.amount, item.note]),
+        [
+            ['2026-10-27', 'expense', 20000, 'Cafe'],
+            ['2026-10-28', 'income', 12000000, 'Lương'],
+            ['2026-10-29', 'income', 5000, 'Hoàn tiền'],
+        ],
+    );
+    assert.deepEqual(split.skipped, []);
+
+    const rows = [
+        ['Ngày', 'Mô tả', 'Số tiền'],
+        ['27/10/2026', 'Mua hàng', '-150.000'],
+        ['28/10/2026', 'Nhận tiền', '+2.000.000'],
+    ];
+    const signed = build(rows, IMPORT_LAYOUT_SIGNED);
+
+    assert.deepEqual(
+        signed.items.map((item) => [item.type, item.amount]),
+        [
+            ['expense', 150000],
+            ['income', 2000000],
+        ],
+    );
+    // A card statement lists purchases as positive numbers and refunds as negative ones.
+    const card = build(rows, IMPORT_LAYOUT_SIGNED, '{source:"Visa",positiveIsExpense:true}');
+
+    assert.deepEqual(
+        card.items.map((item) => [item.type, item.amount]),
+        [
+            ['income', 150000],
+            ['expense', 2000000],
+        ],
+    );
+});
+
+test('buildImportItems: bỏ dòng không có ngày / số tiền kèm lý do, xóa # khỏi mô tả, giới hạn số dòng', () => {
+    const build = (rows) =>
+        plain(
+            run(`buildImportItems(${JSON.stringify(rows)},${IMPORT_LAYOUT_SIGNED},{source:"VCB"})`),
+        );
+    const result = build([
+        ['Ngày', 'Mô tả', 'Số tiền'],
+        ['27/10/2026', '  Mua   #keo   dán\n ', '-10.000'],
+        ['Tổng cộng', '', '-10.000'],
+        ['28/10/2026', 'Phí', '0'],
+        ['29/10/2026', 'Phí', 'abc'],
+        ['', '', ''],
+    ]);
+
+    assert.equal(result.items.length, 1);
+    // No "#": a word starting with it would become a tag.
+    assert.equal(result.items[0].note, 'Mua keo dán');
+    assert.deepEqual(result.skipped, [
+        { row: 3, reason: 'Không đọc được ngày' },
+        { row: 4, reason: 'Không có số tiền' },
+        { row: 5, reason: 'Không có số tiền' },
+    ]);
+    assert.equal(result.tooMany, false);
+
+    const many = Array.from({ length: 2005 }, (_, index) => [
+        '27/10/2026',
+        `Giao dịch ${index}`,
+        '-1.000',
+    ]);
+    const capped = plain(
+        run(
+            `buildImportItems(${JSON.stringify([['Ngày', 'Mô tả', 'Số tiền'], ...many])},${IMPORT_LAYOUT_SIGNED},{source:"VCB"})`,
+        ),
+    );
+
+    assert.equal(capped.items.length, 2000);
+    assert.equal(capped.tooMany, true);
+});
+
+test('buildImportItems: id chỉ phụ thuộc nội dung dòng và nguồn; dòng giống hệt nhau trong file có số thứ tự', () => {
+    const rows = [
+        ['Ngày', 'Mô tả', 'Số tiền'],
+        ['27/10/2026', 'Cafe', '-20.000'],
+        ['27/10/2026', 'Cafe', '-20.000'],
+        ['27/10/2026', 'Cafe', '-25.000'],
+    ];
+    const ids = (source, list = rows) =>
+        plain(
+            run(
+                `buildImportItems(${JSON.stringify(list)},${IMPORT_LAYOUT_SIGNED},{source:${JSON.stringify(source)}}).items.map((item) => item.id)`,
+            ),
+        );
+    const first = ids('VCB');
+
+    assert.equal(new Set(first).size, 3);
+    assert.match(first[0], /^TX_IMP_20261027_[0-9a-f]{8}$/);
+    assert.equal(first[1], `${first[0]}_2`);
+    // Importing again, or a later statement that repeats a row, gives the same id.
+    assert.deepEqual(ids('VCB'), first);
+    assert.equal(ids('VCB', [rows[0], rows[1]])[0], first[0]);
+    // Another source is another book entry.
+    assert.notEqual(ids('Techcombank')[0], first[0]);
+    // A different reference is a different row.
+    const withReference = (reference) => [
+        ['Ngày', 'Mô tả', 'Số tiền', 'Mã giao dịch'],
+        ['27/10/2026', 'Cafe', '-20.000', reference],
+    ];
+    const layoutWithRef =
+        '{headerIndex:0,columns:{date:0,description:1,debit:-1,credit:-1,amount:2,balance:-1,reference:3}}';
+    const idOf = (reference) =>
+        run(
+            `buildImportItems(${JSON.stringify(withReference(reference))},${layoutWithRef},{source:"VCB"}).items[0].id`,
+        );
+
+    assert.notEqual(idOf('FT1'), idOf('FT2'));
+});
+
+test('markImportDuplicates: đã nhập trước đó, trùng với giao dịch gõ tay (lệch tối đa 2 ngày), mỗi giao dịch chỉ giải thích một dòng', () => {
+    const item = (id, date, type, amount) => ({ id, date, type, amount, note: id });
+    const mark = (items, existing, source = 'VCB') =>
+        plain(
+            run(
+                `markImportDuplicates(${JSON.stringify(items)},${JSON.stringify(existing)},${JSON.stringify(source)})`,
+            ),
+        );
+    const tx = (id, date, type, amount, extra = {}) => ({
+        id,
+        date,
+        type,
+        source: 'VCB',
+        amount,
+        ...extra,
+    });
+    const status = (marked) =>
+        marked.map((entry) => `${entry.id}:${entry.status}:${entry.include}`);
+
+    // Nothing in the book: everything is new and ticked.
+    assert.deepEqual(status(mark([item('a', '2026-10-27', 'expense', 20000)], [])), ['a:new:true']);
+
+    // The same id was imported before.
+    assert.deepEqual(
+        status(
+            mark(
+                [item('a', '2026-10-27', 'expense', 20000)],
+                [tx('a', '2026-10-27', 'expense', 20000)],
+            ),
+        ),
+        ['a:imported:false'],
+    );
+
+    // Typed by hand a day earlier; two days off still matches, three days does not.
+    const typed = (date) => [tx('T1', date, 'expense', 20000)];
+
+    assert.equal(
+        mark([item('a', '2026-10-27', 'expense', 20000)], typed('2026-10-26'))[0].match,
+        'T1',
+    );
+    assert.equal(
+        mark([item('a', '2026-10-27', 'expense', 20000)], typed('2026-10-29'))[0].status,
+        'duplicate',
+    );
+    assert.equal(
+        mark([item('a', '2026-10-27', 'expense', 20000)], typed('2026-10-30'))[0].status,
+        'new',
+    );
+
+    // Same amount, but another type, another amount, or another source: not a duplicate.
+    assert.equal(
+        mark(
+            [item('a', '2026-10-27', 'expense', 20000)],
+            [tx('T', '2026-10-27', 'income', 20000)],
+        )[0].status,
+        'new',
+    );
+    assert.equal(
+        mark(
+            [item('a', '2026-10-27', 'expense', 20000)],
+            [tx('T', '2026-10-27', 'expense', 20001)],
+        )[0].status,
+        'new',
+    );
+    assert.equal(
+        mark(
+            [item('a', '2026-10-27', 'expense', 20000)],
+            [tx('T', '2026-10-27', 'expense', 20000, { source: 'Tiền Mặt' })],
+        )[0].status,
+        'new',
+    );
+
+    // Two rows of the same amount and one typed transaction: only one row is explained, the nearer one.
+    const two = mark(
+        [item('far', '2026-10-25', 'expense', 20000), item('near', '2026-10-27', 'expense', 20000)],
+        [tx('T1', '2026-10-27', 'expense', 20000)],
+    );
+
+    assert.deepEqual(status(two), ['far:new:true', 'near:duplicate:false']);
+
+    // A transfer out of the bank is the same money as a bank debit; one into it, as a credit.
+    const transfer = (extra) => tx('TR', '2026-10-27', 'transfer', 500000, extra);
+
+    assert.equal(
+        mark(
+            [item('a', '2026-10-27', 'expense', 500000)],
+            [transfer({ source: 'VCB', targetSource: 'Tiền Mặt' })],
+        )[0].status,
+        'duplicate',
+    );
+    assert.equal(
+        mark(
+            [item('a', '2026-10-27', 'income', 500000)],
+            [transfer({ source: 'Tiền Mặt', targetSource: 'VCB' })],
+        )[0].status,
+        'duplicate',
+    );
+    assert.equal(
+        mark(
+            [item('a', '2026-10-27', 'income', 500000)],
+            [transfer({ source: 'VCB', targetSource: 'Tiền Mặt' })],
+        )[0].status,
+        'new',
+    );
+});
+
+test('buildCategoryGuesser: học từ giao dịch đã có, rồi tới cửa hàng quen thuộc, rồi danh mục dự phòng', () => {
+    const categories =
+        '[{name:"Ăn uống",type:"expense"},{name:"Mua sắm",type:"expense"},{name:"Đi lại",type:"expense"},{name:"Lương / Thưởng",type:"income"},{name:"Thu nhập khác",type:"income"},{name:"Khách",type:"expense"}]';
+    const history = JSON.stringify([
+        { type: 'expense', category: 'Khách', note: 'GRAB*TRIP 4421 HCM' },
+        { type: 'expense', category: 'Khách', note: 'Grab trip 1 #khachA' },
+        { type: 'expense', category: 'Ăn uống', note: 'ăn trưa' },
+        { type: 'expense', category: 'Danh mục đã xóa', note: 'Highlands' },
+    ]);
+    const guess = (description, type = 'expense', historyList = history) =>
+        run(
+            `buildCategoryGuesser(${historyList},${categories})(${JSON.stringify(description)},"${type}")`,
+        );
+
+    // The same merchant as a past note (numbers and place do not matter).
+    assert.equal(guess('GRAB*TRIP 7783 DN'), 'Khách');
+    // A note the person wrote that the description contains.
+    assert.equal(guess('THANH TOAN AN TRUA CTY ABC'), 'Ăn uống');
+    // Common merchants, only when the category exists with that name.
+    assert.equal(guess('SHOPEE PAY 12345'), 'Mua sắm');
+    assert.equal(guess('GRABFOOD HCM'), 'Ăn uống'); // food before the taxi rule
+    assert.equal(guess('XANG PETROLIMEX 12'), 'Đi lại');
+    assert.equal(guess('CTY ABC LUONG THANG 10', 'income'), 'Lương / Thưởng');
+    // A category in the history that no longer exists is ignored, then the rules and fallback apply.
+    assert.equal(guess('Highlands Coffee'), 'Ăn uống');
+    // Nothing matches: the fallbacks.
+    assert.equal(guess('CHUYEN KHOAN 998877'), 'Chưa phân loại');
+    assert.equal(guess('CHUYEN KHOAN 998877', 'income'), 'Thu nhập khác');
+    // Without those categories a rule does not apply.
+    assert.equal(
+        run(`buildCategoryGuesser([],[{name:"Khác",type:"expense"}])("SHOPEE","expense")`),
+        'Chưa phân loại',
+    );
+});
+
+const CARD_20 = '{name:"Thẻ Tín Dụng",kind:"credit",statementDay:20,dueDay:4';
+const CARD_ROWS = `[
+    {id:"A",date:"2026-10-22",type:"expense",source:"Thẻ Tín Dụng",amount:587160},
+    {id:"B",date:"2026-10-23",type:"expense",source:"Thẻ Tín Dụng",amount:73333},
+    {id:"C",date:"2026-10-24",type:"expense",source:"Thẻ Tín Dụng",amount:30000},
+    {id:"D",date:"2026-11-03",type:"expense",source:"Thẻ Tín Dụng",amount:87778},
+    {id:"E",date:"2026-11-05",type:"expense",source:"Thẻ Tín Dụng",amount:604390},
+    {id:"P",date:"2026-10-21",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:1695414}
+]`;
+
+test('computeCardDue với mốc sao kê: số cần trả không còn dính số dư ban đầu bị Khớp số dư làm lệch', () => {
+    const due = (card, opening, today = '2026-11-07', rows = CARD_ROWS) =>
+        plain(run(`computeCardDue(${card},${rows},${opening},"${today}")`));
+
+    // Without the closing balance: the opening balance that "Khớp số dư" pushed to -1.747.180 (the
+    // book was missing 51.766 of charges) makes the paid statement look 51.766 short.
+    assert.equal(due(`${CARD_20}}`, -1747180).amount, 51766);
+    assert.equal(due(`${CARD_20}}`, -1695414), null);
+
+    // With the closing balance of the 20/10 statement the opening balance does not matter.
+    const anchored = `${CARD_20},lastStatement:{date:"2026-10-20",balance:1695414}}`;
+
+    assert.equal(due(anchored, -1747180), null);
+    assert.equal(due(anchored, -999), null);
+    assert.equal(due(anchored, 5000000), null);
+
+    // Not paid yet (the payment is not in the book): the whole statement is due, overdue by 3 days.
+    const unpaid = CARD_ROWS.replace(/,\s*\{id:"P"[^}]*\}/, '');
+
+    assert.deepEqual(due(anchored, -1747180, '2026-11-07', unpaid), {
+        name: 'Thẻ Tín Dụng',
+        amount: 1695414,
+        statementDate: '2026-10-20',
+        dueDate: '2026-11-04',
+        daysLeft: -3,
+    });
+
+    // A payment of less than the statement leaves the rest.
+    assert.equal(
+        due(
+            anchored,
+            0,
+            '2026-11-07',
+            '[{id:"P",date:"2026-10-25",type:"transfer",source:"X",targetSource:"Thẻ Tín Dụng",amount:1000000}]',
+        ).amount,
+        695414,
+    );
+
+    // A balance from an older statement is rolled forward by what happened since: 1.614.164 on 20/9,
+    // paid on 21/9, then 1.695.414 of charges, makes 1.695.414 owed on 20/10.
+    const older = `${CARD_20},lastStatement:{date:"2026-09-20",balance:1614164}}`;
+    const cycle = `[
+        {id:"P0",date:"2026-09-21",type:"transfer",source:"X",targetSource:"Thẻ Tín Dụng",amount:1614164},
+        {id:"C1",date:"2026-09-23",type:"expense",source:"Thẻ Tín Dụng",amount:1000000},
+        {id:"C2",date:"2026-10-20",type:"expense",source:"Thẻ Tín Dụng",amount:695414}
+    ]`;
+
+    assert.equal(due(older, 0, '2026-11-07', cycle).amount, 1695414);
+
+    // A closing balance dated after the latest statement day is not used (the date was mistyped).
+    const future = `${CARD_20},lastStatement:{date:"2026-10-21",balance:1}}`;
+
+    assert.equal(due(future, -1747180).amount, 51766);
+});
+
+test('normalizeSource: mốc sao kê chỉ có với thẻ tín dụng, được làm tròn, bỏ khi không hợp lệ', () => {
+    const normalize = (raw) => plain(run(`normalizeSource(${JSON.stringify(raw)})`));
+    const card = { name: 'Thẻ', kind: 'credit', statementDay: 20 };
+
+    assert.deepEqual(
+        normalize({ ...card, lastStatement: { date: '2026-10-20', balance: '1695414.4' } })
+            .lastStatement,
+        { date: '2026-10-20', balance: 1695414 },
+    );
+    assert.deepEqual(
+        normalize({ ...card, lastStatement: { date: '20/10/2026', balance: 0 } }).lastStatement,
+        { date: '2026-10-20', balance: 0 },
+    );
+    // Not usable: no property at all, so older sources keep their shape.
+    for (const bad of [
+        null,
+        5,
+        {},
+        { date: '', balance: 5 },
+        { date: '2026-10-20', balance: -1 },
+        { date: '2026-10-20', balance: 'x' },
+    ]) {
+        assert.equal(
+            Object.hasOwn(normalize({ ...card, lastStatement: bad }), 'lastStatement'),
+            false,
+        );
+    }
+    // Only credit cards have a statement.
+    assert.equal(
+        Object.hasOwn(
+            normalize({
+                name: 'NH',
+                kind: 'bank',
+                lastStatement: { date: '2026-10-20', balance: 5 },
+            }),
+            'lastStatement',
+        ),
+        false,
+    );
+});
+
+test('statementCycles: các kỳ sao kê từ kỳ đang mở lùi về trước; ngày chốt thuộc kỳ nó đóng', () => {
+    const cycles = (day, today, count) => plain(run(`statementCycles(${day},"${today}",${count})`));
+
+    assert.deepEqual(cycles(20, '2026-11-07', 3), [
+        { start: '2026-10-21', end: '2026-11-20', open: true },
+        { start: '2026-09-21', end: '2026-10-20', open: false },
+        { start: '2026-08-21', end: '2026-09-20', open: false },
+    ]);
+    // On the statement day itself that cycle is closed and a new one has opened.
+    assert.deepEqual(cycles(20, '2026-11-20', 2), [
+        { start: '2026-11-21', end: '2026-12-20', open: true },
+        { start: '2026-10-21', end: '2026-11-20', open: false },
+    ]);
+    assert.equal(cycles(20, '2026-11-19', 1)[0].end, '2026-11-20');
+    // Short months: a statement on the 31st closes on the last day.
+    assert.deepEqual(cycles(31, '2026-03-10', 3), [
+        { start: '2026-03-01', end: '2026-03-31', open: true },
+        { start: '2026-02-01', end: '2026-02-28', open: false },
+        { start: '2026-01-01', end: '2026-01-31', open: false },
+    ]);
+    // Over a year end, and no statement day means no cycles.
+    assert.equal(cycles(24, '2027-01-05', 2)[1].start, '2026-11-25');
+    assert.equal(run('statementCycles(null,"2026-11-07").length'), 0);
+    assert.equal(run('statementCycles(20,"2026-11-07").length'), 12);
+    assert.equal(run('latestStatementDate(20,"2026-11-07")'), '2026-10-20');
+    assert.equal(run('latestStatementDate(20,"2026-11-20")'), '2026-11-20');
+});
+
+test('computeCardCycleTotals và lọc theo khoảng ngày: phát sinh và đã trả của một kỳ, tính cả hai đầu', () => {
+    const totals = plain(
+        run(`computeCardCycleTotals(${CARD_ROWS},"Thẻ Tín Dụng","2026-10-21","2026-11-05")`),
+    );
+
+    // The 21/10 transfer is the payment; the five expenses are charges.
+    assert.deepEqual(totals, { charges: 1382661, payments: 1695414, count: 6 });
+    assert.deepEqual(
+        plain(run(`computeCardCycleTotals(${CARD_ROWS},"Thẻ Tín Dụng","2026-10-22","2026-10-24")`)),
+        { charges: 690493, payments: 0, count: 3 },
+    );
+    // Cash taken from the card (a transfer out) is a charge; other sources are not counted.
+    assert.deepEqual(
+        plain(
+            run(
+                `computeCardCycleTotals([{date:"2026-10-25",type:"transfer",source:"Thẻ Tín Dụng",targetSource:"Tiền Mặt",amount:500000},{date:"2026-10-25",type:"expense",source:"Tiền Mặt",amount:9}],"Thẻ Tín Dụng","2026-10-21","2026-10-25")`,
+            ),
+        ),
+        { charges: 500000, payments: 0, count: 1 },
+    );
+
+    const ids = (filters) =>
+        run(`filterTransactions(${CARD_ROWS},${filters}).map((t) => t.id).join("")`);
+
+    assert.equal(ids('{from:"2026-10-22",to:"2026-10-24"}'), 'ABC');
+    assert.equal(ids('{from:"2026-11-03"}'), 'DE');
+    assert.equal(ids('{to:"2026-10-21"}'), 'P');
+    assert.equal(ids('{from:"",to:""}'), 'ABCDEP');
+});
+
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {
     const move = (list, index, step, predicate = '') =>
         run(`moveInList(${list},${index},${step}${predicate && `,${predicate}`}).join("")`);

@@ -179,6 +179,7 @@ function normalizeSource(raw) {
     if (!name) return null;
 
     const kind = Object.hasOwn(SOURCE_KINDS, source.kind) ? source.kind : 'other';
+    const lastStatement = kind === 'credit' ? normalizeLastStatement(source.lastStatement) : null;
 
     return {
         name,
@@ -187,7 +188,24 @@ function normalizeSource(raw) {
         statementDay: kind === 'credit' ? dayOfMonthOrNull(source.statementDay) : null,
         dueDay: kind === 'credit' ? dayOfMonthOrNull(source.dueDay) : null,
         archived: Boolean(source.archived),
+        // Only present when the person gave it, so older sources keep their shape.
+        ...(lastStatement ? { lastStatement } : {}),
     };
+}
+
+/**
+ * The closing balance printed on a card's last statement: { date: statement day (YYYY-MM-DD),
+ * balance: what was owed that day, as a positive whole number }. Null when it is not usable.
+ */
+function normalizeLastStatement(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const date = normalizeDate(raw.date);
+    const balance = parseAmount(raw.balance);
+
+    if (!date || !Number.isFinite(balance) || balance < 0) return null;
+
+    return { date, balance: Math.round(balance) };
 }
 
 /** Returns null when the value is not a usable list, so callers can fall back to defaults. */
@@ -450,8 +468,8 @@ function transactionSearchText(transaction) {
 }
 
 /**
- * filters: { month: 'YYYY-MM', type, category, source, sources, tag, search }; empty or 'ALL' means
- * no filter. tag keeps the transactions that carry that tag (spelling and case do not matter). source matches either side of a transfer; sources (a list of names) keeps transactions
+ * filters: { month: 'YYYY-MM', from, to (YYYY-MM-DD, inclusive), type, category, source, sources,
+ * tag, search }; empty or 'ALL' means no filter. tag keeps the transactions that carry that tag (spelling and case do not matter). source matches either side of a transfer; sources (a list of names) keeps transactions
  * that touch any of them on either side; every word of search must match.
  */
 function filterTransactions(list, filters = {}) {
@@ -460,6 +478,8 @@ function filterTransactions(list, filters = {}) {
 
     return list.filter((transaction) => {
         if (filters.month && !transaction.date.startsWith(filters.month)) return false;
+        if (filters.from && transaction.date < filters.from) return false;
+        if (filters.to && transaction.date > filters.to) return false;
         if (active(filters.type) && transaction.type !== filters.type) return false;
         if (active(filters.category) && transaction.category !== filters.category) return false;
 
@@ -544,6 +564,737 @@ function buildTransactionsCsv(list) {
     );
 
     return '\uFEFF' + lines.map((line) => line.join(',')).join('\r\n') + '\r\n';
+}
+
+// --- BANK STATEMENT IMPORT (CSV) ---
+// A statement is read in four steps, each a pure function: parseCsvText (cells), detectCsvLayout
+// (which column is what), buildImportItems (transaction candidates) and markImportDuplicates
+// (what is already in the book). Nothing here touches the page.
+
+const MAX_IMPORT_ROWS = 2000;
+// A bank posts a purchase a day or two after the user typed it, so the same amount this close
+// is probably the same transaction.
+const IMPORT_DUPLICATE_DAYS = 2;
+const IMPORT_FALLBACK_CATEGORIES = { expense: 'Chưa phân loại', income: 'Thu nhập khác' };
+
+function countOutsideQuotes(line, char) {
+    let quoted = false;
+    let count = 0;
+
+    for (const current of line) {
+        if (current === '"') quoted = !quoted;
+        else if (current === char && !quoted) count++;
+    }
+
+    return count;
+}
+
+/**
+ * The delimiter a CSV uses: the one that splits the first lines into the same number of cells most
+ * often. (Counting commas alone fails on "1,234,567" amounts in a semicolon file.)
+ */
+function detectCsvDelimiter(text) {
+    const lines = String(text ?? '')
+        .split(/\r\n|\n|\r/)
+        .filter((line) => line.trim())
+        .slice(0, 20);
+    let best = ',';
+    let bestScore = 0;
+
+    [',', ';', '\t', '|'].forEach((candidate) => {
+        const frequency = new Map();
+
+        lines.forEach((line) => {
+            const count = countOutsideQuotes(line, candidate);
+
+            if (count > 0) frequency.set(count, (frequency.get(count) || 0) + 1);
+        });
+
+        frequency.forEach((lineCount, cells) => {
+            if (lineCount * cells > bestScore) {
+                bestScore = lineCount * cells;
+                best = candidate;
+            }
+        });
+    });
+
+    return best;
+}
+
+/**
+ * CSV text → rows of trimmed cells. Handles quotes and "" inside them, line breaks inside a quoted
+ * cell, CR / LF / CRLF, a BOM, and blank lines (dropped). The delimiter is detected unless given.
+ */
+function parseCsvText(text, delimiter = '') {
+    const source = String(text ?? '').replace(/^﻿/, '');
+    const separator = delimiter || detectCsvDelimiter(source);
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+
+    const endCell = () => {
+        row.push(cell.trim());
+        cell = '';
+    };
+    const endRow = () => {
+        endCell();
+
+        if (row.some((value) => value !== '')) rows.push(row);
+
+        row = [];
+    };
+
+    for (let index = 0; index < source.length; index++) {
+        const char = source[index];
+
+        if (quoted) {
+            if (char !== '"') cell += char;
+            else if (source[index + 1] === '"') {
+                cell += '"';
+                index++;
+            } else quoted = false;
+        } else if (char === '"' && cell.trim() === '') {
+            quoted = true;
+            cell = '';
+        } else if (char === separator) {
+            endCell();
+        } else if (char === '\n' || char === '\r') {
+            if (char === '\r' && source[index + 1] === '\n') index++;
+
+            endRow();
+        } else {
+            cell += char;
+        }
+    }
+
+    if (cell !== '' || row.length) endRow();
+
+    return rows;
+}
+
+function validDateKey(year, month, day) {
+    const date = new Date(year, month - 1, day);
+
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+        return '';
+    }
+
+    return toLocalDateString(date);
+}
+
+/**
+ * A date as banks write it → YYYY-MM-DD, or '' when it is not one. Day comes first
+ * (27/10/2026, 27-10-26, 27.10.2026), the year-first forms are read too, and a time after the
+ * date is ignored. 03/04/2026 is the 3rd of April: statements here are day-first.
+ */
+function parseBankDate(value) {
+    const text = String(value ?? '').trim();
+    const yearFirst = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[\sT].*)?$/);
+
+    if (yearFirst) return validDateKey(+yearFirst[1], +yearFirst[2], +yearFirst[3]);
+
+    const dayFirst = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4}|\d{2})(?:[\s,T].*)?$/);
+
+    if (!dayFirst) return '';
+
+    const year = dayFirst[3].length === 2 ? 2000 + Number(dayFirst[3]) : Number(dayFirst[3]);
+
+    return validDateKey(year, +dayFirst[2], +dayFirst[1]);
+}
+
+/**
+ * An amount as banks write it → a whole number of đồng (NaN when it is not a number).
+ * "1.234.567", "1,234,567", "1.234.567,89", "1,234,567.89", "-250.000", "(250.000)", "250000 VND"
+ * and "+1.000.000" are all understood. A lone separator followed by exactly three digits is a
+ * thousands mark ("1.234" is 1234), otherwise it is a decimal point ("1234.5").
+ */
+function parseBankAmount(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value) : NaN;
+
+    let text = String(value ?? '')
+        .replace(/[\s ]/g, '')
+        .replace(/(vnd|vnđ|đ)$/i, '');
+    let negative = false;
+
+    if (/^\(.*\)$/.test(text)) {
+        negative = true;
+        text = text.slice(1, -1);
+    }
+
+    if (/^[-−–]/.test(text)) {
+        negative = !negative;
+        text = text.slice(1);
+    } else if (text.startsWith('+')) {
+        text = text.slice(1);
+    }
+
+    if (/-$/.test(text)) {
+        negative = !negative;
+        text = text.slice(0, -1);
+    }
+
+    if (!/^\d[\d.,]*$/.test(text)) return NaN;
+
+    const dots = text.split('.').length - 1;
+    const commas = text.split(',').length - 1;
+    let number;
+
+    if (dots && commas) {
+        const decimal = text.lastIndexOf('.') > text.lastIndexOf(',') ? '.' : ',';
+        const grouping = decimal === '.' ? ',' : '.';
+
+        if (text.split(decimal).length > 2) return NaN;
+
+        number = Number(text.split(grouping).join('').replace(decimal, '.'));
+    } else if (dots || commas) {
+        const mark = dots ? '.' : ',';
+        const parts = text.split(mark);
+
+        if (parts.length > 2) {
+            if (!parts.slice(1).every((part) => part.length === 3)) return NaN;
+
+            number = Number(parts.join(''));
+        } else if (parts[1].length === 3 && parts[0].length <= 3 && parts[0] !== '0') {
+            number = Number(parts.join(''));
+        } else {
+            number = Number(`${parts[0]}.${parts[1]}`);
+        }
+    } else {
+        number = Number(text);
+    }
+
+    if (!Number.isFinite(number)) return NaN;
+
+    // Round the size, then give it the sign: Math.round(-0.5) is -0 but Math.round(0.5) is 1.
+    const rounded = Math.round(number);
+
+    return (negative ? -rounded : rounded) || 0;
+}
+
+// Header words of a statement, as written by Vietnamese and international banks (accents and
+// case are ignored). The longest phrase that fits wins, so "so tien ghi no" is a debit column and
+// not just an "amount".
+const IMPORT_COLUMN_KEYWORDS = {
+    date: [
+        'ngay giao dich',
+        'ngay hach toan',
+        'ngay gd',
+        'transaction date',
+        'posting date',
+        'booking date',
+        'value date',
+        'thoi gian',
+        'ngay',
+        'date',
+    ],
+    description: [
+        'noi dung giao dich',
+        'noi dung',
+        'dien giai',
+        'mo ta',
+        'chi tiet giao dich',
+        'chi tiet',
+        'transaction details',
+        'description',
+        'narrative',
+        'details',
+        'remarks',
+        'ghi chu',
+    ],
+    debit: [
+        'so tien ghi no',
+        'so tien rut',
+        'so tien chi',
+        'ghi no',
+        'tien ra',
+        'rut ra',
+        'chi ra',
+        'debit',
+        'withdrawal',
+        'withdrawals',
+        'no',
+    ],
+    credit: [
+        'so tien ghi co',
+        'so tien gui',
+        'so tien thu',
+        'ghi co',
+        'tien vao',
+        'gui vao',
+        'thu vao',
+        'credit',
+        'deposit',
+        'deposits',
+        'co',
+    ],
+    amount: [
+        'so tien thanh toan vnd',
+        'payment amount vnd',
+        'so tien thanh toan',
+        'payment amount',
+        'so tien giao dich',
+        'gia tri giao dich',
+        'so tien quy doi',
+        'so tien vnd',
+        'quy doi',
+        'billing amount',
+        'so tien',
+        'amount',
+        'gia tri',
+        'value',
+    ],
+    balance: ['so du cuoi', 'so du', 'balance'],
+    reference: [
+        'ma giao dich',
+        'so tham chieu',
+        'so but toan',
+        'transaction id',
+        'reference',
+        'ma gd',
+        'ref',
+    ],
+};
+const IMPORT_FIELD_ORDER = [
+    'date',
+    'debit',
+    'credit',
+    'amount',
+    'description',
+    'reference',
+    'balance',
+];
+
+// A header naming another currency ("Số tiền ngoại tệ", "Amount USD") is not the amount in đồng.
+const IMPORT_FOREIGN_WORDS = [
+    'ngoai te',
+    'nguyen te',
+    'foreign',
+    'original',
+    'usd',
+    'eur',
+    'jpy',
+    'sgd',
+    'aud',
+    'gbp',
+    'cny',
+    'krw',
+];
+const IMPORT_MONEY_FIELDS = ['debit', 'credit', 'amount'];
+
+/** How well a header cell fits a field: 0 for no match, higher for a longer or exact phrase. */
+function importHeaderScore(cell, field) {
+    const words = normalizeSearchText(cell)
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    let best = 0;
+
+    if (
+        IMPORT_MONEY_FIELDS.includes(field) &&
+        IMPORT_FOREIGN_WORDS.some((word) => ` ${words} `.includes(` ${word} `))
+    ) {
+        return 0;
+    }
+
+    IMPORT_COLUMN_KEYWORDS[field].forEach((keyword) => {
+        if (words === keyword) best = Math.max(best, 100 + keyword.length);
+        else if (` ${words} `.includes(` ${keyword} `)) best = Math.max(best, keyword.length);
+    });
+
+    return best;
+}
+
+/** { field: column index } for one row read as a header row (fields it has no column for are left out). */
+function matchImportHeader(row) {
+    const scores = [];
+
+    row.forEach((cell, column) => {
+        IMPORT_FIELD_ORDER.forEach((field) => {
+            const score = importHeaderScore(cell, field);
+
+            if (score > 0) scores.push({ field, column, score });
+        });
+    });
+
+    scores.sort((a, b) => b.score - a.score);
+
+    const columns = {};
+    const usedColumns = new Set();
+
+    scores.forEach(({ field, column }) => {
+        if (Object.hasOwn(columns, field) || usedColumns.has(column)) return;
+
+        columns[field] = column;
+        usedColumns.add(column);
+    });
+
+    return columns;
+}
+
+/**
+ * A card statement can list the amount in the currency of the purchase, then its code ("USD"),
+ * then the same amount in đồng. When a column of currency codes follows the detected amount and
+ * not all of them are VND, the amount to import is the next column that holds numbers.
+ */
+function preferLocalCurrencyAmount(rows, headerIndex, columns) {
+    if (columns.amount < 0 || columns.debit >= 0 || columns.credit >= 0) return columns;
+
+    const data = rows.slice(headerIndex + 1, headerIndex + 41);
+    const width = Math.max(0, ...data.map((row) => row.length));
+
+    for (let column = columns.amount + 1; column < width; column++) {
+        const cells = data.map((row) => row[column] ?? '').filter(Boolean);
+        const codes = cells.filter((cell) => /^[A-Za-z]{3}$/.test(cell));
+
+        if (cells.length === 0 || codes.length / cells.length < 0.6) continue;
+
+        // Every purchase is in đồng: the detected column already is the amount in đồng.
+        if (codes.every((code) => code.toUpperCase() === 'VND')) return columns;
+
+        for (let next = column + 1; next < width; next++) {
+            const values = data.map((row) => row[next] ?? '').filter(Boolean);
+
+            if (values.length && values.every((value) => !Number.isNaN(parseBankAmount(value)))) {
+                return { ...columns, amount: next };
+            }
+        }
+
+        return columns;
+    }
+
+    return columns;
+}
+
+/**
+ * Find the header row and the columns of a statement. A statement often starts with a few lines
+ * about the account, so the first 30 rows are searched for one that names a date and an amount.
+ * Returns { headerIndex, columns } with -1 for a missing header / column, so a person can fix it.
+ */
+function detectCsvLayout(rows) {
+    const none = {
+        date: -1,
+        description: -1,
+        debit: -1,
+        credit: -1,
+        amount: -1,
+        balance: -1,
+        reference: -1,
+    };
+
+    for (let index = 0; index < Math.min(rows.length, 30); index++) {
+        const found = matchImportHeader(rows[index]);
+        const hasMoney = ['debit', 'credit', 'amount'].some((field) => Object.hasOwn(found, field));
+
+        if (Object.hasOwn(found, 'date') && hasMoney) {
+            return {
+                headerIndex: index,
+                columns: preferLocalCurrencyAmount(rows, index, { ...none, ...found }),
+            };
+        }
+    }
+
+    // No header: guess the date column from the data, and the description as the widest text.
+    const sample = rows.slice(0, 30);
+    const width = Math.max(0, ...sample.map((row) => row.length));
+    let date = -1;
+    let description = -1;
+    let widest = 0;
+
+    for (let column = 0; column < width; column++) {
+        const cells = sample.map((row) => row[column] ?? '').filter(Boolean);
+        const dates = cells.filter((cell) => parseBankDate(cell)).length;
+        const length = cells.reduce((total, cell) => total + cell.length, 0) / (cells.length || 1);
+
+        if (date === -1 && cells.length && dates / cells.length >= 0.6) date = column;
+        else if (!dates && Number.isNaN(parseBankAmount(cells[0])) && length > widest) {
+            widest = length;
+            description = column;
+        }
+    }
+
+    return { headerIndex: -1, columns: { ...none, date, description } };
+}
+
+/** FNV-1a: a short stable hash, enough to tell statement rows apart in an id. */
+function hashText(text) {
+    let hash = 0x811c9dc5;
+
+    for (let index = 0; index < text.length; index++) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+
+    return hash.toString(16).padStart(8, '0');
+}
+
+/** Description of a statement row as a note: no "#" (it would turn words into tags), one line. */
+function cleanImportNote(text) {
+    return String(text ?? '')
+        .replace(/#/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+}
+
+/**
+ * Statement rows → transaction candidates for one money source.
+ * layout comes from detectCsvLayout (or from the person's own choice). With separate debit and
+ * credit columns the column decides expense or income; with a single amount column the sign does
+ * (negative = expense), or the opposite when `positiveIsExpense` (card statements list purchases
+ * as positive numbers). Rows without a valid date or amount (totals, balances) are skipped with a
+ * reason. The id depends only on what the row says (and the source), so importing the same
+ * statement twice gives the same ids; identical rows in one file are told apart by a counter.
+ * Returns { items, skipped: [{ row, reason }], tooMany }.
+ */
+function buildImportItems(rows, layout, { source = '', positiveIsExpense = false } = {}) {
+    const { headerIndex, columns } = layout;
+    const items = [];
+    const skipped = [];
+    const seen = new Map();
+    const cellOf = (row, column) => (column >= 0 ? (row[column] ?? '') : '');
+    const hasSplit = columns.debit >= 0 || columns.credit >= 0;
+
+    for (let index = headerIndex + 1; index < rows.length; index++) {
+        const row = rows[index];
+
+        if (row.every((cell) => !cell)) continue;
+
+        const date = parseBankDate(cellOf(row, columns.date));
+
+        if (!date) {
+            skipped.push({ row: index + 1, reason: 'Không đọc được ngày' });
+            continue;
+        }
+
+        let type;
+        let amount;
+
+        if (hasSplit) {
+            const debit = Math.abs(parseBankAmount(cellOf(row, columns.debit)) || 0);
+            const credit = Math.abs(parseBankAmount(cellOf(row, columns.credit)) || 0);
+
+            type = debit >= credit ? 'expense' : 'income';
+            amount = Math.abs(debit - credit);
+        } else {
+            const value = parseBankAmount(cellOf(row, columns.amount));
+            // Usually money going out is negative; a card statement lists purchases as positive.
+            const isExpense = positiveIsExpense ? value >= 0 : value < 0;
+
+            type = isExpense ? 'expense' : 'income';
+            amount = Math.abs(value);
+        }
+
+        if (!(amount > 0)) {
+            skipped.push({ row: index + 1, reason: 'Không có số tiền' });
+            continue;
+        }
+
+        if (items.length >= MAX_IMPORT_ROWS) {
+            return { items, skipped, tooMany: true };
+        }
+
+        const note = cleanImportNote(cellOf(row, columns.description));
+        const reference = cellOf(row, columns.reference);
+        const key = [source, date, type, amount, normalizeSearchText(note), reference].join('|');
+        const occurrence = (seen.get(key) || 0) + 1;
+
+        seen.set(key, occurrence);
+        items.push({
+            row: index + 1,
+            id: `TX_IMP_${date.replace(/-/g, '')}_${hashText(key)}${occurrence > 1 ? `_${occurrence}` : ''}`,
+            date,
+            type,
+            amount,
+            note,
+        });
+    }
+
+    return { items, skipped, tooMany: false };
+}
+
+/**
+ * Which sign of a single amount column means money going out: the one most rows have, since
+ * spending outnumbers refunds and payments. (A VPBank card statement writes charges as negative
+ * numbers; other banks write them as positive ones.) False when there is no amount column.
+ */
+function guessPositiveIsExpense(rows, layout) {
+    const column = layout.columns.amount;
+
+    if (column < 0 || layout.columns.debit >= 0 || layout.columns.credit >= 0) return false;
+
+    let positive = 0;
+    let negative = 0;
+
+    for (let index = layout.headerIndex + 1; index < rows.length; index++) {
+        const value = parseBankAmount(rows[index][column] ?? '');
+
+        if (value > 0) positive++;
+        else if (value < 0) negative++;
+    }
+
+    return positive > negative;
+}
+
+/**
+ * Say which candidates the book already has, for the money source they are imported into.
+ *  - status 'imported': this very row was imported before (same id), so it is left out for good;
+ *  - status 'duplicate': a transaction with the same effect on the source within
+ *    IMPORT_DUPLICATE_DAYS (typed by hand, or a transfer) is probably the same one; `match` is
+ *    its id. Each existing transaction explains at most one row, and the closest dates are paired
+ *    first, so with two rows of the same amount the one nearer to the typed entry gets it.
+ * Both are unticked (`include` false) so a person decides; everything else is ticked.
+ */
+function markImportDuplicates(items, existing, sourceName) {
+    const ids = new Set(existing.map((transaction) => transaction.id));
+    const pool = new Map();
+
+    existing.forEach((transaction) => {
+        const effect = sourceEffect(transaction, sourceName);
+
+        if (!effect) return;
+
+        if (!pool.has(effect)) pool.set(effect, []);
+
+        pool.get(effect).push({
+            id: transaction.id,
+            time: parseLocalDate(transaction.date).getTime(),
+        });
+    });
+
+    const pairs = [];
+
+    items.forEach((item, position) => {
+        if (ids.has(item.id)) return;
+
+        const effect = item.type === 'income' ? item.amount : -item.amount;
+        const time = parseLocalDate(item.date).getTime();
+
+        (pool.get(effect) || []).forEach((candidate) => {
+            const days = Math.abs(Math.round((candidate.time - time) / 86400000));
+
+            if (days <= IMPORT_DUPLICATE_DAYS) pairs.push({ position, candidate, days });
+        });
+    });
+
+    pairs.sort((a, b) => a.days - b.days || a.position - b.position);
+
+    const matchOf = new Map();
+    const taken = new Set();
+
+    pairs.forEach(({ position, candidate }) => {
+        if (matchOf.has(position) || taken.has(candidate)) return;
+
+        matchOf.set(position, candidate.id);
+        taken.add(candidate);
+    });
+
+    return items.map((item, position) => {
+        if (ids.has(item.id)) {
+            return { ...item, status: 'imported', match: '', include: false };
+        }
+
+        if (matchOf.has(position)) {
+            return { ...item, status: 'duplicate', match: matchOf.get(position), include: false };
+        }
+
+        return { ...item, status: 'new', match: '', include: true };
+    });
+}
+
+/** The first two real words of a description ("GRAB*TRIP 4421 HCM" → "grab trip"): a merchant's key. */
+function importDescriptionKey(description) {
+    return normalizeSearchText(description)
+        .split(/[^a-z0-9]+/)
+        .filter((word) => word.length >= 3 && !/^\d+$/.test(word))
+        .slice(0, 2)
+        .join(' ');
+}
+
+// Common merchants for a first import, before the book has any history to learn from. A rule
+// only applies when the person has a category of that exact name.
+const IMPORT_CATEGORY_RULES = [
+    [
+        'expense',
+        'Ăn uống',
+        /\b(grabfood|shopeefood|baemin|highlands|phuc long|starbucks|cafe|coffee|ca phe|tra sua|gong cha|kfc|lotteria|jollibee|pizza|quan an|nha hang|bun bo|com tam)\b/,
+    ],
+    [
+        'expense',
+        'Đi lại',
+        /\b(grab|gojek|xanh sm|taxi|vinasun|mai linh|petrolimex|pvoil|xang|gui xe|parking|ve xe|bus)\b/,
+    ],
+    [
+        'expense',
+        'Mua sắm',
+        /\b(shopee|lazada|tiki|tiktok shop|sendo|winmart|vinmart|bach hoa xanh|coopmart|co op|aeon|lotte mart|big c|circle k|familymart|ministop|gs25|the gioi di dong|dien may xanh|fpt shop)\b/,
+    ],
+    [
+        'expense',
+        'Hóa đơn & Tiện ích',
+        /\b(evn|tien dien|dien luc|tien nuoc|viettel|vinaphone|mobifone|vnpt|fpt telecom|internet|cuoc dien thoai|netflix|spotify|icloud|phi duy tri|phi dich vu)\b/,
+    ],
+    ['income', 'Lương / Thưởng', /\b(luong|salary|payroll|thuong)\b/],
+];
+
+/**
+ * A function (description, type) → category name for the rows of a statement. It learns from the
+ * book first (the same merchant key, or a note the person wrote that the description contains),
+ * then the common merchants above, then falls back to "Chưa phân loại" (expense) or
+ * "Thu nhập khác" (income) so no row is left without one.
+ */
+function buildCategoryGuesser(history, categoryList) {
+    const names = { expense: new Set(), income: new Set() };
+
+    categoryList.forEach((category) => {
+        if (names[category.type]) names[category.type].add(category.name);
+    });
+
+    const byKey = { expense: new Map(), income: new Map() };
+    const byNote = { expense: new Map(), income: new Map() };
+    const vote = (map, key, category) => {
+        if (!map.has(key)) map.set(key, new Map());
+
+        map.get(key).set(category, (map.get(key).get(category) || 0) + 1);
+    };
+
+    history.forEach((transaction) => {
+        const type = transaction.type;
+
+        if (!names[type] || !names[type].has(transaction.category)) return;
+
+        const text = extractTags(transaction.note).text;
+        const key = importDescriptionKey(text);
+        const plain = normalizeSearchText(text);
+
+        if (key) vote(byKey[type], key, transaction.category);
+
+        if (plain.length >= 4) vote(byNote[type], plain, transaction.category);
+    });
+
+    const top = (votes) => [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+    return (description, type) => {
+        const kind = type === 'income' ? 'income' : 'expense';
+        const key = importDescriptionKey(description);
+
+        if (key && byKey[kind].has(key)) return top(byKey[kind].get(key));
+
+        const plain = normalizeSearchText(description);
+        let longest = '';
+
+        byNote[kind].forEach((votes, note) => {
+            if (note.length > longest.length && plain.includes(note)) longest = note;
+        });
+
+        if (longest) return top(byNote[kind].get(longest));
+
+        const rule = IMPORT_CATEGORY_RULES.find(
+            ([ruleType, name, pattern]) =>
+                ruleType === kind && names[kind].has(name) && pattern.test(plain),
+        );
+
+        return rule ? rule[1] : IMPORT_FALLBACK_CATEGORIES[kind];
+    };
 }
 
 // --- BUDGETS ---
@@ -794,6 +1545,9 @@ function previousDayOfMonth(day, from) {
  * statement that was not paid shows as overdue instead of jumping to next month). Without one it
  * is the whole debt and the next due day.
  * `opening` is the source's initial balance. daysLeft is negative once the due date has passed.
+ * When the source has `lastStatement` (the closing balance printed on a statement), what was owed
+ * on a later statement day is that balance plus what happened since, so the amount no longer depends
+ * on the initial balance, which absorbs every charge the book is missing ("Khớp số dư").
  */
 function computeCardDue(source, list, opening, todayKey) {
     if (!source || source.kind !== 'credit' || source.archived || !source.dueDay) return null;
@@ -824,7 +1578,22 @@ function computeCardDue(source, list, opening, todayKey) {
             return total + Math.max(0, sourceEffect(transaction, source.name));
         }, 0);
 
-        amount = Math.max(0, -balanceUpTo(statementKey) - paidSince);
+        const anchor =
+            source.lastStatement && source.lastStatement.date <= statementKey
+                ? source.lastStatement
+                : null;
+        const owedAtStatement = anchor
+            ? anchor.balance -
+              list.reduce(
+                  (total, transaction) =>
+                      transaction.date > anchor.date && transaction.date <= statementKey
+                          ? total + sourceEffect(transaction, source.name)
+                          : total,
+                  0,
+              )
+            : -balanceUpTo(statementKey);
+
+        amount = Math.max(0, owedAtStatement - paidSince);
     } else {
         due = nextDayOfMonth(source.dueDay, today);
         amount = Math.max(0, -balanceUpTo(todayKey));
@@ -839,6 +1608,59 @@ function computeCardDue(source, list, opening, todayKey) {
         dueDate: toLocalDateString(due),
         daysLeft: daysUntil(due, today),
     };
+}
+
+/** The statement day on or before `todayKey` (YYYY-MM-DD) for a card whose statement closes on `day`. */
+function latestStatementDate(day, todayKey) {
+    return toLocalDateString(previousDayOfMonth(day, parseLocalDate(todayKey)));
+}
+
+/**
+ * The statement cycles of a card, newest first: { start, end, open }. A cycle runs from the day
+ * after one statement day to the next statement day (statement day 20: 21/09 to 20/10); `open`
+ * marks the one that has not closed yet. The statement day itself belongs to the cycle it closes.
+ */
+function statementCycles(statementDay, todayKey, count = 12) {
+    if (!statementDay) return [];
+
+    const today = parseLocalDate(todayKey);
+    const cycles = [];
+    let end = nextDayOfMonth(statementDay, addDays(today, 1));
+
+    for (let index = 0; index < count; index++) {
+        const previous = previousDayOfMonth(statementDay, addDays(end, -1));
+
+        cycles.push({
+            start: toLocalDateString(addDays(previous, 1)),
+            end: toLocalDateString(end),
+            open: index === 0,
+        });
+        end = previous;
+    }
+
+    return cycles;
+}
+
+/**
+ * What happened on one source between two dates (inclusive), as a card statement counts it:
+ * `charges` is money that went out (purchases, fees, cash taken, transfers out), `payments` is
+ * money that came in (payments into the card, refunds), `count` the transactions that moved it.
+ */
+function computeCardCycleTotals(list, sourceName, from, to) {
+    const totals = { charges: 0, payments: 0, count: 0 };
+
+    list.forEach((transaction) => {
+        if (transaction.date < from || transaction.date > to) return;
+
+        const effect = sourceEffect(transaction, sourceName);
+
+        if (effect < 0) totals.charges -= effect;
+        else if (effect > 0) totals.payments += effect;
+
+        if (effect) totals.count++;
+    });
+
+    return totals;
 }
 
 /** 0 = nothing to worry about yet, 1 = due within CARD_DUE_WARN_DAYS, 2 = the due date has passed. */

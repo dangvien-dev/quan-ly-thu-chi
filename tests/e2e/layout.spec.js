@@ -24,6 +24,9 @@ const DIALOGS = [
     ['mức lương', () => window.openSalaryModal()],
     ['tự động gửi tiết kiệm', () => window.openSavingsModal()],
     ['chia lương theo nhóm', () => window.openAllocationModal()],
+    ['nhập sao kê', () => window.openImportModal()],
+    ['trả sao kê thẻ', () => window.openCardPayModal('Thẻ Tín Dụng')],
+    ['đổi tên thẻ', () => window.openTagRenameModal('khachA')],
 ];
 const seed = {
     fm_salary: JSON.stringify({ amount: 10000000, warnPercent: 80 }),

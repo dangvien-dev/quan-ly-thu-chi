@@ -73,7 +73,13 @@ test.describe('Nguồn tiền', () => {
 
         await expect(visa).toContainText('Hạn mức 20.000.000 đ · Khả dụng 15.000.000 đ');
         await expect(visa).toContainText('Chốt sao kê ngày 31 (còn 3 ngày)');
-        await expect(visa).toContainText('Hạn thanh toán ngày 15 (còn 18 ngày)');
+        // The 30/9 statement (the opening debt) was due on 15/10 and is unpaid: the due line says so, and
+        // the due day alone is shown, not "(còn 18 ngày)" to the next one.
+        await expect(visa).toContainText('Hạn thanh toán ngày 15 hằng tháng');
+        await expect(visa).not.toContainText('Hạn thanh toán ngày 15 (còn');
+        await expect(visa.locator('.card-due')).toHaveText(
+            'Cần trả 5.000.000 đ trước 15/10/2026 (quá hạn 13 ngày)',
+        );
         await expect(page.locator('#lbl-total-debt')).toHaveText('5.000.000 đ');
     });
 
