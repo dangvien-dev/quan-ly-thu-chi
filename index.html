@@ -1271,18 +1271,42 @@
                 <section id="import-step-file" aria-label="Chọn file và cột">
                     <div class="import-grid">
                         <div class="form-group">
-                            <label for="importFile">File sao kê (.csv)</label>
+                            <label for="importFile">File sao kê (.csv hoặc .pdf)</label>
                             <input
                                 type="file"
                                 id="importFile"
                                 class="form-control"
-                                accept=".csv,.txt,text/csv,text/plain"
+                                accept=".csv,.txt,.pdf,text/csv,text/plain,application/pdf"
                             />
                         </div>
                         <div class="form-group">
                             <label for="importSource">Nhập vào nguồn tiền</label>
                             <select id="importSource" class="form-control"></select>
                         </div>
+                    </div>
+                    <div id="import-password-group" class="form-group" hidden>
+                        <label for="importPassword">Mật khẩu của file PDF</label>
+                        <div class="import-password-row">
+                            <input
+                                type="password"
+                                id="importPassword"
+                                class="form-control"
+                                autocomplete="off"
+                                aria-describedby="importPasswordHint"
+                            />
+                            <button
+                                type="button"
+                                class="btn"
+                                id="import-unlock"
+                                onclick="unlockImportPdf()"
+                            >
+                                Mở file
+                            </button>
+                        </div>
+                        <p id="importPasswordHint" class="hint">
+                            Mật khẩu chỉ dùng để mở file ngay trên máy này, không được lưu và không
+                            gửi đi đâu.
+                        </p>
                     </div>
                     <p id="importMessage" class="import-message" role="status"></p>
 
@@ -1358,6 +1382,13 @@
 
                 <section id="import-step-preview" aria-label="Xem trước giao dịch" hidden>
                     <p id="import-summary" class="filter-summary" aria-live="polite"></p>
+                    <div id="import-statement" class="import-statement" hidden>
+                        <p id="import-reconcile" class="import-reconcile" role="status"></p>
+                        <label class="check-label" id="import-apply-label" hidden>
+                            <input type="checkbox" id="import-apply-statement" />
+                            <span id="import-apply-text"></span>
+                        </label>
+                    </div>
                     <details id="import-skipped" class="import-skipped" hidden>
                         <summary id="import-skipped-summary"></summary>
                         <ul id="import-skipped-list"></ul>

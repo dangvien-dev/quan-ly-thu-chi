@@ -1103,6 +1103,10 @@ canvas {
     cursor: pointer;
 }
 
+.check-label[hidden] {
+    display: none !important;
+}
+
 .status-badge {
     border-radius: 12px;
     padding: 2px 10px;
@@ -1837,6 +1841,38 @@ main:focus {
 .import-message.import-error {
     color: var(--danger);
     font-weight: 600;
+}
+
+.import-password-row {
+    display: flex;
+    gap: 10px;
+}
+
+.import-password-row .form-control {
+    flex: 1;
+    min-width: 0;
+}
+
+.import-password-row + .hint {
+    margin-top: 8px;
+}
+
+.import-statement {
+    margin: 0 0 12px;
+}
+
+.import-reconcile {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.import-reconcile-ok {
+    color: var(--success);
+}
+
+.import-reconcile-bad {
+    color: var(--danger);
 }
 
 .import-raw {
