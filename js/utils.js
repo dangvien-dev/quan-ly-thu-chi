@@ -1280,6 +1280,10 @@ function normalizeDebt(raw) {
             id: String(payment && payment.id ? payment.id : `${id}_P${index}`),
             date: normalizeDate(payment && payment.date),
             amount: parseAmount(payment && payment.amount),
+            // The transaction this payment wrote into a money source, when it was asked to.
+            ...(payment && payment.transactionId
+                ? { transactionId: String(payment.transactionId) }
+                : {}),
         }))
         .filter((payment) => payment.amount > 0);
 

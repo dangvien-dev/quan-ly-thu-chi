@@ -1336,6 +1336,30 @@ test('buildTransactionsCsv: cột Thẻ liệt kê các thẻ, ghi chú vẫn gi
     assert.ok(csv.includes(',Không thẻ,\r\n'));
 });
 
+test('normalizeDebt: lần thanh toán giữ transactionId khi có, không thêm trường khi không có', () => {
+    const payments = (list) =>
+        JSON.parse(
+            JSON.stringify(
+                run(
+                    `normalizeDebt({id:"d",party:"A",amount:1000,payments:${JSON.stringify(list)}}).payments`,
+                ),
+            ),
+        );
+
+    assert.deepEqual(
+        payments([
+            { id: 'p1', date: '2026-10-05', amount: 100, transactionId: 'TX_DEBT_p1' },
+            { id: 'p2', date: '2026-10-06', amount: 200 },
+            { id: 'p3', date: '2026-10-07', amount: 300, transactionId: '' },
+        ]),
+        [
+            { id: 'p1', date: '2026-10-05', amount: 100, transactionId: 'TX_DEBT_p1' },
+            { id: 'p2', date: '2026-10-06', amount: 200 },
+            { id: 'p3', date: '2026-10-07', amount: 300 },
+        ],
+    );
+});
+
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {
     const move = (list, index, step, predicate = '') =>
         run(`moveInList(${list},${index},${step}${predicate && `,${predicate}`}).join("")`);

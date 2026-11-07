@@ -1093,6 +1093,60 @@
         </div>
 
         <div
+            id="debtPayModal"
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="debtPayTitle"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="debtPayTitle">Trả nợ</h3>
+                    <button
+                        type="button"
+                        class="close-btn"
+                        onclick="closeDebtPayModal()"
+                        aria-label="Đóng"
+                    >
+                        &times;
+                    </button>
+                </div>
+                <form id="debtPayForm" onsubmit="handleDebtPaySubmit(event)">
+                    <p id="debtPayMessage" class="money-prompt-message"></p>
+                    <div class="form-group">
+                        <label for="debtPayAmount">Số tiền (VNĐ)</label>
+                        <input
+                            type="text"
+                            id="debtPayAmount"
+                            class="form-control"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            data-money="positive"
+                            placeholder="0"
+                            aria-describedby="debtPayMessage"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="debtPayDate">Ngày</label>
+                        <input type="date" id="debtPayDate" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="debtPaySource">Ghi vào nguồn tiền</label>
+                        <select
+                            id="debtPaySource"
+                            class="form-control"
+                            aria-describedby="debtPaySourceHint"
+                        ></select>
+                        <p id="debtPaySourceHint" class="hint" aria-live="polite"></p>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%; justify-content: center">
+                        Lưu
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
             id="tagRenameModal"
             class="modal"
             role="dialog"

@@ -21,6 +21,15 @@ const withDebts = (list, extra = {}) => ({
 });
 const row = (page, party) => page.locator('#debt-table-body tr', { hasText: party }).first();
 
+/** Open the payment dialog of a debt, fill it in and save. */
+async function payDebt(page, party, amount, { date, source } = {}) {
+    await row(page, party).locator('[data-action=pay]').click();
+    await page.fill('#debtPayAmount', String(amount));
+    if (date) await page.fill('#debtPayDate', date);
+    if (source !== undefined) await page.selectOption('#debtPaySource', source);
+    await page.click('#debtPayForm button[type=submit]');
+}
+
 async function addDebt(page, fields) {
     await goTab(page, 'debts');
     await page.click('button:has-text("Thêm Khoản")');
@@ -55,20 +64,17 @@ test.describe('Sổ vay nợ', () => {
     test('ghi thanh toán từng phần rồi tất toán; khoản đã tất toán bị ẩn mặc định', async ({
         app,
     }) => {
-        const { page } = await app({ ...withDebts([debt()]), promptValue: '400.000' });
+        const { page } = await app(withDebts([debt()]));
 
         await goTab(page, 'debts');
-        await row(page, 'Anh Nam').locator('[data-action=pay]').click();
+        await payDebt(page, 'Anh Nam', 400000);
 
         await expect(row(page, 'Anh Nam')).toContainText('600.000 đ');
         await expect(page.locator('#lbl-debt-owe')).toHaveText('600.000 đ');
         // the payment history opens by itself
         await expect(page.locator('.debt-details')).toContainText('400.000 đ');
 
-        await page.evaluate(() => {
-            window.__amountAnswer = '600000';
-        });
-        await row(page, 'Anh Nam').locator('[data-action=pay]').click();
+        await payDebt(page, 'Anh Nam', 600000);
 
         await expect(page.locator('#debt-table-body')).toContainText('Không có khoản nào đang nợ');
         await expect(page.locator('#lbl-debt-owe')).toHaveText('0 đ');
@@ -79,16 +85,18 @@ test.describe('Sổ vay nợ', () => {
     });
 
     test('từ chối thanh toán vượt số còn lại hoặc không hợp lệ', async ({ app }) => {
-        const first = await app({ ...withDebts([debt()]), promptValue: '1.500.000' });
+        const first = await app(withDebts([debt()]));
 
         await goTab(first.page, 'debts');
-        await row(first.page, 'Anh Nam').locator('[data-action=pay]').click();
+        await payDebt(first.page, 'Anh Nam', 1500000);
         expect(first.state.alerts.at(-1)).toContain('vượt quá');
+        // The dialog stays open so the amount can be corrected.
+        await expect(first.page.locator('#debtPayModal')).toHaveClass(/open/);
 
-        const second = await app({ ...withDebts([debt()]), promptValue: 'abc' });
+        const second = await app(withDebts([debt()]));
 
         await goTab(second.page, 'debts');
-        await row(second.page, 'Anh Nam').locator('[data-action=pay]').click();
+        await payDebt(second.page, 'Anh Nam', 'abc');
         expect(second.state.alerts.at(-1)).toContain('không hợp lệ');
         expect(await second.page.evaluate(() => debts[0].payments.length)).toBe(0);
     });
