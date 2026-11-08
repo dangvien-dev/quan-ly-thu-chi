@@ -1,6 +1,6 @@
 // Money fields show thousands separators while typing and keep the caret where the user is.
 
-const { test, expect, tx, goTab, goTransactions, wait } = require('./helpers');
+const { test, expect, tx, goTab, goTransactions, wait, scanA11y } = require('./helpers');
 
 const NOW = '2026-10-28T03:00:00Z';
 
@@ -31,7 +31,7 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
         await expect(input).toHaveValue('9.999');
 
         await input.fill('');
-        await input.pressSequentially('a1b-2c.3,4 5');
+        await input.pressSequentially('a1b2c.3 4 5');
         await expect(input).toHaveValue('12.345');
     });
 
@@ -334,5 +334,228 @@ test.describe('Xóa chữ số đầu của ô tiền', () => {
         await expect(field).toHaveValue('0.000');
         await page.keyboard.type('-'); // a minus in front of the kept zeros
         await expect(field).toHaveValue('-0.000');
+    });
+});
+
+// Calculations in money fields: "582719+11000", "22,22*26225", a decimal comma. The answer shows
+// under the field while typing and replaces the calculation when the field is left (or on Enter).
+const calcHint = (page, id) => page.locator(`#${id}-calc`);
+
+test.describe('Phép tính trong ô tiền', () => {
+    test('gõ 582719+11000: hiện kết quả ngay dưới ô, rời ô thì thay bằng 593.719 và lưu đúng', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+
+        await page.click('header .btn');
+        await page.locator('#txAmount').pressSequentially('582719+11000');
+
+        // The calculation is not reformatted while it is typed.
+        await expect(page.locator('#txAmount')).toHaveValue('582.719+11000');
+        await expect(calcHint(page, 'txAmount')).toBeVisible();
+        await expect(calcHint(page, 'txAmount')).toHaveText('= 593.719 đ');
+        await expect(page.locator('#txAmount')).toHaveAttribute(
+            'aria-describedby',
+            /txAmount-calc/,
+        );
+
+        await page.keyboard.press('Tab');
+        await expect(page.locator('#txAmount')).toHaveValue('593.719');
+        await expect(calcHint(page, 'txAmount')).toBeHidden();
+
+        await page.click('#transactionForm button[type=submit]');
+        expect(await page.evaluate(() => transactions[0].amount)).toBe(593719);
+    });
+
+    test('Enter trong ô đang là phép tính vẫn lưu đúng kết quả, không lưu chữ số ghép lại', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+
+        await page.click('header .btn');
+        await page.locator('#txAmount').pressSequentially('100000*2+50000');
+        await expect(calcHint(page, 'txAmount')).toHaveText('= 250.000 đ');
+        await page.keyboard.press('Enter');
+
+        expect(await page.evaluate(() => transactions[0].amount)).toBe(250000);
+    });
+
+    test('dấu phẩy là phần thập phân: 582719,50 ra 582.720 chứ không phải 58.271.950; 22,22*26225 cũng vậy', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+        const input = page.locator('#txAmount');
+
+        await page.click('header .btn');
+        await input.pressSequentially('582719,50');
+        await expect(calcHint(page, 'txAmount')).toHaveText('= 582.720 đ');
+        await page.keyboard.press('Tab');
+        await expect(input).toHaveValue('582.720');
+
+        await input.fill('');
+        await input.pressSequentially('22,22*26225');
+        await expect(calcHint(page, 'txAmount')).toHaveText('= 582.720 đ');
+        await page.keyboard.press('Tab');
+        await expect(input).toHaveValue('582.720');
+
+        // Typing digits afterwards is the plain field again.
+        await input.fill('');
+        await input.pressSequentially('1234567');
+        await expect(input).toHaveValue('1.234.567');
+        await expect(calcHint(page, 'txAmount')).toBeHidden();
+    });
+
+    test('sửa phép tính thành số thường (xóa toán tử) thì ô lại có dấu chấm hàng nghìn như cũ', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+        const input = page.locator('#txAmount');
+
+        await page.click('header .btn');
+        await input.pressSequentially('1000+');
+        await expect(calcHint(page, 'txAmount')).toHaveText('Gõ tiếp phép tính…');
+        await expect(calcHint(page, 'txAmount')).not.toHaveClass(/money-calc-error/);
+
+        await page.keyboard.press('Backspace');
+        await expect(input).toHaveValue('1.000');
+        await expect(calcHint(page, 'txAmount')).toBeHidden();
+    });
+
+    test('phép tính không tính được thì báo bằng chữ, giữ nguyên để sửa và không lưu', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ now: NOW });
+        const input = page.locator('#txAmount');
+
+        await page.click('header .btn');
+        await input.pressSequentially('5/0');
+        await expect(calcHint(page, 'txAmount')).toHaveText('Chưa tính được phép tính này');
+        await expect(calcHint(page, 'txAmount')).toHaveClass(/money-calc-error/);
+
+        await page.keyboard.press('Tab');
+        await expect(input).toHaveValue('5/0');
+        await expect(calcHint(page, 'txAmount')).toBeVisible();
+
+        await page.click('#transactionForm button[type=submit]');
+        expect(state.alerts.at(-1)).toContain('số tiền hợp lệ');
+        expect(await page.evaluate(() => transactions.length)).toBe(0);
+    });
+
+    test('ô không nhận số âm: kết quả âm bị báo và không lưu; ô có dấu trừ nhận kết quả âm', async ({
+        app,
+    }) => {
+        const { page, state } = await app({ now: NOW });
+        const input = page.locator('#txAmount');
+
+        await page.click('header .btn');
+        await input.pressSequentially('5-8');
+        await expect(calcHint(page, 'txAmount')).toHaveText('Kết quả âm: ô này không nhận số âm');
+        await page.click('#transactionForm button[type=submit]');
+        expect(state.alerts.at(-1)).toContain('số tiền hợp lệ');
+        expect(await page.evaluate(() => transactions.length)).toBe(0);
+
+        // The opening balance of a source can be negative.
+        await page.click('#transactionModal .close-btn');
+        await goTab(page, 'sources');
+        await page.click('button:has-text("Thêm Nguồn Tiền")');
+        await page.fill('#srcName', 'Visa VCB');
+        await page.selectOption('#srcKind', 'credit');
+        await page.locator('#srcInitialBalance').pressSequentially('-1000000+250000');
+        await expect(calcHint(page, 'srcInitialBalance')).toHaveText('= -750.000 đ');
+        await page.click('#sourceForm button[type=submit]');
+
+        expect(await page.evaluate(() => initialBalances['Visa VCB'])).toBe(-750000);
+    });
+
+    test('hộp nhập số tiền (Sửa số dư): gõ phép tính rồi Enter lưu kết quả', async ({ app }) => {
+        const { page } = await app({ now: NOW });
+
+        await goTab(page, 'sources');
+        await page
+            .locator('#sources-grid .card', { hasText: 'Tiền Mặt' })
+            .locator('button[data-action=edit-balance]')
+            .click();
+        await expect(page.locator('#moneyPromptModal')).toHaveClass(/open/);
+
+        await page.locator('#moneyPromptInput').pressSequentially('-1000000+200000');
+        await expect(calcHint(page, 'moneyPromptInput')).toHaveText('= -800.000 đ');
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#moneyPromptModal')).not.toHaveClass(/open/);
+        expect(await page.evaluate(() => initialBalances['Tiền Mặt'])).toBe(-800000);
+    });
+
+    test('dán số có phần lẻ (582719.50, 22,22) ra số tròn; dán 1.500.000 thì để trình duyệt tự xử lý', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW });
+        const paste = (text) =>
+            page.evaluate((value) => {
+                const input = document.getElementById('txAmount');
+                const data = new DataTransfer();
+
+                data.setData('text', value);
+
+                // false when the field took over the paste (preventDefault)
+                return input.dispatchEvent(
+                    new ClipboardEvent('paste', {
+                        clipboardData: data,
+                        bubbles: true,
+                        cancelable: true,
+                    }),
+                );
+            }, text);
+
+        await page.click('header .btn');
+        expect(await paste('582719.50')).toBe(false);
+        await expect(page.locator('#txAmount')).toHaveValue('582.720');
+
+        expect(await paste('22,22')).toBe(false);
+        await expect(page.locator('#txAmount')).toHaveValue('22');
+
+        // Whole numbers with thousands marks are left to the default paste.
+        expect(await paste('1.500.000')).toBe(true);
+        expect(await paste('1,500,000')).toBe(true);
+    });
+
+    test('mọi ô tiền có chỗ hiện kết quả; aria-describedby cũ được giữ', async ({ app }) => {
+        const { page } = await app({ now: NOW });
+        const result = await page.evaluate(() =>
+            [...document.querySelectorAll('input[data-money]')].map((input) => ({
+                id: input.id,
+                hint: Boolean(document.getElementById(`${input.id}-calc`)),
+                describedBy: input.getAttribute('aria-describedby') || '',
+            })),
+        );
+
+        expect(result.length).toBeGreaterThan(8);
+        expect(result.filter((entry) => !entry.hint)).toEqual([]);
+        expect(result.find((entry) => entry.id === 'srcStatementBalance').describedBy).toBe(
+            'srcStatementBalanceHint srcStatementBalance-calc',
+        );
+    });
+
+    test('trợ năng và điện thoại: ô đang hiện kết quả không vi phạm axe, không tràn ngang', async ({
+        app,
+    }) => {
+        const { page } = await app({ now: NOW, viewport: { width: 390, height: 844 } });
+
+        await page.evaluate(() => openModal());
+        await page.locator('#txAmount').pressSequentially('582719+11000');
+        await expect(calcHint(page, 'txAmount')).toHaveText('= 593.719 đ');
+        expect(
+            await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+        ).toBe(0);
+
+        const ok = await scanA11y(page, '#transactionModal');
+
+        expect(ok.violations.map((violation) => violation.id)).toEqual([]);
+
+        await page.locator('#txAmount').fill('5/0');
+        await expect(calcHint(page, 'txAmount')).toHaveClass(/money-calc-error/);
+
+        const bad = await scanA11y(page, '#transactionModal');
+
+        expect(bad.violations.map((violation) => violation.id)).toEqual([]);
     });
 });

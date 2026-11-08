@@ -115,7 +115,28 @@ function describeCredit(source, balance) {
 
     const html = lines.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join('');
 
-    return html + describeCardDue(source, due);
+    return html + describeStatementGap(source) + describeCardDue(source, due);
+}
+
+/**
+ * Why the book disagrees with the last statement, in words. It stays on the card so that months
+ * later the gap is still explained, not just a number nobody remembers the reason for.
+ */
+function statementGapText(gap) {
+    const amount = formatMoney(Math.abs(gap.gap));
+    const date = formatDateDisplay(gap.date);
+
+    return gap.gap > 0
+        ? `Sổ đang lệch ${amount} so với sao kê chốt ${date}: số dư ban đầu đang chứa khoản nợ này mà chưa có giao dịch nào. Thường là phí chuyển đổi ngoại tệ, VAT hoặc lãi trên sao kê chưa nhập. Nhập sao kê kỳ sau rồi bấm Khớp số dư thì hết.`
+        : `Sổ đang ghi nợ ít hơn sao kê chốt ${date} ${amount}: có thể thiếu một khoản chi hoặc đã ghi dư một khoản trả. Xem theo kỳ sao kê để đối chiếu từng dòng.`;
+}
+
+function describeStatementGap(source) {
+    const gap = computeStatementGap(source, transactions, initialBalances[source.name]);
+
+    return gap
+        ? `<div class="source-meta card-gap-note"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ${escapeHtml(statementGapText(gap))}</div>`
+        : '';
 }
 
 const ESTIMATED_DUE_NOTE =
@@ -657,9 +678,20 @@ async function matchSourceBalance(sourceName) {
     saveMeta('initialBalances');
     renderAll();
     syncToGoogleSheet();
+    // Matching pushes whatever the book is missing into the initial balance: say so right away.
+    const gap = computeStatementGap(
+        findSource(source.name),
+        transactions,
+        initialBalances[source.name],
+    );
+
     showToast(
-        `Đã khớp [${source.name}]: số dư ${formatMoney(target)}, số dư ban đầu ${formatMoney(initialBalances[source.name])}.`,
+        `Đã khớp [${source.name}]: số dư ${formatMoney(target)}, số dư ban đầu ${formatMoney(initialBalances[source.name])}.` +
+            (gap
+                ? ` Lưu ý: sổ đang lệch ${formatMoney(Math.abs(gap.gap))} so với sao kê chốt ${formatDateDisplay(gap.date)} (xem ghi chú trên thẻ).`
+                : ''),
         'success',
+        gap ? 10000 : undefined,
     );
 }
 

@@ -2011,6 +2011,32 @@ function computeCardDue(source, list, opening, todayKey) {
     };
 }
 
+// The printed closing balance is rounded and the rows it sums are rounded one by one, so a few đồng
+// of difference is not a missing transaction.
+const STATEMENT_GAP_TOLERANCE = 10;
+
+/**
+ * How far the book is from the closing balance printed on a card's last statement: what the book
+ * says was owed on that statement day (initial balance + transactions up to it) minus the printed
+ * balance, as { date, printed, book, gap }. Positive = the book owes more: the initial balance holds
+ * debt the book has no transaction for (the foreign-currency fee and VAT lines of a statement that
+ * were never entered, which "Khớp số dư" pushed there); negative = the book owes less. Null without
+ * a closing balance or when they agree.
+ */
+function computeStatementGap(source, list, opening) {
+    if (!source || source.kind !== 'credit' || !source.lastStatement) return null;
+
+    const { date, balance } = source.lastStatement;
+    const book = -list.reduce(
+        (total, transaction) =>
+            transaction.date <= date ? total + sourceEffect(transaction, source.name) : total,
+        Number(opening) || 0,
+    );
+    const gap = book - balance;
+
+    return Math.abs(gap) > STATEMENT_GAP_TOLERANCE ? { date, printed: balance, book, gap } : null;
+}
+
 /** The statement day on or before `todayKey` (YYYY-MM-DD) for a card whose statement closes on `day`. */
 function latestStatementDate(day, todayKey) {
     return toLocalDateString(previousDayOfMonth(day, parseLocalDate(todayKey)));
@@ -2604,8 +2630,117 @@ function formatMoneyDigits(text, allowNegative = false, { keepLeadingZeros = fal
     return (negative ? '-' : '') + digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
-/** The number in a money field ("1.500.000", "-20.000"); NaN when empty or not a number. */
+/**
+ * True when a money field holds a calculation instead of plain digits: an operator after the
+ * first character ("582.719+11000", "22,22x26225"; a leading minus is only a sign), or a decimal
+ * comma ("582.719,50": a comma with at most two digits after it; "1,500" is a thousands mark).
+ * The field is not reformatted while it holds one.
+ */
+function isMoneyExpression(text) {
+    const body = String(text ?? '')
+        .trim()
+        .replace(/^[-−–+]\s*/, '');
+
+    return /[-+*/x×÷X−–]/.test(body) || /^[^,]*,\d{0,2}$/.test(body);
+}
+
+/** Round to a whole đồng, halves away from zero; the fixed digits hide float noise (0.1 + 0.2). */
+function roundMoney(value) {
+    const rounded = Math.round(Number(Math.abs(value).toFixed(6)));
+
+    return value < 0 && rounded !== 0 ? -rounded : rounded;
+}
+
+/**
+ * Work out what is typed in a money field: + - and * / (x and × and ÷ too) with the usual
+ * precedence, numbers written the Vietnamese way ("582.719,50": dots group, the comma is decimal;
+ * "22.22" is 22,22), a leading sign. The answer is rounded to a whole đồng; NaN when it cannot be
+ * worked out (a dangling operator, division by zero, a stray character, too big). No parentheses,
+ * and nothing is ever passed to eval.
+ */
+function evaluateMoneyExpression(text) {
+    const source = String(text ?? '')
+        .replace(/[×xX]/g, '*')
+        .replace(/÷/g, '/')
+        .replace(/[−–]/g, '-');
+    const tokens = [];
+    const pattern = /\s*(?:(\d[\d.,]*)|([-+*/]))/y;
+    let index = 0;
+
+    while (index < source.length) {
+        if (/^\s+$/.test(source.slice(index))) break;
+
+        pattern.lastIndex = index;
+
+        const match = pattern.exec(source);
+
+        if (!match) return NaN;
+
+        index = pattern.lastIndex;
+
+        if (match[1] !== undefined) {
+            // "22," while it is still being typed is 22.
+            tokens.push({ number: parseBankNumber(match[1].replace(/[.,]+$/, '')) });
+        } else {
+            tokens.push({ operator: match[2] });
+        }
+    }
+
+    let position = 0;
+    let sign = 1;
+
+    if (tokens[0] && tokens[0].operator && '+-'.includes(tokens[0].operator)) {
+        sign = tokens[0].operator === '-' ? -1 : 1;
+        position = 1;
+    }
+
+    const number = () => {
+        const token = tokens[position++];
+
+        if (!token || token.number === undefined || !Number.isFinite(token.number)) {
+            throw new Error('number expected');
+        }
+
+        return token.number;
+    };
+    const term = () => {
+        let value = number();
+
+        while (tokens[position] && '*/'.includes(tokens[position].operator ?? ' ')) {
+            const operator = tokens[position++].operator;
+            const right = number();
+
+            if (operator === '/' && right === 0) throw new Error('division by zero');
+
+            value = operator === '*' ? value * right : value / right;
+        }
+
+        return value;
+    };
+
+    try {
+        let value = sign * term();
+
+        while (position < tokens.length) {
+            const operator = tokens[position++].operator;
+
+            if (operator !== '+' && operator !== '-') throw new Error('operator expected');
+
+            const right = term();
+
+            value = operator === '+' ? value + right : value - right;
+        }
+
+        return Math.abs(value) > 999999999999999 ? NaN : roundMoney(value);
+    } catch {
+        return NaN;
+    }
+}
+
+/** The number in a money field ("1.500.000", "-20.000", or a calculation); NaN when empty or not a number. */
 function parseMoneyText(text) {
+    if (isMoneyExpression(text)) return evaluateMoneyExpression(text);
+
     const cleaned = String(text ?? '').replace(/[.,\s]/g, '');
 
     return /^-?\d+$/.test(cleaned) ? Number(cleaned) : NaN;

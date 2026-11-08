@@ -2221,6 +2221,65 @@ test('computeCardDue con số liệu thật của thẻ VPBank (7/11/2026): số
     assert.equal(due(card(',lastStatement:{date:"2026-10-20",balance:1695414}')), null);
 });
 
+test('computeStatementGap: sổ lệch bao nhiêu so với dư nợ in trên sao kê (số liệu thật của thẻ VPBank 7/11/2026)', () => {
+    const card = (extra = '') =>
+        `{name:"Thẻ Tín Dụng",kind:"credit",creditLimit:37800000,statementDay:20,dueDay:4${extra}}`;
+    const anchored = card(',lastStatement:{date:"2026-10-20",balance:1695414}');
+    const charge = (date, amount) =>
+        `{id:"C${date}${amount}",date:"${date}",type:"expense",source:"Thẻ Tín Dụng",amount:${amount}}`;
+    const pay = (date, amount) =>
+        `{id:"P${date}${amount}",date:"${date}",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:${amount}}`;
+    // The cycle 21/09-20/10 as the book has it after the statement was imported: 1.618.414 of
+    // purchases and 77.000 of fee / VAT lines = 1.695.414, the statement's own number.
+    const book = `[${[
+        charge('2026-09-21', 100000),
+        charge('2026-09-23', 73333),
+        charge('2026-09-24', 132000),
+        charge('2026-09-28', 30000),
+        charge('2026-09-30', 582719),
+        charge('2026-10-03', 87778),
+        charge('2026-10-05', 552584),
+        charge('2026-10-10', 30000),
+        charge('2026-10-17', 30000),
+        charge('2026-09-23', 11000),
+        charge('2026-09-23', 11000),
+        charge('2026-09-28', 11000),
+        charge('2026-09-30', 11000),
+        charge('2026-10-04', 11000),
+        charge('2026-10-10', 11000),
+        charge('2026-10-17', 11000),
+        pay('2026-09-21', 1614164),
+        pay('2026-10-21', 1695414),
+        // after the statement day: not part of what the statement printed
+        charge('2026-10-22', 587160),
+        charge('2026-11-05', 604390),
+    ].join(',')}]`;
+    const gap = (source, opening) =>
+        plain(run(`computeStatementGap(${source},${book},${opening})`));
+
+    // The statement of 20/09 was 1.614.164: with that opening the book agrees with 20/10.
+    assert.equal(gap(anchored, -1614164), null);
+    // "Khớp số dư" put 51.766 of fees posted after 20/10 into the opening: the book owes that much
+    // more on the statement day than the statement says.
+    assert.deepEqual(gap(anchored, -1665930), {
+        date: '2026-10-20',
+        printed: 1695414,
+        book: 1747180,
+        gap: 51766,
+    });
+    // An opening that is too small leaves the book owing less than the statement.
+    assert.equal(gap(anchored, -1514164).gap, -100000);
+    // A few đồng of rounding are not a missing transaction; 11 are.
+    assert.equal(gap(anchored, -1614174), null);
+    assert.equal(gap(anchored, -1614175).gap, 11);
+    // No closing balance, or not a card: nothing to compare.
+    assert.equal(gap(card(), -1665930), null);
+    assert.equal(gap('{name:"Thẻ NH Vpbank",kind:"bank"}', -1665930), null);
+    assert.equal(run(`computeStatementGap(null,${book},0)`), null);
+    // Only what happened up to the statement day counts: the purchases of 22/10 and 5/11 do not.
+    assert.equal(gap(anchored, -1614164), null);
+});
+
 test('normalizeSource: mốc sao kê chỉ có với thẻ tín dụng, được làm tròn, bỏ khi không hợp lệ', () => {
     const normalize = (raw) => plain(run(`normalizeSource(${JSON.stringify(raw)})`));
     const card = { name: 'Thẻ', kind: 'credit', statementDay: 20 };
@@ -2679,6 +2738,87 @@ test('parseBankNumber: giá trị đúng không làm tròn, parseBankAmount làm
     assert.ok(Number.isNaN(run('parseBankNumber("abc")')));
     assert.equal(run('parseBankAmount("-582,719.50")'), -582720);
     assert.equal(run('parseBankAmount("582,719.50")'), 582720);
+});
+
+test('evaluateMoneyExpression và parseMoneyText: phép tính trong ô tiền, dấu phẩy là thập phân, làm tròn đồng', () => {
+    const calc = (text) => run(`parseMoneyText(${JSON.stringify(text)})`);
+
+    // + - * / (x and × ÷ too) with the usual precedence.
+    assert.equal(calc('582719+11000'), 593719);
+    assert.equal(calc('1200000/3'), 400000);
+    assert.equal(calc('100000*2+50000'), 250000);
+    assert.equal(calc('50000+100000*2'), 250000);
+    assert.equal(calc('5x3'), 15);
+    assert.equal(calc('3×5'), 15);
+    assert.equal(calc('10÷4'), 3); // 2,5 rounds away from zero
+    assert.equal(calc('5 + 3'), 8);
+    assert.equal(calc('7-10'), -3);
+    assert.equal(calc('7−10'), -3); // a typographic minus
+    // A leading sign belongs to the first number.
+    assert.equal(calc('-500000+20000'), -480000);
+    assert.equal(calc('-5*2'), -10);
+    assert.equal(calc('+5+2'), 7);
+    // Vietnamese numbers: dots group, the comma is the decimal mark.
+    assert.equal(calc('582.719,50'), 582720);
+    assert.equal(calc('582719,50'), 582720);
+    assert.equal(calc('22,22*26225'), 582720); // 22,22 USD at 26.225
+    assert.equal(calc('1.500,50+3'), 1504);
+    assert.equal(calc('0,1+0,2'), 0); // 0,3 with no float noise
+    assert.equal(calc('0,5'), 1);
+    assert.equal(calc('1,5'), 2);
+    assert.equal(calc('-1,5'), -2);
+    assert.equal(calc('22,'), 22); // still being typed
+    // Plain amounts are what they always were, including thousands marks of either kind.
+    assert.equal(calc('1.500.000'), 1500000);
+    assert.equal(calc('1,500,000'), 1500000);
+    assert.equal(calc('1,500'), 1500);
+    assert.equal(calc('-20.000'), -20000);
+    assert.equal(calc('12.345'), 12345);
+    assert.ok(Number.isNaN(calc('')));
+    assert.ok(Number.isNaN(calc('-')));
+    assert.ok(Number.isNaN(calc('abc')));
+    // What cannot be worked out is NaN, never a guess.
+    for (const bad of ['5+', '2*', '5/0', '*5', '5++3', '5*-3', '1+a', '5+3)', '(5+3)*2']) {
+        assert.ok(Number.isNaN(calc(bad)), bad);
+    }
+
+    assert.ok(Number.isNaN(calc('999999999999999+1')));
+    assert.equal(calc('999999999999998+1'), 999999999999999);
+    // Nothing is passed to eval.
+    assert.ok(Number.isNaN(calc('process.exit()')));
+    assert.ok(Number.isNaN(calc('1;2')));
+});
+
+test('isMoneyExpression: toán tử sau ký tự đầu hoặc một dấu phẩy thập phân; dấu trừ đầu chỉ là dấu', () => {
+    const expression = (text) => run(`isMoneyExpression(${JSON.stringify(text)})`);
+
+    for (const yes of [
+        '582.719+11000',
+        '5-3',
+        '5x3',
+        '5*3',
+        '5/3',
+        '5÷3',
+        '1,5',
+        '22,',
+        '582.719,50',
+    ]) {
+        assert.equal(expression(yes), true, yes);
+    }
+
+    for (const no of [
+        '',
+        '-',
+        '-20.000',
+        '+5',
+        '1.500.000',
+        '1,500',
+        '1,500,000',
+        '12345',
+        'abc',
+    ]) {
+        assert.equal(expression(no), false, no);
+    }
 });
 
 test('moveInList: đổi chỗ với phần tử kề, giữ nguyên mảng gốc, đứng yên ở hai đầu', () => {
