@@ -68,7 +68,7 @@ function serverRows(server) {
  * opts: seed (localStorage), remote (rows the spreadsheet starts with), backend ('legacy' | 'v2'),
  *       server (an existing newServer() to share), properties (Script Properties), now (fixed clock),
  *       getDelay, getFails, postFails, postResponse (raw reply text), blockChart,
- *       serviceWorkers, viewport, promptValue (answers the amount dialog of askMoney() as window.prompt
+ *       serviceWorkers, viewport, hasTouch + isMobile (a phone: `pointer: coarse`), promptValue (answers the amount dialog of askMoney() as window.prompt
  *       used to be answered: the text typed into it, null to cancel, left out to accept what is
  *       shown; the question is recorded in state.confirms).
  */
@@ -78,6 +78,8 @@ async function openApp(browser, opts = {}) {
         timezoneId: 'Asia/Ho_Chi_Minh',
         locale: 'vi-VN',
         viewport: opts.viewport || { width: 1280, height: 800 },
+        hasTouch: Boolean(opts.hasTouch),
+        isMobile: Boolean(opts.isMobile),
         serviceWorkers: opts.serviceWorkers || 'block',
     });
     const state = {

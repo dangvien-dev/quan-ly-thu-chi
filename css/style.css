@@ -1099,7 +1099,8 @@ canvas {
 .money-calc {
     color: var(--text-muted);
     font-size: 13px;
-    margin: -8px 0 16px;
+    /* The bottom margin keeps a .hint right after it (margin-top: -8px) clear of this block. */
+    margin: 6px 0 16px;
 }
 
 .money-calc[hidden] {
@@ -1109,6 +1110,31 @@ canvas {
 .money-calc-error {
     color: var(--danger);
     font-weight: 600;
+}
+
+/* + - × ÷ under a money field: only on a touch screen, and only while the field is being typed in
+   (a phone's number pad has none of them). Pressing a key keeps the focus in the field. */
+.money-keys {
+    display: none;
+    gap: 8px;
+    margin: 8px 0 16px;
+}
+
+@media (pointer: coarse) {
+    input[data-money]:focus ~ .money-keys,
+    .money-keys:focus-within {
+        display: flex;
+    }
+}
+
+.money-key {
+    flex: 1;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    font-size: 22px;
+    line-height: 1;
 }
 
 .check-label {

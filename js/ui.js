@@ -464,6 +464,65 @@ function showMoneyResult(input, hint) {
     hint.classList.toggle('money-calc-error', problem);
 }
 
+// The keys of the calculation: a phone's number pad has no + - × ÷. The minus sign is typed as an
+// ASCII hyphen (the field only knows that one as a sign); × and ÷ are understood as typed.
+const MONEY_KEYS = [
+    ['+', '+'],
+    ['\u2212', '-'],
+    ['\u00d7', '\u00d7'],
+    ['\u00f7', '\u00f7'],
+];
+
+/**
+ * Put an operator where the caret is. Nothing happens before the first digit (a calculation needs
+ * a number to start from; only a minus sign may open a field that can be negative), and an
+ * operator right after another one replaces it ("5+" then × gives "5×").
+ */
+function insertMoneyOperator(input, operator) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const before = input.value.slice(0, start);
+    const hasNumber = /\d/.test(before);
+    const leadingMinus =
+        operator === '-' && input.dataset.money === 'signed' && before.trim() === '';
+
+    if (!hasNumber && !leadingMinus) return;
+
+    const replaces = hasNumber && /[-+*/x\u00d7\u00f7X\u2212\u2013]$/.test(before) && start === end;
+
+    input.setRangeText(operator, replaces ? start - 1 : start, end, 'end');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** The row of keys under a money field; CSS shows it only while the field has the focus on a touch screen. */
+function createMoneyKeys(input) {
+    const keys = document.createElement('div');
+
+    keys.className = 'money-keys';
+    keys.id = `${input.id}-keys`;
+    keys.setAttribute('role', 'group');
+    keys.setAttribute('aria-label', 'Phép tính');
+
+    MONEY_KEYS.forEach(([label, operator]) => {
+        const key = document.createElement('button');
+
+        key.type = 'button';
+        key.className = 'btn btn-outline money-key';
+        key.textContent = label;
+        // Pressing a key must not take the focus from the field: the keyboard would close.
+        ['pointerdown', 'mousedown'].forEach((type) =>
+            key.addEventListener(type, (event) => event.preventDefault()),
+        );
+        key.addEventListener('click', () => {
+            input.focus();
+            insertMoneyOperator(input, operator);
+        });
+        keys.appendChild(key);
+    });
+
+    return keys;
+}
+
 function hideMoneyResult(hint) {
     hint.hidden = true;
     hint.textContent = '';
@@ -504,6 +563,7 @@ function attachMoneyInput(input) {
     hint.hidden = true;
     hint.setAttribute('role', 'status');
     input.insertAdjacentElement('afterend', hint);
+    hint.insertAdjacentElement('afterend', createMoneyKeys(input));
     input.setAttribute(
         'aria-describedby',
         [...(input.getAttribute('aria-describedby') || '').split(/\s+/), hint.id]

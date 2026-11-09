@@ -367,6 +367,20 @@ test.describe('Phép tính trong ô tiền', () => {
         expect(await page.evaluate(() => transactions[0].amount)).toBe(593719);
     });
 
+    test('dòng kết quả nằm dưới ô, không đè lên viền ô', async ({ app }) => {
+        const { page } = await app({ now: NOW });
+        const box = (selector) => page.locator(selector).boundingBox();
+
+        await page.click('header .btn');
+        await page.locator('#txAmount').pressSequentially('582719+11000');
+        await expect(calcHint(page, 'txAmount')).toBeVisible();
+
+        const field = await box('#txAmount');
+        const result = await box('#txAmount-calc');
+
+        expect(result.y).toBeGreaterThanOrEqual(field.y + field.height);
+    });
+
     test('Enter trong ô đang là phép tính vẫn lưu đúng kết quả, không lưu chữ số ghép lại', async ({
         app,
     }) => {
@@ -557,5 +571,190 @@ test.describe('Phép tính trong ô tiền', () => {
         const bad = await scanA11y(page, '#transactionModal');
 
         expect(bad.violations.map((violation) => violation.id)).toEqual([]);
+    });
+});
+
+// A phone's number pad has no + - × ÷: on a touch screen four keys appear under the field that is
+// being typed in (CSS `pointer: coarse` + `:focus`), and pressing one keeps the focus in the field.
+const TOUCH = { now: NOW, hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } };
+const keyButton = (page, id, label) =>
+    page.locator(`#${id}-keys .money-key`, { hasText: new RegExp(`^${label}$`) });
+
+test.describe('Nút + − × ÷ trên màn hình cảm ứng', () => {
+    test('máy có chuột: các nút không hiện dù ô đang được gõ', async ({ app }) => {
+        const { page } = await app({ now: NOW });
+
+        await page.click('header .btn');
+        await page.locator('#txAmount').focus();
+
+        expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
+        await expect(page.locator('#txAmount-keys')).toBeHidden();
+    });
+
+    test('màn hình cảm ứng: ẩn khi chưa gõ, hiện đúng 4 nút khi ô có focus, ẩn lại khi rời ô', async ({
+        app,
+    }) => {
+        const { page } = await app(TOUCH);
+        const input = page.locator('#txAmount');
+
+        expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+
+        await page.evaluate(() => openModal());
+        await page.evaluate(() => document.activeElement.blur());
+        await expect(page.locator('#txAmount-keys')).toBeHidden();
+
+        await input.focus();
+        await expect(page.locator('#txAmount-keys')).toBeVisible();
+        expect(await page.locator('#txAmount-keys .money-key').allInnerTexts()).toEqual([
+            '+',
+            '−',
+            '×',
+            '÷',
+        ]);
+
+        await page.evaluate(() => document.activeElement.blur());
+        await expect(page.locator('#txAmount-keys')).toBeHidden();
+    });
+
+    test('bấm nút chèn toán tử, ô vẫn giữ focus; gõ tiếp thì kết quả hiện ngay', async ({
+        app,
+    }) => {
+        const { page } = await app(TOUCH);
+        const input = page.locator('#txAmount');
+
+        await page.evaluate(() => openModal());
+        await input.focus();
+        await input.pressSequentially('582719');
+        await keyButton(page, 'txAmount', '\\+').tap();
+
+        await expect(input).toHaveValue('582.719+');
+        await expect(input).toBeFocused();
+        await expect(page.locator('#txAmount-calc')).toHaveText('Gõ tiếp phép tính…');
+
+        await input.pressSequentially('11000');
+        await expect(page.locator('#txAmount-calc')).toHaveText('= 593.719 đ');
+
+        // Enter submits with the answer.
+        await page.keyboard.press('Enter');
+        expect(await page.evaluate(() => transactions[0].amount)).toBe(593719);
+    });
+
+    test('bấm nút khác ngay sau một toán tử thì thay toán tử đó, không dồn hai toán tử', async ({
+        app,
+    }) => {
+        const { page } = await app(TOUCH);
+        const input = page.locator('#txAmount');
+
+        await page.evaluate(() => openModal());
+        await input.focus();
+        await input.pressSequentially('1000');
+        await keyButton(page, 'txAmount', '\\+').tap();
+        await keyButton(page, 'txAmount', '×').tap();
+        await expect(input).toHaveValue('1.000×');
+
+        await keyButton(page, 'txAmount', '÷').tap();
+        await expect(input).toHaveValue('1.000÷');
+
+        await keyButton(page, 'txAmount', '−').tap();
+        await expect(input).toHaveValue('1.000-');
+
+        await input.pressSequentially('4');
+        await expect(page.locator('#txAmount-calc')).toHaveText('= 996 đ');
+    });
+
+    test('chưa có chữ số thì bỏ qua; chỉ dấu trừ mới mở được ô nhận số âm', async ({ app }) => {
+        const { page } = await app(TOUCH);
+
+        await page.evaluate(() => openModal());
+        await page.locator('#txAmount').focus();
+        await keyButton(page, 'txAmount', '×').tap();
+        await keyButton(page, 'txAmount', '−').tap();
+        await expect(page.locator('#txAmount')).toHaveValue('');
+
+        await page.evaluate(() => {
+            closeModal();
+            openSourceModal();
+        });
+        await page.locator('#srcInitialBalance').focus();
+        await keyButton(page, 'srcInitialBalance', '×').tap();
+        await expect(page.locator('#srcInitialBalance')).toHaveValue('');
+
+        await keyButton(page, 'srcInitialBalance', '−').tap();
+        await expect(page.locator('#srcInitialBalance')).toHaveValue('-');
+
+        await page.locator('#srcInitialBalance').pressSequentially('1000000');
+        await keyButton(page, 'srcInitialBalance', '\\+').tap();
+        await page.locator('#srcInitialBalance').pressSequentially('250000');
+        await expect(page.locator('#srcInitialBalance-calc')).toHaveText('= -750.000 đ');
+    });
+
+    test('hộp nhập số tiền (Sửa số dư) cũng có nút: 1000000 ÷ 4 rồi Enter lưu 250.000', async ({
+        app,
+    }) => {
+        const { page } = await app(TOUCH);
+
+        await page.evaluate(() => switchTab('sources'));
+        await page
+            .locator('#sources-grid .card', { hasText: 'Tiền Mặt' })
+            .locator('button[data-action=edit-balance]')
+            .click();
+        await expect(page.locator('#moneyPromptModal')).toHaveClass(/open/);
+        await expect(page.locator('#moneyPromptInput')).toBeFocused();
+        await expect(page.locator('#moneyPromptInput-keys')).toBeVisible();
+
+        await page.locator('#moneyPromptInput').pressSequentially('1000000');
+        await keyButton(page, 'moneyPromptInput', '÷').tap();
+        await page.locator('#moneyPromptInput').pressSequentially('4');
+        await expect(page.locator('#moneyPromptInput-calc')).toHaveText('= 250.000 đ');
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#moneyPromptModal')).not.toHaveClass(/open/);
+        expect(await page.evaluate(() => initialBalances['Tiền Mặt'])).toBe(250000);
+    });
+
+    test('mọi ô tiền đều có hàng nút; trợ năng: nhóm có tên, nút đủ lớn, không tràn ngang, axe sạch', async ({
+        app,
+    }) => {
+        const { page } = await app(TOUCH);
+
+        expect(
+            await page.evaluate(
+                () =>
+                    [...document.querySelectorAll('input[data-money]')].filter(
+                        (input) => !document.getElementById(`${input.id}-keys`),
+                    ).length,
+            ),
+        ).toBe(0);
+
+        await page.evaluate(() => openModal());
+        await page.locator('#txAmount').focus();
+        await expect(page.getByRole('group', { name: 'Phép tính' }).first()).toBeVisible();
+
+        for (const button of await page.locator('#txAmount-keys .money-key').all()) {
+            const box = await button.boundingBox();
+
+            expect(box.height).toBeGreaterThanOrEqual(44);
+            expect(box.width).toBeGreaterThanOrEqual(44);
+            expect(box.x + box.width).toBeLessThanOrEqual(390);
+        }
+
+        expect(
+            await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+        ).toBe(0);
+
+        await page.locator('#txAmount').pressSequentially('582719+');
+        await expect(page.locator('#txAmount-calc')).toBeVisible();
+
+        // Field, result and keys are stacked without overlapping.
+        const field = await page.locator('#txAmount').boundingBox();
+        const result = await page.locator('#txAmount-calc').boundingBox();
+        const keys = await page.locator('#txAmount-keys').boundingBox();
+
+        expect(result.y).toBeGreaterThanOrEqual(field.y + field.height);
+        expect(keys.y).toBeGreaterThanOrEqual(result.y + result.height);
+
+        const results = await scanA11y(page, '#transactionModal');
+
+        expect(results.violations.map((violation) => violation.id)).toEqual([]);
     });
 });
