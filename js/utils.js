@@ -1231,9 +1231,17 @@ function importDescriptionKey(description) {
         .join(' ');
 }
 
+// A bank's own charges: fees and the VAT on them (the foreign-currency lines of a VPBank statement
+// read "... International Device Country Custom Fee" and "VAT"). They come before the merchants:
+// a fee line is not the purchase it belongs to.
+const IMPORT_FEE_PATTERN =
+    /\b(fee|vat|phi chuyen doi|phi giao dich|phi thuong nien|phi quan ly tai khoan)\b/;
+
 // Common merchants for a first import, before the book has any history to learn from. A rule
 // only applies when the person has a category of that exact name.
 const IMPORT_CATEGORY_RULES = [
+    ['expense', 'Phí ngân hàng', IMPORT_FEE_PATTERN],
+    ['expense', 'Hóa đơn & Tiện ích', IMPORT_FEE_PATTERN],
     [
         'expense',
         'Ăn uống',
@@ -1261,7 +1269,9 @@ const IMPORT_CATEGORY_RULES = [
  * A function (description, type) → category name for the rows of a statement. It learns from the
  * book first (the same merchant key, or a note the person wrote that the description contains),
  * then the common merchants above, then falls back to "Chưa phân loại" (expense) or
- * "Thu nhập khác" (income) so no row is left without one.
+ * "Thu nhập khác" (income) so no row is left without one. What the book learned wins over a rule
+ * unless it only ever said the fallback: rows once imported as "Chưa phân loại" would otherwise
+ * keep teaching that, and a rule that knows better (bank fees) would never be reached.
  */
 function buildCategoryGuesser(history, categoryList) {
     const names = { expense: new Set(), income: new Set() };
@@ -1296,25 +1306,31 @@ function buildCategoryGuesser(history, categoryList) {
 
     return (description, type) => {
         const kind = type === 'income' ? 'income' : 'expense';
+        const fallback = IMPORT_FALLBACK_CATEGORIES[kind];
         const key = importDescriptionKey(description);
-
-        if (key && byKey[kind].has(key)) return top(byKey[kind].get(key));
-
         const plain = normalizeSearchText(description);
-        let longest = '';
+        let learned = '';
 
-        byNote[kind].forEach((votes, note) => {
-            if (note.length > longest.length && plain.includes(note)) longest = note;
-        });
+        if (key && byKey[kind].has(key)) {
+            learned = top(byKey[kind].get(key));
+        } else {
+            let longest = '';
 
-        if (longest) return top(byNote[kind].get(longest));
+            byNote[kind].forEach((votes, note) => {
+                if (note.length > longest.length && plain.includes(note)) longest = note;
+            });
+
+            if (longest) learned = top(byNote[kind].get(longest));
+        }
 
         const rule = IMPORT_CATEGORY_RULES.find(
             ([ruleType, name, pattern]) =>
                 ruleType === kind && names[kind].has(name) && pattern.test(plain),
         );
 
-        return rule ? rule[1] : IMPORT_FALLBACK_CATEGORIES[kind];
+        if (learned && !(learned === fallback && rule)) return learned;
+
+        return rule ? rule[1] : fallback;
     };
 }
 

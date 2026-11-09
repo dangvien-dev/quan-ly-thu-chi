@@ -452,3 +452,86 @@ test.describe('Nhập sao kê PDF: trợ năng và điện thoại', () => {
         expect(bad.violations.map((violation) => violation.id)).toEqual([]);
     });
 });
+
+// The fee and VAT lines of a statement (a purchase abroad costs a 10.000 fee and 1.000 of VAT) went
+// into the book as "Chưa phân loại". The next statement must not keep teaching that.
+const FEE_NOTE =
+    'Retail: : MasterCard Acq --> : Our EuroCard/MasterCard (MasterCard Acq) in 704 International Device Country Custom Fee';
+const CATEGORIES = [
+    { id: 1, name: 'Ăn uống', type: 'expense', icon: 'fa-utensils' },
+    { id: 4, name: 'Hóa đơn & Tiện ích', type: 'expense', icon: 'fa-bolt' },
+    { id: 6, name: 'Thu nhập khác', type: 'income', icon: 'fa-circle-plus' },
+    { id: 7, name: 'Chưa phân loại', type: 'expense', icon: 'fa-tag' },
+];
+const categoryOf = (page, text) =>
+    rowsLocator(page)
+        .filter({ hasText: text })
+        .first()
+        .locator('td[data-label="Danh mục"] select')
+        .inputValue();
+
+test.describe('Nhập sao kê PDF: danh mục cho dòng phí và VAT', () => {
+    test('dòng phí và VAT được gợi ý "Hóa đơn & Tiện ích" dù sổ từng ghi chúng là "Chưa phân loại"', async ({
+        app,
+    }) => {
+        const history = [1, 2, 3, 4].flatMap((day) => [
+            tx({
+                id: `HF${day}`,
+                date: `2026-08-0${day}`,
+                source: CARD,
+                amount: 10000,
+                category: 'Chưa phân loại',
+                note: FEE_NOTE,
+            }),
+            tx({
+                id: `HV${day}`,
+                date: `2026-08-0${day}`,
+                source: CARD,
+                amount: 1000,
+                category: 'Chưa phân loại',
+                note: 'VAT',
+            }),
+        ]);
+        const { page } = await open(app, {
+            fm_categories: JSON.stringify(CATEGORIES),
+            fm_transactions: JSON.stringify(history),
+        });
+
+        await openImport(page);
+        await choosePdf(page);
+        await toPreview(page);
+
+        expect(await categoryOf(page, 'Custom Fee')).toBe('Hóa đơn & Tiện ích');
+        expect(await categoryOf(page, 'VAT')).toBe('Hóa đơn & Tiện ích');
+        // Anything else is unchanged: no merchant is known, so the fallback.
+        expect(await categoryOf(page, 'OPENAI')).toBe('Chưa phân loại');
+    });
+
+    test('danh mục do chính người dùng đã chọn cho dòng VAT vẫn được giữ', async ({ app }) => {
+        const { page } = await open(app, {
+            fm_categories: JSON.stringify([
+                ...CATEGORIES,
+                { id: 8, name: 'Phí ngân hàng', type: 'expense', icon: 'fa-tag' },
+            ]),
+            fm_transactions: JSON.stringify([
+                tx({
+                    id: 'HV1',
+                    date: '2026-08-01',
+                    source: CARD,
+                    amount: 1000,
+                    category: 'Ăn uống',
+                    note: 'VAT',
+                }),
+            ]),
+        });
+
+        await openImport(page);
+        await choosePdf(page);
+        await toPreview(page);
+
+        // The person put VAT under "Ăn uống" before: that wins. The fee line, never seen, goes to the
+        // category named for bank charges, which the person has.
+        expect(await categoryOf(page, 'VAT')).toBe('Ăn uống');
+        expect(await categoryOf(page, 'Custom Fee')).toBe('Phí ngân hàng');
+    });
+});
