@@ -1951,6 +1951,45 @@ main:focus {
     margin-top: 2px;
 }
 
+.import-counter-label {
+    display: block;
+    margin: 0 0 2px;
+    text-align: left;
+}
+
+.import-table td[data-label='Số tiền'] {
+    white-space: nowrap;
+}
+
+/* The selects must show their longest option ("Chuyển ra", "Lương / Thưởng"). */
+.import-select[data-field='type'] {
+    min-width: 118px;
+}
+
+.import-select[data-field='category'],
+.import-select[data-field='counter'] {
+    min-width: 140px;
+}
+
+/* The note and the lines about it, and the other source with its caption, are one block each, so
+   on a phone the cell's label and this block are the only two items of the row. */
+.import-content,
+.import-counter {
+    min-width: 0;
+}
+
+@media (max-width: 768px) {
+    .import-content,
+    .import-counter {
+        flex: 1;
+    }
+
+    .import-counter .import-select {
+        width: 100%;
+        min-width: 0;
+    }
+}
+
 .import-skipped {
     margin: 0 0 12px;
     font-size: 13px;

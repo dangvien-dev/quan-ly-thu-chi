@@ -521,16 +521,53 @@ function backToImportMapping() {
     document.getElementById('importFile').focus();
 }
 
-function importTypeOptions(selected) {
-    return [
+/** The names of the sources a row can be moved to or from: every one in use but the one imported into. */
+function importCounterNames() {
+    return importDraft ? sourceNames().filter((name) => name !== importDraft.source) : [];
+}
+
+/** The value of the type select: a transfer is told apart by its direction seen from the source. */
+function importTypeValue(item) {
+    if (!item.transfer) return item.type;
+
+    return item.type === 'expense' ? 'transfer-out' : 'transfer-in';
+}
+
+function importTypeOptions(item) {
+    const selected = importTypeValue(item);
+    const options = [
         ['expense', 'Chi'],
         ['income', 'Thu'],
-    ]
+    ];
+
+    // Moving money needs another source to move it to or from.
+    if (item.transfer || importCounterNames().length) {
+        options.push(['transfer-out', 'Chuyển ra'], ['transfer-in', 'Chuyển vào']);
+    }
+
+    return options
         .map(
             ([value, label]) =>
                 `<option value="${value}"${value === selected ? ' selected' : ''}>${label}</option>`,
         )
         .join('');
+}
+
+/** The other source of a transfer row, as a select (a name that is gone stays in the list, marked). */
+function importCounterSelect(item, label) {
+    const names = importCounterNames();
+    const all = names.includes(item.counter) ? names : [...names, item.counter];
+    const options = all
+        .map(
+            (name) =>
+                `<option value="${escapeHtml(name)}"${name === item.counter ? ' selected' : ''}>${escapeHtml(name)}${names.includes(name) ? '' : ' (không còn dùng)'}</option>`,
+        )
+        .join('');
+    const out = item.type === 'expense';
+    const caption = out ? 'Chuyển tới' : 'Nhận từ';
+    const name = out ? 'Nguồn nhận tiền' : 'Nguồn chuyển tiền';
+
+    return `<div class="import-counter"><span class="source-meta import-counter-label">${caption}</span><select class="form-control import-select" data-field="counter" aria-label="${name} của ${escapeHtml(label)}">${options}</select></div>`;
 }
 
 function importCategoryOptions(item) {
@@ -559,19 +596,43 @@ function importFlagText(item) {
         : 'Có thể trùng với một giao dịch đã có: chưa chọn.';
 }
 
+const IMPORT_TRANSFER_REASONS = {
+    name: 'Tên nguồn nằm trong nội dung',
+    atm: 'Có vẻ là rút tiền mặt',
+    deposit: 'Có vẻ là nộp tiền mặt',
+    'card-payment': 'Có vẻ là trả sao kê thẻ',
+    'card-payment-out': 'Có vẻ là trả sao kê thẻ',
+};
+
+/** Why a row was suggested as a transfer (only while it still is one): the person decides. */
+function importTransferText(item) {
+    if (!item.transfer || !item.transferReason) return '';
+
+    return `${IMPORT_TRANSFER_REASONS[item.transferReason]}: đề xuất chuyển tiền giữa các nguồn của bạn (không tính là chi hay thu). Kiểm tra nguồn kia, hoặc đổi loại về Chi / Thu.`;
+}
+
 function renderImportRow(item, index) {
-    const color = item.type === 'income' ? 'var(--success)' : 'var(--danger)';
+    const color = item.transfer
+        ? 'var(--text-main)'
+        : item.type === 'income'
+          ? 'var(--success)'
+          : 'var(--danger)';
     const sign = item.type === 'income' ? '+' : '-';
     const flag = importFlagText(item);
+    const transferFlag = importTransferText(item);
     const label = `dòng ${item.row} ngày ${formatDateDisplay(item.date)} ${formatMoney(item.amount)}`;
 
     return `<tr data-index="${index}" class="${item.include ? '' : 'import-row-off'}">
             <td data-label="Nhập"><input type="checkbox" data-field="include" aria-label="Nhập ${escapeHtml(label)}"${item.include ? ' checked' : ''}${item.status === 'imported' ? ' disabled' : ''} /></td>
             <td data-label="Ngày">${escapeHtml(formatDateDisplay(item.date))}</td>
-            <td data-label="Nội dung"><span class="note-cell">${escapeHtml(item.note || '—')}</span>${flag ? `<div class="source-meta import-flag"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ${escapeHtml(flag)}</div>` : ''}</td>
-            <td data-label="Loại"><select class="form-control import-select" data-field="type" aria-label="Loại của ${escapeHtml(label)}">${importTypeOptions(item.type)}</select></td>
+            <td data-label="Nội dung"><div class="import-content"><span class="note-cell">${escapeHtml(item.note || '—')}</span>${flag ? `<div class="source-meta import-flag"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ${escapeHtml(flag)}</div>` : ''}${transferFlag ? `<div class="source-meta import-flag"><i class="fa-solid fa-right-left" aria-hidden="true"></i> ${escapeHtml(transferFlag)}</div>` : ''}</div></td>
+            <td data-label="Loại"><select class="form-control import-select" data-field="type" aria-label="Loại của ${escapeHtml(label)}">${importTypeOptions(item)}</select></td>
             <td data-label="Số tiền" style="font-weight:700; color:${color};">${sign}${formatMoney(item.amount)}</td>
-            <td data-label="Danh mục"><select class="form-control import-select" data-field="category" aria-label="Danh mục của ${escapeHtml(label)}">${importCategoryOptions(item)}</select></td>
+            ${
+                item.transfer
+                    ? `<td data-label="Nguồn kia">${importCounterSelect(item, label)}</td>`
+                    : `<td data-label="Danh mục"><select class="form-control import-select" data-field="category" aria-label="Danh mục của ${escapeHtml(label)}">${importCategoryOptions(item)}</select></td>`
+            }
         </tr>`;
 }
 
@@ -584,14 +645,19 @@ function importAppliesStatement() {
 
 function updateImportSummary() {
     const chosen = importDraft.items.filter((item) => item.include);
-    const sum = (type) =>
-        chosen.filter((item) => item.type === type).reduce((total, item) => total + item.amount, 0);
+    // Money moved between the person's own sources is neither spending nor income.
+    const sum = (list) => list.reduce((total, item) => total + item.amount, 0);
+    const spending = (type) => chosen.filter((item) => !item.transfer && item.type === type);
+    const moved = chosen.filter((item) => item.transfer);
     const commit = document.getElementById('import-commit');
     const apply = importAppliesStatement();
+    const movedText = moved.length
+        ? `, chuyển tiền giữa các nguồn <b>${moved.length}</b> giao dịch (${formatMoney(sum(moved))})`
+        : '';
 
     document.getElementById('import-summary').innerHTML =
         importDraft.summary +
-        `<br>Sẽ nhập <b>${chosen.length}</b> giao dịch vào <b>${escapeHtml(importDraft.source)}</b>: chi <b>${formatMoney(sum('expense'))}</b>, thu <b>${formatMoney(sum('income'))}</b>.`;
+        `<br>Sẽ nhập <b>${chosen.length}</b> giao dịch vào <b>${escapeHtml(importDraft.source)}</b>: chi <b>${formatMoney(sum(spending('expense')))}</b>, thu <b>${formatMoney(sum(spending('income')))}</b>${movedText}.`;
     commit.disabled = chosen.length === 0 && !apply;
 
     if (chosen.length) {
@@ -695,6 +761,14 @@ function renderImportPreview() {
 
     if (imported) parts.push(`<b>${imported}</b> dòng đã nhập từ lần trước.`);
 
+    const suggested = items.filter((item) => item.transfer && item.transferReason).length;
+
+    if (suggested) {
+        parts.push(
+            `<b>${suggested}</b> dòng có vẻ là chuyển tiền giữa các nguồn của bạn (rút tiền mặt, trả thẻ…): đã đề xuất loại Chuyển tiền, hãy kiểm tra nguồn kia.`,
+        );
+    }
+
     if (tooMany) parts.push(`Chỉ đọc ${MAX_IMPORT_ROWS} dòng đầu; hãy tải sao kê theo từng tháng.`);
 
     importDraft.summary = parts.join(' ');
@@ -752,10 +826,20 @@ function buildImportPreview() {
     }
 
     importGuessCategory = buildCategoryGuesser(transactions, categories);
-    importDraft.items = markImportDuplicates(built.items, transactions, source).map((item) => ({
-        ...item,
-        category: importGuessCategory(item.note, item.type),
-    }));
+    const payer = readStoredText(CARD_PAY_SOURCE_KEY);
+
+    importDraft.items = markImportDuplicates(built.items, transactions, source).map((item) => {
+        // Suggested here, not decided: the preview shows it and the person can undo it.
+        const moved = guessImportTransfer(item.note, item.type, source, sources, { payer });
+
+        return {
+            ...item,
+            category: importGuessCategory(item.note, item.type),
+            transfer: Boolean(moved),
+            counter: moved ? moved.counter : '',
+            transferReason: moved ? moved.reason : '',
+        };
+    });
     importDraft.skipped = built.skipped;
     importDraft.tooMany = built.tooMany;
     importDraft.layout = layout;
@@ -789,9 +873,25 @@ function handleImportRowChange(event) {
         row.classList.toggle('import-row-off', !item.include);
     } else if (control.dataset.field === 'category') {
         item.category = control.value;
+    } else if (control.dataset.field === 'counter') {
+        item.counter = control.value;
     } else if (control.dataset.field === 'type') {
-        item.type = control.value;
-        item.category = importGuessCategory(item.note, item.type);
+        const moving = control.value === 'transfer-out' || control.value === 'transfer-in';
+
+        item.transfer = moving;
+        item.transferReason = '';
+
+        if (moving) {
+            item.type = control.value === 'transfer-out' ? 'expense' : 'income';
+
+            if (!importCounterNames().includes(item.counter)) {
+                item.counter = importCounterNames()[0] || '';
+            }
+        } else {
+            item.type = control.value;
+            item.category = importGuessCategory(item.note, item.type);
+        }
+
         row.outerHTML = renderImportRow(item, Number(row.dataset.index));
         document
             .querySelector(
@@ -833,11 +933,48 @@ function commitImport() {
         return;
     }
 
+    // A sync may also have archived or removed the other source of a transfer. Nothing is written
+    // until the person has seen the rows again with a source that exists.
+    const usable = importCounterNames();
+    const stale = chosen.filter((item) => item.transfer && !usable.includes(item.counter));
+
+    if (stale.length) {
+        stale.forEach((item) => {
+            item.counter = usable[0] || '';
+            item.transfer = Boolean(item.counter);
+            item.transferReason = '';
+
+            if (!item.transfer) item.category = importGuessCategory(item.note, item.type);
+        });
+        renderImportPreview();
+        alert(
+            `Nguồn tiền kia của ${stale.length} dòng chuyển tiền không còn dùng được nên đã được chọn lại. Hãy kiểm tra rồi bấm Nhập lần nữa.`,
+        );
+        return;
+    }
+
     const stamp = new Date().toISOString();
     const taken = new Set(transactions.map((transaction) => transaction.id));
     const created = chosen
         .filter((item) => !taken.has(item.id))
         .map((item) => {
+            // Money going out of the imported source goes to the other one; money coming in, from it.
+            if (item.transfer) {
+                const out = item.type === 'expense';
+
+                return {
+                    id: item.id,
+                    date: item.date,
+                    type: 'transfer',
+                    source: out ? source : item.counter,
+                    targetSource: out ? item.counter : source,
+                    category: TRANSFER_CATEGORY,
+                    amount: item.amount,
+                    note: item.note,
+                    updatedAt: stamp,
+                };
+            }
+
             ensureCategory(item.category, item.type);
 
             return {
@@ -910,7 +1047,13 @@ function commitImport() {
 
     const done = [];
 
-    if (created.length) done.push(`Đã nhập ${created.length} giao dịch vào ${source}`);
+    if (created.length) {
+        const moved = created.filter((transaction) => transaction.type === 'transfer').length;
+
+        done.push(
+            `Đã nhập ${created.length} giao dịch vào ${source}${moved ? ` (${moved} chuyển tiền giữa các nguồn)` : ''}`,
+        );
+    }
 
     if (plan) done.push(`đã cập nhật thẻ ${source} theo sao kê (${describeCardPlan(plan)})`);
 

@@ -2155,6 +2155,146 @@ test('buildCategoryGuesser: dòng phí và VAT của ngân hàng không bị l�
     );
 });
 
+// The sources of the person who imports a statement: a VPBank account, a Kiên Long account,
+// cash, a VPBank card and Spaylater.
+const OWN_SOURCES = [
+    { name: 'Tiền Mặt', kind: 'cash' },
+    { name: 'Kiên Long', kind: 'bank' },
+    { name: 'VPBank', kind: 'bank' },
+    { name: 'Thẻ VPBank Mastercard', kind: 'credit' },
+    { name: 'Spaylater', kind: 'credit' },
+];
+
+test('guessImportTransfer: dòng rút ATM, trả thẻ, chuyển giữa các nguồn là chuyển tiền', () => {
+    const guess = (description, type, source, { list = OWN_SOURCES, payer = '' } = {}) =>
+        plain(
+            run(
+                `guessImportTransfer(${JSON.stringify(description)}, "${type}", ${JSON.stringify(source)}, ${JSON.stringify(list)}, {payer: ${JSON.stringify(payer)}})`,
+            ),
+        );
+
+    // The example of the issue: the card's statement lists the payment made from the VPBank account.
+    assert.deepEqual(
+        guess('Credit Account I2B Virtual Card payment', 'income', 'Thẻ VPBank Mastercard'),
+        { counter: 'Kiên Long', reason: 'card-payment' },
+    );
+    // The source the person last paid a card with is preferred.
+    assert.deepEqual(
+        guess('Credit Account I2B Virtual Card payment', 'income', 'Thẻ VPBank Mastercard', {
+            payer: 'VPBank',
+        }),
+        { counter: 'VPBank', reason: 'card-payment' },
+    );
+    // ... but not a source that cannot pay (archived, another card, a savings book).
+    assert.deepEqual(
+        guess('Card payment', 'income', 'Thẻ VPBank Mastercard', {
+            payer: 'Spaylater',
+            list: [
+                ...OWN_SOURCES.map((source) =>
+                    source.name === 'Kiên Long' ? { ...source, archived: true } : source,
+                ),
+                { name: 'Sổ Tiết Kiệm', kind: 'savings' },
+            ],
+        }),
+        { counter: 'VPBank', reason: 'card-payment' },
+    );
+    // ATM: money out of the account into the cash source; a cash deposit the other way.
+    assert.deepEqual(guess('ATM 0123 RUT TIEN MAT HA NOI', 'expense', 'VPBank'), {
+        counter: 'Tiền Mặt',
+        reason: 'name',
+    });
+    assert.deepEqual(guess('Rút tiền ATM VPB 4521', 'expense', 'Kiên Long'), {
+        counter: 'Tiền Mặt',
+        reason: 'atm',
+    });
+    assert.deepEqual(guess('CASH ADVANCE 700000', 'expense', 'Thẻ VPBank Mastercard'), {
+        counter: 'Tiền Mặt',
+        reason: 'atm',
+    });
+    assert.equal(guess('Nop tien vao tai khoan 123', 'income', 'VPBank'), null);
+    assert.deepEqual(guess('Cash deposit CDM 123', 'income', 'VPBank'), {
+        counter: 'Tiền Mặt',
+        reason: 'deposit',
+    });
+    // A source's name in the description (whole words, no accents needed, longest wins).
+    assert.deepEqual(guess('Chuyen tien den KIEN LONG', 'expense', 'VPBank'), {
+        counter: 'Kiên Long',
+        reason: 'name',
+    });
+    assert.deepEqual(guess('Nhan tien tu VPBANK', 'income', 'Kiên Long'), {
+        counter: 'VPBank',
+        reason: 'name',
+    });
+    assert.deepEqual(guess('Thanh toan the VPBank Mastercard', 'expense', 'Kiên Long'), {
+        counter: 'Thẻ VPBank Mastercard',
+        reason: 'name',
+    });
+    // A card payment going out of an account names the only card.
+    assert.deepEqual(
+        guess('THANH TOAN THE TIN DUNG', 'expense', 'Kiên Long', {
+            list: OWN_SOURCES.filter((source) => source.name !== 'Spaylater'),
+        }),
+        { counter: 'Thẻ VPBank Mastercard', reason: 'card-payment-out' },
+    );
+    // Two cards and no name: it is not guessed.
+    assert.equal(guess('THANH TOAN THE TIN DUNG', 'expense', 'Kiên Long'), null);
+});
+
+test('guessImportTransfer: những dòng thường không bị nhận nhầm là chuyển tiền', () => {
+    const guess = (description, type, source, list = OWN_SOURCES) =>
+        plain(
+            run(
+                `guessImportTransfer(${JSON.stringify(description)}, "${type}", ${JSON.stringify(source)}, ${JSON.stringify(list)})`,
+            ),
+        );
+
+    assert.equal(guess('GRAB*TRIP 4421 HCM', 'expense', 'VPBank'), null);
+    assert.equal(guess('Luong thang 10 CONG TY ABC', 'income', 'VPBank'), null);
+    // A refund or a payment on a bank account is not a card payment coming into a card.
+    assert.equal(guess('Hoan tien Shopee', 'income', 'Thẻ VPBank Mastercard'), null);
+    assert.equal(guess('Credit Account I2B Virtual Card payment', 'income', 'VPBank'), null);
+    // The imported source's own name says nothing: every line of its statement may carry it.
+    assert.equal(guess('VPBANK 0123 GRAB', 'expense', 'VPBank'), null);
+    // "retail" is not an "atm", "cash" without a cash source stays a purchase.
+    assert.equal(guess('Retail purchase', 'expense', 'VPBank'), null);
+    assert.equal(
+        guess(
+            'ATM RUT TIEN',
+            'expense',
+            'VPBank',
+            OWN_SOURCES.filter((source) => source.kind !== 'cash'),
+        ),
+        null,
+    );
+    // Nothing to move the money to, an empty description, an unknown type.
+    assert.equal(guess('ATM RUT TIEN', 'expense', 'Tiền Mặt', [OWN_SOURCES[0]]), null);
+    assert.equal(guess('', 'expense', 'VPBank'), null);
+    assert.equal(guess('ATM RUT TIEN', 'transfer', 'VPBank'), null);
+    // An archived source is not suggested, a name too short to be a word is ignored.
+    assert.equal(
+        guess('Chuyen tien den KIEN LONG', 'expense', 'VPBank', [
+            { name: 'VPBank', kind: 'bank' },
+            { name: 'Kiên Long', kind: 'bank', archived: true },
+        ]),
+        null,
+    );
+    assert.equal(
+        guess('Chuyen tien vi MoMo', 'expense', 'VPBank', [
+            { name: 'VPBank', kind: 'bank' },
+            { name: 'Ví', kind: 'ewallet' },
+        ]),
+        null,
+    );
+    // A name with characters that mean something in a regular expression.
+    assert.deepEqual(
+        guess('Nap tien the (A+) 123', 'expense', 'VPBank', [
+            { name: 'VPBank', kind: 'bank' },
+            { name: 'The (A+)', kind: 'other' },
+        ]),
+        { counter: 'The (A+)', reason: 'name' },
+    );
+});
+
 const CARD_20 = '{name:"Thẻ Tín Dụng",kind:"credit",statementDay:20,dueDay:4';
 const CARD_ROWS = `[
     {id:"A",date:"2026-10-22",type:"expense",source:"Thẻ Tín Dụng",amount:587160},
