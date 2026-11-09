@@ -9,7 +9,7 @@
 // below): every release is a new service worker with its own cache, which drops the old one.
 // version.json is never cached, so the app can ask what the newest deployed version is.
 
-const CACHE_VERSION = 'fm-8c459ef';
+const CACHE_VERSION = 'fm-3460ce4';
 const APP_SHELL = [
     './',
     'index.html',

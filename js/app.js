@@ -25,6 +25,30 @@ function setMoneyLabel(elementId, amount) {
     }
 }
 
+/**
+ * Overview balance card, small line: what is left of the available balance once the card / SPay
+ * debt is paid off. The big number stays the money on hand; this only shows the net.
+ */
+function renderBalanceAfterDebt(availableBalance, totalDebt) {
+    const element = document.getElementById('lbl-balance-net');
+
+    if (!element) return;
+
+    const remaining = availableBalance - totalDebt;
+    const short = remaining < 0;
+
+    element.hidden = !(totalDebt > 0);
+    element.dataset.level = short ? '1' : '0';
+    element.classList.toggle('source-warn', short);
+
+    if (short) {
+        // Icon and words, not only the red colour.
+        element.innerHTML = `${WARNING_ICON} Trừ nợ thẻ / SPay (${escapeHtml(formatMoney(totalDebt))}) thì thiếu ${escapeHtml(formatMoney(-remaining))}`;
+    } else {
+        element.textContent = `Trừ nợ thẻ / SPay (${formatMoney(totalDebt)}): còn ${formatMoney(remaining)}`;
+    }
+}
+
 function renderOverview() {
     const thisMonth = summarizeMonth(currentMonthKey());
     const balances = calculateSourceBalances();
@@ -42,6 +66,7 @@ function renderOverview() {
     setMoneyLabel('lbl-total-expense', thisMonth.expense);
     setMoneyLabel('lbl-total-balance', availableBalance);
     setMoneyLabel('lbl-total-debt', totalDebt);
+    renderBalanceAfterDebt(availableBalance, totalDebt);
     renderDebtVsSalary(totalDebt);
     renderCardSpend();
 
