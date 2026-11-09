@@ -6,6 +6,8 @@ const DEBT_REMINDER_KEY = 'fm_debt_reminder_day';
 // The money source last chosen when paying a debt (on this device), offered again next time.
 const DEBT_PAY_SOURCE_KEY = 'fm_debt_pay_source';
 let payingDebtId = null;
+// The payment being edited in the same dialog; null while a new one is added.
+let editingPaymentId = null;
 
 // What a payment writes into the money sources: paying what I owe is an expense, collecting what
 // is owed to me is income.
@@ -33,23 +35,40 @@ function debtStatusBadge(debt, today) {
     return '<span class="status-badge status-active">Đang nợ</span>';
 }
 
+/** The transaction a payment wrote into a money source, if it is still in the book. */
+function debtPaymentTransaction(payment) {
+    return payment.transactionId
+        ? transactions.find((item) => item.id === payment.transactionId)
+        : undefined;
+}
+
 function renderDebtDetails(debt) {
     const id = escapeHtml(debt.id);
     const payments = debt.payments.length
         ? debt.payments
               .map((payment) => {
-                  const written = payment.transactionId
-                      ? transactions.find((item) => item.id === payment.transactionId)
-                      : null;
-                  const where = written
-                      ? `<span class="source-meta">đã ghi vào ${escapeHtml(written.source)}</span>`
-                      : '';
+                  const paymentId = escapeHtml(payment.id);
+                  const written = debtPaymentTransaction(payment);
+                  const amount = formatMoney(payment.amount);
+                  // Written once, then deleted from the transaction book: say so, and offer to write it again.
+                  const lost = payment.transactionId && !written;
+                  let where = '';
+
+                  if (written) {
+                      where = `<span class="source-meta">đã ghi vào ${escapeHtml(written.source)}</span>`;
+                  } else if (lost) {
+                      where = `<span class="source-meta source-warn"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Giao dịch đã ghi đã bị xóa</span>
+                    <button class="btn btn-outline btn-small" data-action="rewrite-payment" data-id="${id}" data-payment="${paymentId}" aria-label="Ghi lại giao dịch của lần thanh toán ${amount}">Ghi lại</button>`;
+                  }
 
                   return `<li>
                     <span>${escapeHtml(formatDateDisplay(payment.date))}</span>
-                    <b>${formatMoney(payment.amount)}</b>
+                    <b>${amount}</b>
                     ${where}
-                    <button class="btn btn-outline btn-small" data-action="delete-payment" data-id="${id}" data-payment="${escapeHtml(payment.id)}" title="Xóa lần thanh toán này" aria-label="Xóa lần thanh toán ${formatMoney(payment.amount)}">
+                    <button class="btn btn-outline btn-small" data-action="edit-payment" data-id="${id}" data-payment="${paymentId}" title="Sửa lần thanh toán này" aria-label="Sửa lần thanh toán ${amount}">
+                        <i class="fa-solid fa-pen"></i>
+                    </button>
+                    <button class="btn btn-outline btn-small" data-action="delete-payment" data-id="${id}" data-payment="${paymentId}" title="Xóa lần thanh toán này" aria-label="Xóa lần thanh toán ${amount}">
                         <i class="fa-solid fa-trash"></i>
                     </button>
                 </li>`;
@@ -128,6 +147,8 @@ function handleDebtTableClick(event) {
         history: () => toggleDebtHistory(id),
         edit: () => openDebtModal(id),
         delete: () => deleteDebt(id),
+        'edit-payment': () => openDebtPayModal(id, payment),
+        'rewrite-payment': () => openDebtPayModal(id, payment),
         'delete-payment': () => deleteDebtPayment(id, payment),
     };
 
@@ -154,28 +175,54 @@ function debtPaySources() {
     return sourceNames().filter((name) => !isSavingsKind(findSource(name)));
 }
 
-function openDebtPayModal(id) {
+/**
+ * Open the payment dialog: to add a payment, or (with `paymentId`) to edit one. Editing starts from
+ * the payment and the transaction it wrote; the amount may be anything up to what is still owed
+ * plus the payment's own amount.
+ */
+function openDebtPayModal(id, paymentId = null) {
     const debt = debts.find((item) => item.id === id);
+    const payment = paymentId ? debt && debt.payments.find((item) => item.id === paymentId) : null;
 
-    if (!debt) return;
+    if (!debt || (paymentId && !payment)) return;
 
     const rule = DEBT_PAY_RULES[debt.direction];
-    const remaining = debtRemaining(debt);
     const remembered = readStoredText(DEBT_PAY_SOURCE_KEY);
+    const names = debtPaySources();
+    const linked = payment ? debtPaymentTransaction(payment) : null;
+    // The source a payment was written to stays choosable even if it can no longer be picked anew.
+    const kept = linked && !names.includes(linked.source) ? linked.source : '';
     const select = document.getElementById('debtPaySource');
+    const who = `${debt.direction === 'owe' ? 'số tiền đã trả cho' : 'số tiền đã thu từ'} [${debt.party}]`;
 
     payingDebtId = id;
-    document.getElementById('debtPayTitle').innerText = rule.verb;
-    document.getElementById('debtPayMessage').innerText =
-        `${debt.direction === 'owe' ? 'Số tiền đã trả cho' : 'Số tiền đã thu từ'} [${debt.party}] (còn ${formatMoney(remaining)}):`;
-    setMoneyInput('debtPayAmount', remaining);
-    document.getElementById('debtPayDate').value = toLocalDateString();
+    editingPaymentId = payment ? payment.id : null;
+    document.getElementById('debtPayTitle').innerText = payment
+        ? `Sửa lần ${rule.verb.toLowerCase()}`
+        : rule.verb;
+    document.getElementById('debtPayMessage').innerText = payment
+        ? `Sửa ${who} (tối đa ${formatMoney(debtRemaining(debt) + payment.amount)}, gồm lần này):`
+        : `${who.charAt(0).toUpperCase()}${who.slice(1)} (còn ${formatMoney(debtRemaining(debt))}):`;
+    setMoneyInput('debtPayAmount', payment ? payment.amount : debtRemaining(debt));
+    document.getElementById('debtPayDate').value = (payment && payment.date) || toLocalDateString();
     select.innerHTML =
         '<option value="">Không ghi giao dịch</option>' +
-        debtPaySources()
+        (kept
+            ? `<option value="${escapeHtml(kept)}">${escapeHtml(kept)} (không còn dùng)</option>`
+            : '') +
+        names
             .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
             .join('');
-    select.value = debtPaySources().includes(remembered) ? remembered : '';
+
+    if (!payment) {
+        select.value = names.includes(remembered) ? remembered : '';
+    } else if (linked) {
+        select.value = linked.source;
+    } else {
+        // Written once and deleted since: offer the source last used. Never written: keep it so.
+        select.value = payment.transactionId && names.includes(remembered) ? remembered : '';
+    }
+
     updateDebtPayHint();
     openDialog('debtPayModal', 'debtPayAmount');
     document.getElementById('debtPayAmount').select();
@@ -183,6 +230,7 @@ function openDebtPayModal(id) {
 
 function closeDebtPayModal() {
     payingDebtId = null;
+    editingPaymentId = null;
     closeDialog('debtPayModal');
 }
 
@@ -194,18 +242,37 @@ function updateDebtPayHint() {
 
     if (!debt) return;
 
+    const payment = editingPaymentId
+        ? debt.payments.find((item) => item.id === editingPaymentId)
+        : null;
+    const linked = payment ? debtPaymentTransaction(payment) : null;
+
     if (!source) {
+        hint.textContent = linked
+            ? `Bỏ ghi giao dịch: giao dịch đã ghi vào ${linked.source} sẽ bị xóa, số dư ${linked.source} đổi lại.`
+            : 'Chỉ ghi vào sổ vay nợ, không tạo giao dịch và không đổi số dư nguồn tiền.';
+        return;
+    }
+
+    if (linked) {
         hint.textContent =
-            'Chỉ ghi vào sổ vay nợ, không tạo giao dịch và không đổi số dư nguồn tiền.';
+            source === linked.source
+                ? `Cập nhật giao dịch đã ghi vào ${source}: số tiền và ngày đổi theo, số dư ${source} đổi tương ứng.`
+                : `Cập nhật giao dịch đã ghi: chuyển từ ${linked.source} sang ${source}, số tiền và ngày đổi theo. Số dư cả hai nguồn đổi tương ứng.`;
         return;
     }
 
     const rule = DEBT_PAY_RULES[debt.direction];
+    const lost =
+        payment && payment.transactionId
+            ? 'Giao dịch đã ghi từ lần này đã bị xóa; lưu sẽ ghi lại. '
+            : '';
 
     hint.textContent =
-        debt.direction === 'owe'
+        lost +
+        (debt.direction === 'owe'
             ? `Tạo giao dịch Chi "${rule.category}" từ ${source}: số dư ${source} giảm tương ứng.`
-            : `Tạo giao dịch Thu "${rule.category}" vào ${source}: số dư ${source} tăng tương ứng.`;
+            : `Tạo giao dịch Thu "${rule.category}" vào ${source}: số dư ${source} tăng tương ứng.`);
 }
 
 /** The category a payment is filed under; added to the list the first time it is needed. */
@@ -236,6 +303,8 @@ function recordDebtTransaction(debt, payment, sourceName) {
     const id = `TX_DEBT_${payment.id}`;
 
     ensureDebtCategory(rule);
+    // Writing a payment again after its transaction was deleted gives the same id back.
+    transactions = transactions.filter((item) => item.id !== id);
     transactions.unshift({
         id,
         date: payment.date,
@@ -264,6 +333,18 @@ function handleDebtPaySubmit(event) {
         return;
     }
 
+    const existing = editingPaymentId
+        ? debt.payments.find((item) => item.id === editingPaymentId)
+        : null;
+
+    if (editingPaymentId && !existing) {
+        alert('Lần thanh toán này không còn nữa (có thể đã bị xóa ở máy khác).');
+        closeDebtPayModal();
+        return;
+    }
+
+    const linked = existing ? debtPaymentTransaction(existing) : null;
+    const limit = debtRemaining(debt) + (existing ? existing.amount : 0);
     const amount = readMoneyInput('debtPayAmount');
     const date = normalizeDate(document.getElementById('debtPayDate').value);
     const sourceName = document.getElementById('debtPaySource').value;
@@ -273,8 +354,12 @@ function handleDebtPaySubmit(event) {
         return;
     }
 
-    if (amount > debtRemaining(debt)) {
-        alert(`Số tiền vượt quá số còn lại (${formatMoney(debtRemaining(debt))}).`);
+    if (amount > limit) {
+        alert(
+            existing
+                ? `Số tiền vượt quá số còn lại (${formatMoney(limit)}, tính cả lần này).`
+                : `Số tiền vượt quá số còn lại (${formatMoney(limit)}).`,
+        );
         return;
     }
 
@@ -283,14 +368,37 @@ function handleDebtPaySubmit(event) {
         return;
     }
 
-    if (sourceName && !debtPaySources().includes(sourceName)) {
+    // The source an edited payment already sits in is kept even when it can no longer be picked anew.
+    if (
+        sourceName &&
+        !debtPaySources().includes(sourceName) &&
+        !(linked && linked.source === sourceName)
+    ) {
         alert('Nguồn tiền này không còn dùng được. Hãy chọn nguồn khác.');
         return;
     }
 
-    const payment = { id: newDebtPaymentId(debt), date, amount };
+    if (
+        linked &&
+        !sourceName &&
+        !confirm(
+            `Bỏ ghi giao dịch? Giao dịch ${linked.type === 'expense' ? 'Chi' : 'Thu'} ${formatMoney(linked.amount)} đã ghi vào ${linked.source} sẽ bị xóa.`,
+        )
+    ) {
+        return;
+    }
 
-    if (sourceName) payment.transactionId = recordDebtTransaction(debt, payment, sourceName);
+    const payment = existing || { id: newDebtPaymentId(debt) };
+
+    if (existing) {
+        applyDebtPaymentEdit(debt, existing, linked, { amount, date, sourceName });
+    } else {
+        Object.assign(payment, { date, amount });
+
+        if (sourceName) payment.transactionId = recordDebtTransaction(debt, payment, sourceName);
+
+        debt.payments.push(payment);
+    }
 
     try {
         localStorage.setItem(DEBT_PAY_SOURCE_KEY, sourceName);
@@ -298,18 +406,68 @@ function handleDebtPaySubmit(event) {
         // Not being able to remember the choice is harmless.
     }
 
-    debt.payments.push(payment);
     debt.updatedAt = new Date().toISOString();
     expandedDebtIds.add(debt.id);
     closeDebtPayModal();
     saveDebts();
 
+    if (existing) {
+        // The list was drawn again: put the focus back on the payment that was edited.
+        const edited = document.querySelector(
+            `#debt-table-body [data-action="edit-payment"][data-id="${CSS.escape(debt.id)}"][data-payment="${CSS.escape(payment.id)}"]`,
+        );
+
+        if (edited) edited.focus();
+    }
+
+    const direction = debt.direction === 'owe' ? 'từ' : 'vào';
+    const kind = DEBT_PAY_RULES[debt.direction].type === 'expense' ? 'Chi' : 'Thu';
+
     if (sourceName) {
         showToast(
-            `Đã ghi giao dịch ${DEBT_PAY_RULES[debt.direction].type === 'expense' ? 'Chi' : 'Thu'} ${formatMoney(amount)} ${debt.direction === 'owe' ? 'từ' : 'vào'} ${sourceName}.`,
+            `${existing ? 'Đã cập nhật lần thanh toán và giao dịch' : 'Đã ghi giao dịch'} ${kind} ${formatMoney(amount)} ${direction} ${sourceName}.`,
             'success',
         );
+    } else if (existing) {
+        showToast('Đã cập nhật lần thanh toán.', 'success');
     }
+}
+
+/**
+ * Change a payment and, with it, the transaction it wrote: the amount, the date and the source
+ * follow (the id stays, so a sync updates the same row); choosing no source removes the
+ * transaction; choosing one for a payment without a transaction (never written, or deleted since)
+ * writes it, under the id derived from the payment.
+ */
+function applyDebtPaymentEdit(debt, payment, linked, { amount, date, sourceName }) {
+    const stamp = new Date().toISOString();
+
+    if (linked && sourceName) {
+        transactions = transactions.map((item) =>
+            item === linked
+                ? { ...item, amount, date, source: sourceName, updatedAt: stamp }
+                : item,
+        );
+        saveDataLocally();
+        queueUpsert([linked.id]);
+    } else if (linked) {
+        transactions = transactions.filter((item) => item !== linked);
+        saveDataLocally();
+        queueDelete([linked.id]);
+        delete payment.transactionId;
+    } else if (sourceName) {
+        payment.transactionId = recordDebtTransaction(
+            debt,
+            { id: payment.id, date, amount },
+            sourceName,
+        );
+    } else {
+        // Not recording it: forget a transaction that was deleted, so it is not reported as lost.
+        delete payment.transactionId;
+    }
+
+    payment.amount = amount;
+    payment.date = date;
 }
 
 function deleteDebtPayment(debtId, paymentId) {
