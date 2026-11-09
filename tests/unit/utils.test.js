@@ -2103,6 +2103,58 @@ test('buildCategoryGuesser: học từ giao dịch đã có, rồi tới cửa h
     );
 });
 
+test('buildCategoryGuesser: dòng phí và VAT của ngân hàng không bị lịch sử "Chưa phân loại" giữ mãi', () => {
+    const FEE =
+        'Retail: : MasterCard Acq --> : Our EuroCard/MasterCard (MasterCard Acq) in 704 International Device Country Custom Fee';
+    const categories = (extra = '') =>
+        `[{name:"Hóa đơn & Tiện ích",type:"expense"},{name:"Chưa phân loại",type:"expense"},{name:"Mua sắm",type:"expense"},{name:"Ăn uống",type:"expense"}${extra}]`;
+    // The 14 fee / VAT lines of the 21/09-20/10 statement went in as "Chưa phân loại".
+    const imported = JSON.stringify(
+        Array.from({ length: 7 }, () => [
+            { type: 'expense', category: 'Chưa phân loại', note: FEE },
+            { type: 'expense', category: 'Chưa phân loại', note: 'VAT' },
+        ]).flat(),
+    );
+    const guess = (description, { history = imported, extra = '', type = 'expense' } = {}) =>
+        run(
+            `buildCategoryGuesser(${history},${categories(extra)})(${JSON.stringify(description)},"${type}")`,
+        );
+
+    // The next statement: the rule knows better than the history that only said "Chưa phân loại".
+    assert.equal(guess(FEE), 'Hóa đơn & Tiện ích');
+    assert.equal(guess('VAT'), 'Hóa đơn & Tiện ích');
+    assert.equal(
+        guess('Retail: : MasterCard Acq --> : Our EuroCard/MasterCard (MasterCard Acq) Custom Fee'),
+        'Hóa đơn & Tiện ích',
+    );
+    // With no history at all, the same.
+    assert.equal(guess(FEE, { history: '[]' }), 'Hóa đơn & Tiện ích');
+    assert.equal(guess('Phi giao dich quoc te', { history: '[]' }), 'Hóa đơn & Tiện ích');
+    // A category named for bank charges is preferred when the person has one.
+    assert.equal(guess(FEE, { extra: ',{name:"Phí ngân hàng",type:"expense"}' }), 'Phí ngân hàng');
+    // What the person chose themselves still wins over the rule.
+    const chosen = JSON.stringify([{ type: 'expense', category: 'Mua sắm', note: 'VAT' }]);
+
+    assert.equal(guess('VAT', { history: chosen }), 'Mua sắm');
+    // Without the category the rule needs, the fallback stays.
+    assert.equal(
+        run(
+            `buildCategoryGuesser([],[{name:"Chưa phân loại",type:"expense"}])(${JSON.stringify(FEE)},"expense")`,
+        ),
+        'Chưa phân loại',
+    );
+    // "fee" is a word of its own: coffee is not a fee, and a merchant keeps its category.
+    assert.equal(guess('HIGHLANDS COFFEE 12', { history: '[]' }), 'Ăn uống');
+    assert.equal(guess('Starbucks Coffee', { history: '[]' }), 'Ăn uống');
+    // Income is not touched.
+    assert.equal(
+        run(
+            `buildCategoryGuesser([],[{name:"Thu nhập khác",type:"income"}])("VAT refund","income")`,
+        ),
+        'Thu nhập khác',
+    );
+});
+
 const CARD_20 = '{name:"Thẻ Tín Dụng",kind:"credit",statementDay:20,dueDay:4';
 const CARD_ROWS = `[
     {id:"A",date:"2026-10-22",type:"expense",source:"Thẻ Tín Dụng",amount:587160},
