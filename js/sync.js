@@ -130,6 +130,12 @@ function hasPendingChanges() {
 function queueUpsert(ids) {
     if (!ids || !ids.length) return;
 
+    // A row written again with the same id (a debt payment recorded again) supersedes a deletion
+    // that has not reached the server yet, as queueDelete does the other way round.
+    writeList(
+        SYNC_DELETED_KEY,
+        readDeletedIds().filter((id) => !ids.includes(id)),
+    );
     addToList(SYNC_UPSERTS_KEY, ids);
     setSyncDirty('merge');
 }

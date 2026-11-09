@@ -1188,8 +1188,9 @@ canvas {
 
 .payment-list li {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 16px;
+    gap: 8px 16px;
     padding: 4px 0;
 }
 
