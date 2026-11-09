@@ -1334,6 +1334,92 @@ function buildCategoryGuesser(history, categoryList) {
     };
 }
 
+// --- MONEY MOVING BETWEEN THE PERSON'S OWN SOURCES ---
+// A statement row can be a purchase or a salary, or just money moved from one of the person's
+// sources to another (an ATM withdrawal, paying a card). The second kind is a transfer: it is not
+// spending or income, and it changes two balances.
+
+// Cash taken out at an ATM (or advanced on a card) and cash put into a machine.
+const IMPORT_ATM_PATTERN = /\b(atm|rut tien|rut tm|cash withdrawal|cash advance|withdrawal)\b/;
+const IMPORT_CASH_DEPOSIT_PATTERN = /\b(cdm|cash deposit|nop tien mat)\b/;
+
+// A payment of a card's statement. "i2b" is how VPBank writes a payment made from the person's
+// own account ("Credit Account I2B Virtual Card payment" on the card's statement).
+const IMPORT_CARD_PAYMENT_PATTERN =
+    /\b(card payment|thanh toan the|thanh toan sao ke|tra the|tra no the|tt the|i2b)\b/;
+
+const escapeRegExp = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Does a statement row look like money moving between the person's own sources? Returns
+ * { counter, reason } (the name of the other source, and why) or null. `type` is the direction
+ * seen from the imported source: 'expense' = money going out, 'income' = coming in.
+ * In this order:
+ *  - 'name': another source's name is a whole word of the description (the longest one wins);
+ *  - 'atm': cash taken out, to the first cash source; 'deposit': cash put in, from it;
+ *  - 'card-payment': a payment coming into a credit source, from `payer` (the source the person
+ *    last paid a card with) or else the first bank, then any source that can pay;
+ *  - 'card-payment-out': a payment of a card going out of a source, to the only credit source.
+ * Archived sources are never suggested. The person confirms or changes it in the preview.
+ */
+function guessImportTransfer(description, type, sourceName, sourceList, { payer = '' } = {}) {
+    const text = normalizeSearchText(description);
+    const own = sourceList.find((source) => source.name === sourceName);
+    const others = sourceList.filter((source) => source.name !== sourceName && !source.archived);
+
+    if (!text || !own || others.length === 0 || (type !== 'expense' && type !== 'income')) {
+        return null;
+    }
+
+    let named = null;
+    let namedLength = 0;
+
+    others.forEach((source) => {
+        const name = normalizeSearchText(source.name);
+
+        if (name.length < 3 || name.length <= namedLength) return;
+
+        if (new RegExp(`(^|[^a-z0-9])${escapeRegExp(name)}([^a-z0-9]|$)`).test(text)) {
+            named = source;
+            namedLength = name.length;
+        }
+    });
+
+    if (named) return { counter: named.name, reason: 'name' };
+
+    const cash = others.find((source) => source.kind === 'cash');
+
+    if (cash && type === 'expense' && IMPORT_ATM_PATTERN.test(text)) {
+        return { counter: cash.name, reason: 'atm' };
+    }
+
+    if (cash && type === 'income' && IMPORT_CASH_DEPOSIT_PATTERN.test(text)) {
+        return { counter: cash.name, reason: 'deposit' };
+    }
+
+    if (!IMPORT_CARD_PAYMENT_PATTERN.test(text)) return null;
+
+    if (type === 'income' && own.kind === 'credit') {
+        const payers = others.filter(
+            (source) => !SOURCE_KINDS[source.kind].debt && !SOURCE_KINDS[source.kind].saving,
+        );
+        const chosen =
+            payers.find((source) => source.name === payer) ||
+            payers.find((source) => source.kind === 'bank') ||
+            payers[0];
+
+        return chosen ? { counter: chosen.name, reason: 'card-payment' } : null;
+    }
+
+    if (type === 'expense' && !SOURCE_KINDS[own.kind].debt) {
+        const cards = others.filter((source) => source.kind === 'credit');
+
+        return cards.length === 1 ? { counter: cards[0].name, reason: 'card-payment-out' } : null;
+    }
+
+    return null;
+}
+
 // --- BANK STATEMENT IN PDF ---
 // pdf.js hands over the text of a page as small pieces with a position: { text, x, y, width, height }
 // (y is the baseline and grows upwards). These functions turn the pieces of a statement into the same
