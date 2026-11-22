@@ -27,7 +27,9 @@
  *    POST {action: 'sync', token, replace, upserts: [...], deletes: [ids], meta: {key: {value,
  *          updatedAt}}}                   -> the same object, after applying the changes.
  *         A row or meta value is only overwritten by one with an equal or newer updatedAt.
- *         With replace: true the upserts are the complete list and meta is overwritten.
+ *         With replace: true the upserts are the complete list and meta is overwritten. A replace
+ *         that would leave no transaction at all (while the sheet still has some) is refused
+ *         unless the body also says confirmWipe: true, so no stray request can empty the sheet.
  *    GET  ?action=sync&payload=<json>     -> same as the POST (fallback when a POST is blocked).
  *  Legacy (the original script's requests, so older clients keep working)
  *    GET                                  -> JSON array of transactions
@@ -35,7 +37,8 @@
  *    GET  ?action=save&data=<json array>  -> replaces every row
  *
  * Nothing is ever cleared before the request has been validated: a malformed body is rejected
- * and the sheet is left untouched. Errors are returned as {"error": "..."}.
+ * and the sheet is left untouched; every cell is checked against the 50,000-character limit of
+ * Sheets before the old rows are cleared. Errors are returned as {"error": "..."}.
  */
 
 const TRANSACTIONS_SHEET = 'Transactions';
@@ -206,27 +209,41 @@ function toDateCell_(value, timeZone) {
     }
 }
 
+/**
+ * Throws when a value cannot be stored in one Sheets cell. Called before anything is cleared: a
+ * setValues() that fails after clearContent() would leave the sheet empty (Apps Script does not
+ * roll back what it already did).
+ */
+function assertCellFits_(value, label) {
+    if (typeof value === 'string' && value.length > MAX_CELL_CHARS) {
+        throw new Error(label + ' quá dài để lưu trong một ô của Google Sheets');
+    }
+}
+
 function writeTransactions_(list) {
     const sheet = getSheet_(TRANSACTIONS_SHEET);
     const header = ensureHeader_(sheet, COLUMNS);
     const timeZone = getTimeZone_();
-    const lastRow = sheet.getLastRow();
 
-    if (lastRow > 1) {
-        sheet.getRange(2, 1, lastRow - 1, header.length).clearContent();
-    }
-
-    if (!list.length) return;
-
+    // Build and check every row first; only then touch the sheet.
     const rows = list.map(function (item) {
         return header.map(function (name) {
             const value = item[name];
 
             if (value === undefined || value === null) return '';
 
+            assertCellFits_(value, 'Giao dịch "' + item.id + '" (' + name + ')');
+
             return name === 'date' ? toDateCell_(value, timeZone) : value;
         });
     });
+    const lastRow = sheet.getLastRow();
+
+    if (lastRow > 1) {
+        sheet.getRange(2, 1, lastRow - 1, header.length).clearContent();
+    }
+
+    if (!rows.length) return;
 
     header.forEach(function (name, index) {
         const column = sheet.getRange(2, index + 1, rows.length, 1);
@@ -318,6 +335,12 @@ function writeMetaRows_(rows) {
     const lastRow = sheet.getLastRow();
     const keys = Object.keys(rows);
 
+    keys.forEach(function (key) {
+        assertCellFits_(key, 'Khóa meta');
+        assertCellFits_(rows[key].value, 'Dữ liệu "' + key + '"');
+        assertCellFits_(rows[key].updatedAt, 'Dữ liệu "' + key + '" (updatedAt)');
+    });
+
     if (lastRow > 1) {
         sheet.getRange(2, 1, lastRow - 1, header.length).clearContent();
     }
@@ -365,6 +388,17 @@ function applyTransactionChanges_(body) {
     const replace = body.replace === true;
 
     if (!replace && !upserts.length && !deletes.length) return;
+
+    if (
+        replace &&
+        body.confirmWipe !== true &&
+        !upserts.some(function (item) {
+            return cleanTransaction_(item) !== null;
+        }) &&
+        readTransactions_().length > 0
+    ) {
+        throw new Error('Từ chối xóa toàn bộ giao dịch: yêu cầu không có confirmWipe');
+    }
 
     // Rows by id, in sheet order (ids are unique in `order`).
     const rows = Object.create(null);

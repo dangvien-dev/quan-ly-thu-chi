@@ -235,12 +235,41 @@ test.describe('giao thức v2', () => {
         assert.deepEqual(gas.get({ v: '2' }).meta.budgets.value, { 'Đi lại': 2 });
     });
 
-    test('replace với danh sách rỗng xóa hết dòng', () => {
+    test('replace với danh sách rỗng chỉ xóa hết dòng khi có confirmWipe', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
 
-        sync(gas, { replace: true, upserts: [] });
+        sync(gas, { replace: true, upserts: [], confirmWipe: true });
 
         assert.deepEqual(gas.get(), []);
+    });
+
+    test('SEC-001: replace làm trống Sheet mà không có confirmWipe bị từ chối, Sheet giữ nguyên', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = ids(gas);
+
+        assert.match(sync(gas, { replace: true, upserts: [] }).error, /confirmWipe/);
+        // Only invalid rows count as an empty list too.
+        assert.match(
+            sync(gas, { replace: true, upserts: [{ id: 'X', type: 'nope' }] }).error,
+            /confirmWipe/,
+        );
+        assert.deepEqual(ids(gas), before);
+    });
+
+    test('replace rỗng trên Sheet đã trống không cần confirmWipe', () => {
+        const gas = createGas();
+
+        assert.equal(sync(gas, { replace: true, upserts: [] }).version, 2);
+    });
+
+    test('SEC-005: ô quá 50.000 ký tự bị từ chối trước khi xóa, Sheet giữ nguyên', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = gas.get();
+        const huge = 'x'.repeat(49001);
+
+        assert.match(sync(gas, { upserts: [row({ id: 'TX_BIG', note: huge })] }).error, /quá dài/);
+        assert.match(sync(gas, { replace: true, upserts: [row({ note: huge })] }).error, /quá dài/);
+        assert.deepEqual(gas.get(), before);
     });
 
     test('dòng không hợp lệ trong upserts bị bỏ qua, các dòng hợp lệ vẫn được ghi', () => {

@@ -15,7 +15,8 @@
 //    reply is the full server state, which is merged back. A token protects the URL; it only ever
 //    travels in a POST body, never in a URL (URLs end up in logs and proxies). The first read is a
 //    tokenless GET ?v=2: only Code.gs answers "unauthorized", which identifies it, and the state is
-//    then read with an empty sync POST that carries the token.
+//    then read with an empty sync POST that carries the token. When the POST cannot be made the
+//    GET ?action=sync fallback is only used without a token; with one the change stays queued.
 //
 // To keep data safe in both:
 //  - The Sheet is only written after it has been read successfully in this session.
@@ -23,6 +24,8 @@
 //    pending lists below) and are merged with, not replaced by, the Sheet's content.
 //  - Transactions deleted locally are remembered (fm_deleted_ids) so a merge does not bring them
 //    back from the Sheet.
+//  - A v2 server that suddenly lacks many rows this device already synced (an emptied or damaged
+//    Sheet) does not delete them here without asking: by default they are kept and uploaded again.
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
@@ -30,6 +33,9 @@ const SYNC_DELETED_KEY = 'fm_deleted_ids'; // ids deleted here, not yet deleted 
 const SYNC_UPSERTS_KEY = 'fm_pending_upserts'; // ids created or edited here (v2)
 const SYNC_META_KEY = 'fm_pending_meta'; // meta kinds changed here (v2)
 const GET_FALLBACK_MAX_URL = 6000;
+// A server state that drops this many synced rows at once, and more than half of them, is
+// confirmed by the user before it deletes anything here. An empty Sheet always is.
+const MASS_LOSS_MIN_ROWS = 10;
 const TRANSFER_CATEGORY_PREFIX = `${TRANSFER_CATEGORY} → `;
 
 let remoteReady = false;
@@ -366,6 +372,10 @@ async function postSyncV2(payload) {
             body: JSON.stringify(payload),
         });
     } catch (error) {
+        // The fallback puts the whole payload in the URL, and URLs end up in logs and proxies: never
+        // with a token. The change stays queued and is sent again later.
+        if (payload.token) throw error;
+
         const url = sheetUrl({ action: 'sync', payload: JSON.stringify(payload) });
 
         if (url.length > GET_FALLBACK_MAX_URL) {
@@ -401,6 +411,8 @@ function buildV2Payload() {
         action: 'sync',
         token: webAppToken,
         replace,
+        // Code.gs refuses a replace that empties the Sheet unless it is asked for explicitly.
+        confirmWipe: replace && upserts.length === 0,
         upserts,
         deletes: replace ? [] : readDeletedIds(),
         meta: Object.fromEntries(
@@ -525,6 +537,29 @@ function reconcileMeta(remoteMeta, hasBaseline, replace) {
 }
 
 /**
+ * Rows this device had already synced that the server no longer has. Many of them at once (or all
+ * of them) means the Sheet was emptied or damaged rather than edited on another device, so the
+ * user decides; keeping them (the default) queues them so the Sheet gets them back.
+ */
+function confirmRemoteLoss(lostIds, localSyncedCount, remoteCount) {
+    if (!lostIds.length) return false;
+
+    const massive =
+        remoteCount === 0 ||
+        (lostIds.length >= MASS_LOSS_MIN_ROWS && lostIds.length * 2 > localSyncedCount);
+
+    if (!massive) return false;
+
+    return confirm(
+        `Google Sheet vừa thiếu ${lostIds.length} giao dịch mà máy này vẫn còn` +
+            (remoteCount === 0 ? ' (Sheet không còn giao dịch nào).' : '.') +
+            '\n\nNếu bạn không chủ động xóa chúng ở máy khác, có thể Sheet đã bị xóa nhầm hoặc ghi lỗi.' +
+            '\n\nOK: giữ trên máy này và đưa lại lên Sheet (khuyên dùng).' +
+            '\nHủy: xóa chúng trên máy này cho giống Sheet.',
+    );
+}
+
+/**
  * Merge the server state into local data, keeping local changes the server has not confirmed:
  *  - rows pending here win when they are not older than the server's copy;
  *  - everything else follows the server, so deletions made elsewhere arrive here.
@@ -554,6 +589,21 @@ function reconcileV2(state) {
 
     if (!replace) migratedIds.forEach((id) => pendingUpserts.add(id));
     const deleted = new Set(readDeletedIds());
+
+    if (!replace && hasBaseline) {
+        const remoteIdSet = new Set(remote.map((row) => row.id));
+        const synced = transactions.filter(
+            (transaction) => !pendingUpserts.has(transaction.id) && !deleted.has(transaction.id),
+        );
+        const lostIds = synced
+            .filter((transaction) => !remoteIdSet.has(transaction.id))
+            .map((transaction) => transaction.id);
+
+        if (confirmRemoteLoss(lostIds, synced.length, remote.length)) {
+            lostIds.forEach((id) => pendingUpserts.add(id));
+            addToList(SYNC_UPSERTS_KEY, lostIds);
+        }
+    }
 
     if (!replace) {
         const merged = [];

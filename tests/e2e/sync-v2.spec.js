@@ -445,6 +445,60 @@ test.describe('Giao thức v2: lần đầu kết nối', () => {
 });
 
 test.describe('Giao thức v2: thay thế toàn bộ', () => {
+    test('SEC-001: Sheet bị làm trống thì máy đã đồng bộ hỏi, mặc định giữ dữ liệu và đưa lại lên Sheet', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', replace: true, upserts: [], confirmWipe: true });
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms.some((text) => text.includes('thiếu 3 giao dịch'))).toBe(true);
+        expect(await page.evaluate(() => transactions.map((t) => t.id).sort())).toEqual([
+            'TX_1',
+            'TX_2',
+            'TX_3',
+        ]);
+        expect(
+            serverRows(server)
+                .map((item) => item.id)
+                .sort(),
+        ).toEqual(['TX_1', 'TX_2', 'TX_3']);
+    });
+
+    test('SEC-001: chọn Hủy thì máy xóa theo Sheet', async ({ app }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows });
+        const { page } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', replace: true, upserts: [], confirmWipe: true });
+        page.removeAllListeners('dialog');
+        page.on('dialog', (dialog) => dialog.dismiss());
+        await page.reload();
+        await wait(600);
+
+        expect(await page.evaluate(() => transactions.length)).toBe(0);
+        expect(serverRows(server)).toEqual([]);
+    });
+
+    test('SEC-001: máy khác xóa vài giao dịch thì vẫn nhận việc xóa mà không hỏi', async ({
+        app,
+    }) => {
+        const rows = Array.from({ length: 12 }, (_, i) => row(`TX_${i + 1}`));
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', deletes: ['TX_1', 'TX_2', 'TX_3'] });
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms).toEqual([]);
+        expect(await page.evaluate(() => transactions.length)).toBe(9);
+    });
+
     test('"Xóa toàn bộ dữ liệu" xóa giao dịch trên server, không lặp đẩy mãi', async ({ app }) => {
         const rows = [row('TX_1'), row('TX_2')];
         const server = newServer('v2', { rows });
@@ -599,6 +653,28 @@ test.describe('Giao thức v2: mã bảo vệ (token)', () => {
         // One empty read POST was refused; nothing was written.
         expect(state.posts).toHaveLength(1);
         expect(server.get({ v: '2' }).error).toBe('unauthorized');
+    });
+
+    test('SEC-002: POST lỗi mạng khi có token thì không dùng GET dự phòng, thay đổi vẫn chờ gửi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { properties: { FM_TOKEN: 'bi-mat' } });
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed([], { fm_script_token: 'bi-mat' }),
+            postFails: true,
+        });
+
+        await addExpense(page, 5000, 'cho-gui');
+        await wait(400);
+
+        expect(state.getUrls.length).toBeGreaterThan(0);
+        state.getUrls.forEach((url) => {
+            expect(url).not.toContain('bi-mat');
+            expect(url).not.toContain('action=sync');
+        });
+        expect((await pending(page)).upserts).toHaveLength(1);
+        expect(serverRows(server)).toEqual([]);
     });
 
     test('token không nằm trong file sao lưu', async ({ app }) => {
