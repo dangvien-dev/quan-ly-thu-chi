@@ -27,16 +27,23 @@
 //  - A v2 server that suddenly lacks many rows this device already synced (an emptied or damaged
 //    Sheet, see isMassRemoteLoss) does not delete them here without asking (decideRemoteLoss):
 //    only an explicit OK on the "Xóa" question deletes; closing a dialog keeps them.
+//  - A replace or a delete whose reply was lost is only sent again when the server can prove it
+//    was never applied. When it cannot (or is an older Code.gs that does not answer), the data of
+//    both sides is merged instead and nothing is destroyed (see abandonDestructiveWrite).
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
 const SYNC_DELETED_KEY = 'fm_deleted_ids'; // ids deleted here, not yet deleted on the server
 const SYNC_UPSERTS_KEY = 'fm_pending_upserts'; // ids created or edited here (v2)
 const SYNC_META_KEY = 'fm_pending_meta'; // meta kinds changed here (v2)
-// The last v2 write whose reply never arrived: {requestId, replace, upserts: [{id, updatedAt}],
-// deletes, meta: {key: {updatedAt}}}. Before sending anything else the server is asked whether it
-// was applied (appliedCheck), so a lost reply is never answered by blindly sending it again.
+// The last v2 write whose reply never arrived: {requestId, url, baseRevision, replace,
+// upserts: [{id, updatedAt}], deletes, meta: {key: {updatedAt}}}. Before sending anything else the
+// server is asked whether it was applied (appliedCheck): true, false or 'unknown'. Only a proven
+// "false" lets a replace or deletes go out again; 'unknown' never does (settleInflightV2).
 const SYNC_INFLIGHT_KEY = 'fm_sync_inflight';
+// {url, revision}: the revision of the server's request log in the last state received from `url`.
+// A request records it (baseRevision) so the server can tell "never applied" from "forgotten".
+const SYNC_REVISION_KEY = 'fm_sync_revision';
 const GET_FALLBACK_MAX_URL = 6000;
 // Rows the user chose to "decide later" for (see decideRemoteLoss): kept here, not uploaded, and
 // not asked about again until the app is opened again.
@@ -412,7 +419,30 @@ async function postSyncV2(payload) {
         throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
     }
 
+    rememberRevision(state);
+
     return state;
+}
+
+/** Keeps the revision of the server's request log (absent from a Code.gs that predates it). */
+function rememberRevision(state) {
+    if (Number.isInteger(state.revision) && state.revision >= 0) {
+        localStorage.setItem(
+            SYNC_REVISION_KEY,
+            JSON.stringify({ url: webAppUrl, revision: state.revision }),
+        );
+    } else {
+        localStorage.removeItem(SYNC_REVISION_KEY);
+    }
+}
+
+/** The revision last seen from the current server, or null when there is none to rely on. */
+function lastKnownRevision() {
+    const record = readStoredJson(SYNC_REVISION_KEY, null);
+
+    return record && record.url === webAppUrl && Number.isInteger(record.revision)
+        ? record.revision
+        : null;
 }
 
 function buildV2Payload() {
@@ -709,6 +739,8 @@ function newRequestId() {
 function inflightRecord(payload) {
     return {
         requestId: payload.requestId,
+        url: webAppUrl,
+        baseRevision: lastKnownRevision(),
         replace: payload.replace,
         upserts: payload.upserts.map((item) => ({ id: item.id, updatedAt: item.updatedAt })),
         deletes: payload.deletes,
@@ -727,17 +759,71 @@ function readInflight() {
     return record && typeof record.requestId === 'string' ? record : null;
 }
 
+/** A replace or a deletion: sending it again could undo what another device wrote since. */
+function isDestructiveWrite(inflight) {
+    return inflight.replace === true || (inflight.deletes || []).length > 0;
+}
+
 /**
- * A previous write may or may not have been applied (its reply was lost). Ask the server; if it
- * was, forget what it sent, exactly as if the reply had arrived. Either way the server's current
- * state is merged before anything new is built, so a replace that went through is not sent again
- * over rows another device added since. A server that predates request ids does not answer
- * `applied`; then the pending changes simply stay queued, as before.
+ * The server could not say whether a replace / deletion went through (and it is not safe to guess:
+ * it would remove what another device added or re-created since). Nothing is destroyed either way:
+ *  - a replace becomes an ordinary merge: everything held here is queued as a change and the
+ *    server's content is kept (rows the replace was meant to drop may come back);
+ *  - deletions are not sent again: a row still on the server comes back here, one already gone
+ *    stays gone.
+ * Returns the sentence to tell the user.
+ */
+function abandonDestructiveWrite(inflight) {
+    const notes = [];
+
+    if (inflight.replace && getSyncDirty() === 'replace') {
+        addToList(
+            SYNC_UPSERTS_KEY,
+            transactions.map((transaction) => transaction.id),
+        );
+        addToList(SYNC_META_KEY, Object.keys(META_DEFS));
+        // 'replace' is sticky (setSyncDirty ignores 'merge' while it is set): clear it first.
+        setSyncDirty('');
+        setSyncDirty('merge');
+        notes.push(
+            'Không rõ lần thay toàn bộ dữ liệu trên Google Sheet trước đó đã được áp dụng chưa (mất phản hồi). Để không làm mất dữ liệu của máy khác, app đã gộp dữ liệu trên máy này với Google Sheet thay vì ghi đè; muốn thay toàn bộ Sheet thì hãy thực hiện lại.',
+        );
+    }
+
+    const dropped = new Set(inflight.deletes || []);
+
+    if (dropped.size) {
+        writeList(
+            SYNC_DELETED_KEY,
+            readDeletedIds().filter((id) => !dropped.has(id)),
+        );
+        notes.push(
+            `Không rõ lệnh xóa ${dropped.size} giao dịch trước đó đã được áp dụng chưa (mất phản hồi) nên app không gửi lại lệnh xóa. Giao dịch nào còn trên Google Sheet sẽ quay lại máy này; hãy xóa lại nếu cần.`,
+        );
+    }
+
+    return notes.join(' ');
+}
+
+/**
+ * A previous write may or may not have been applied (its reply was lost). Ask the server, which
+ * answers true, false (proven never applied) or 'unknown'. `true` is handled exactly as if the
+ * reply had arrived. `false`, or 'unknown' for a write that is safe to repeat (upserts only: the
+ * newest updatedAt wins), leaves the changes queued to be sent. A replace or deletion whose
+ * outcome is not known is never sent again (abandonDestructiveWrite). A Code.gs that predates
+ * request ids does not answer `applied` at all, which counts as 'unknown'. Either way the server's
+ * current state is merged before anything new is built.
  */
 async function settleInflightV2() {
     const inflight = readInflight();
 
     if (!inflight) return;
+
+    // A request made to another deployment cannot be asked about here.
+    if (inflight.url && inflight.url !== webAppUrl) {
+        localStorage.removeItem(SYNC_INFLIGHT_KEY);
+        return;
+    }
 
     const state = await postSyncV2({
         action: 'sync',
@@ -747,15 +833,21 @@ async function settleInflightV2() {
         deletes: [],
         meta: {},
         appliedCheck: inflight.requestId,
+        ...(Number.isInteger(inflight.baseRevision) ? { appliedAfter: inflight.baseRevision } : {}),
     });
+    let notice = '';
 
     if (state.applied === true) {
         localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
         clearSentPending(inflight);
+    } else if (state.applied !== false && isDestructiveWrite(inflight)) {
+        notice = abandonDestructiveWrite(inflight);
     }
 
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
     reconcileV2(state);
+
+    if (notice) showToast(notice, 'warning', 20000);
 }
 
 async function pushV2() {

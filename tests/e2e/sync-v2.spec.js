@@ -19,6 +19,47 @@ const T0 = '2026-10-28T01:00:00.000Z';
 const row = (id, overrides = {}) => tx({ id, updatedAt: T0, note: `ghi chu ${id}`, ...overrides });
 const meta = (value, updatedAt = T0) => ({ value, updatedAt });
 const lastBody = (state) => state.posts.at(-1).body;
+const TOKEN = 'bi-mat';
+const inflight = (page) => page.evaluate(() => localStorage.getItem('fm_sync_inflight'));
+const replaces = (state) => state.posts.filter((post) => post.body.replace === true).length;
+const notesOf = (rows) => rows.map((item) => item.note).sort();
+
+/** Restores a backup holding `rows` on a device: the app sends a replace of everything. */
+async function restoreBackup(page, rows) {
+    await goTab(page, 'settings');
+    await page.setInputFiles('input[type=file]', {
+        name: 'b.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(
+            JSON.stringify({
+                format: 'finmanager-backup',
+                version: 1,
+                exportedAt: 'x',
+                data: {
+                    transactions: rows,
+                    categories: [{ id: 1, name: 'Ăn uống', type: 'expense', icon: 'fa-utensils' }],
+                    initialBalances: {},
+                    scriptUrl: SCRIPT_URL,
+                },
+            }),
+        ),
+    });
+    await wait(600);
+}
+
+/** Behaves like a Code.gs that predates request ids: replies carry neither applied nor revision. */
+function withoutRequestIds(server) {
+    const postText = server.postText;
+
+    server.postText = (...args) => {
+        const reply = JSON.parse(postText(...args));
+
+        delete reply.applied;
+        delete reply.revision;
+
+        return JSON.stringify(reply);
+    };
+}
 const pending = (page) =>
     page.evaluate(() => ({
         upserts: JSON.parse(localStorage.getItem('fm_pending_upserts') || '[]'),
@@ -662,6 +703,204 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(
             state.posts.filter((post) => (post.body.deletes || []).includes('TX_1')).length,
         ).toBe(1);
+    });
+
+    test('review vòng 5: server đã quên request (100+ lần ghi sau đó): replace không bị gửi lại, dòng máy khác còn nguyên, có thông báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // Device A restores a backup: the server applies the replace, the reply is lost.
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_9')]);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        // Device B adds a row, then more writes follow than the server's request log keeps.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        for (let i = 0; i < 110; i++) {
+            server.post({
+                action: 'sync',
+                token: TOKEN,
+                // Newer than what A wrote, so every one of them really changes the sheet.
+                meta: { budgets: meta({ lan: i }, '2099-01-01T00:00:00.000Z') },
+                requestId: `pad-${i}`,
+            });
+        }
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        // The server cannot say what became of A's request, so it is not sent again.
+        const check = a.state.posts.find((post) => post.body.appliedCheck);
+
+        expect(check.body.appliedAfter).toEqual(expect.any(Number));
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        expect(notesOf(await a.page.evaluate(() => transactions))).toEqual([
+            'ghi chu TX_9',
+            'tu-may-B',
+        ]);
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#toast-container')).toContainText(
+            'Không rõ lần thay toàn bộ dữ liệu',
+        );
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 5: server ghi xong nhưng flush lỗi (báo lỗi dù dữ liệu đã vào Sheet): máy khác ghi xen giữa, replace không bị gửi lại', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // The flush right after the replace was written throws (arm it when the replace arrives:
+        // restoring a backup reads the Sheet first).
+        const postText = server.postText;
+
+        server.postText = (raw, ...rest) => {
+            if (JSON.parse(raw).replace === true) server.faults.flush = 1;
+
+            return postText(raw, ...rest);
+        };
+        await restoreBackup(a.page, [row('TX_9')]);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']); // it did arrive
+        expect(await inflight(a.page)).toBeTruthy();
+        await expect(a.page.locator('#sync-status')).not.toContainText('Đã lưu');
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.evaluate(() => resumeSync());
+        await wait(800);
+
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        await expect(a.page.locator('#toast-container')).toContainText(
+            'Không rõ lần thay toàn bộ dữ liệu',
+        );
+    });
+
+    test('review vòng 5: request chưa từng tới server (mất kết nối) được chứng minh là false nên replace vẫn được gửi, không thông báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        a.state.dropRequests = 1;
+        await restoreBackup(a.page, [row('TX_9')]);
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_1', 'TX_2']);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.evaluate(() => resumeSync());
+        await wait(800);
+
+        // The restore the user asked for completes: it replaces the server's content, as always.
+        expect(a.state.posts.find((post) => post.body.appliedCheck)).toBeTruthy();
+        expect(replaces(a.state)).toBe(replacesBefore + 1);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9']);
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#toast-container .toast')).toHaveCount(0);
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 5: Code.gs cũ không trả applied: lệnh xóa mất phản hồi không được gửi lại, dòng máy khác tạo lại còn nguyên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+
+        withoutRequestIds(server);
+
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+
+        state.loseReplies = 1;
+        await goTransactions(page);
+        await page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+
+        // Another device re-creates the row with a newer edit.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_1', { updatedAt: '2026-11-22T09:00:00.000Z', note: 'tao lai' })],
+        });
+
+        await page.evaluate(() => resumeSync());
+        await wait(800);
+
+        const deletesOfTx1 = state.posts.filter((post) =>
+            (post.body.deletes || []).includes('TX_1'),
+        );
+
+        expect(deletesOfTx1).toHaveLength(1);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_2', 'ghi chu TX_3', 'tao lai']);
+        expect(notesOf(await page.evaluate(() => transactions))).toEqual([
+            'ghi chu TX_2',
+            'ghi chu TX_3',
+            'tao lai',
+        ]);
+        await expect(page.locator('#toast-container')).toContainText(
+            'Không rõ lệnh xóa 1 giao dịch',
+        );
+        expect(await inflight(page)).toBeNull();
+    });
+
+    test('review vòng 5: Code.gs cũ: một lần thêm giao dịch mất phản hồi vẫn được gửi lại (upsert an toàn khi lặp), không thông báo', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_1')], properties: { FM_TOKEN: TOKEN } });
+
+        withoutRequestIds(server);
+
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed([row('TX_1')], { fm_script_token: TOKEN }),
+        });
+
+        state.loseReplies = 1;
+        await addExpense(page, 7000, 'them-moi');
+        await wait(500);
+        await page.evaluate(() => resumeSync());
+        await wait(800);
+
+        expect(notesOf(serverRows(server)).filter((note) => note === 'them-moi')).toHaveLength(1);
+        await expect(page.locator('#toast-container .toast')).toHaveCount(0);
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu');
     });
 
     test('SEC-001: tập nhỏ mất quá nửa (6 → 1) cũng hỏi', async ({ app }) => {

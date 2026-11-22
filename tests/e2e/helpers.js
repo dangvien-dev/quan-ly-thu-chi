@@ -93,6 +93,7 @@ async function openApp(browser, opts = {}) {
         errors: [],
         external: [],
         loseReplies: 0,
+        dropRequests: 0,
     };
 
     // Registered first = lowest priority: block everything that is not local or the mock Sheet.
@@ -160,6 +161,12 @@ async function openApp(browser, opts = {}) {
             body.replace === true ||
             (Array.isArray(body.upserts) && body.upserts.length > 0) ||
             (Array.isArray(body.deletes) && body.deletes.length > 0);
+
+        // state.dropRequests: the next N write POSTs never reach the server (a dropped connection).
+        if (state.dropRequests > 0 && writes) {
+            state.dropRequests--;
+            return route.abort();
+        }
 
         if (state.loseReplies > 0 && writes) {
             state.loseReplies--;
