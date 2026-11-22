@@ -21,7 +21,7 @@ const BANK = 'Thẻ NH Vpbank';
 const SOURCES = [
     { name: 'Tiền Mặt', kind: 'cash' },
     { name: BANK, kind: 'bank' },
-    { name: CARD, kind: 'credit', creditLimit: 37800000 },
+    { name: CARD, kind: 'credit', creditLimit: 25000000 },
 ];
 const rowsLocator = (page) => page.locator('#import-table-body tr');
 const open = (app, seed = {}, extra = {}) =>

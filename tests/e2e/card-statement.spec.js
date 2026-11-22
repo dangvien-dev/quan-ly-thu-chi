@@ -10,16 +10,16 @@ const VPBANK = 'Thẻ NH Vpbank';
 const SOURCES = [
     { name: 'Tiền Mặt', kind: 'cash' },
     { name: VPBANK, kind: 'bank' },
-    { name: CARD, kind: 'credit', creditLimit: 37800000, statementDay: 20, dueDay: 4 },
+    { name: CARD, kind: 'credit', creditLimit: 25000000, statementDay: 20, dueDay: 4 },
 ];
 // What the book has since the 20/10 statement: five charges and the payment of the statement.
 const charge = (id, date, amount) => tx({ id, date, source: CARD, amount });
 const ROWS = [
-    charge('A', '2026-10-22', 587160),
+    charge('A', '2026-10-22', 612450),
     charge('B', '2026-10-23', 73333),
     charge('C', '2026-10-24', 30000),
-    charge('D', '2026-11-03', 87778),
-    charge('E', '2026-11-05', 604390),
+    charge('D', '2026-11-03', 91111),
+    charge('E', '2026-11-05', 571820),
     tx({
         id: 'P',
         date: '2026-10-21',
@@ -27,12 +27,12 @@ const ROWS = [
         source: VPBANK,
         targetSource: CARD,
         category: 'Chuyển tiền nội bộ',
-        amount: 1695414,
+        amount: 1644436,
     }),
 ];
-// "Khớp số dư" with the real available limit put 51.766 of charges the book is missing into the
-// initial balance: -1.695.414 would be right, -1.747.180 is what the app holds.
-const seed = (extra = {}, sources = SOURCES, opening = -1747180) => ({
+// "Khớp số dư" with the real available limit put 48.213 of charges the book is missing into the
+// initial balance: -1.644.436 would be right, -1.692.649 is what the app holds.
+const seed = (extra = {}, sources = SOURCES, opening = -1692649) => ({
     fm_sources: JSON.stringify(sources),
     fm_initial_balances: JSON.stringify({ [CARD]: opening }),
     fm_transactions: JSON.stringify(ROWS),
@@ -54,19 +54,19 @@ async function openEditor(page) {
 }
 
 test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
-    test('trước khi nhập mốc: số dư ban đầu lệch 51.766 thì thẻ đã trả đủ vẫn báo cần trả 51.766', async ({
+    test('trước khi nhập mốc: số dư ban đầu lệch 48.213 thì thẻ đã trả đủ vẫn báo cần trả 48.213', async ({
         app,
     }) => {
         const { page } = await open(app);
 
         await page.evaluate(() => switchTab('sources'));
         await expect(dueLine(page)).toHaveText(
-            'Cần trả 51.766 đ trước 04/11/2026 (quá hạn 3 ngày)',
+            'Cần trả 48.213 đ trước 04/11/2026 (quá hạn 3 ngày)',
         );
         await expect(card(page)).not.toContainText('Sao kê chốt');
     });
 
-    test('nhập dư nợ cuối kỳ 1.695.414: hết báo cần trả, số dư ban đầu và số dư thẻ giữ nguyên', async ({
+    test('nhập dư nợ cuối kỳ 1.644.436: hết báo cần trả, số dư ban đầu và số dư thẻ giữ nguyên', async ({
         app,
     }) => {
         const { page } = await open(app);
@@ -74,23 +74,23 @@ test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
         await openEditor(page);
         await expect(page.locator('#srcStatementBalance')).toHaveValue('');
         await expect(page.locator('#srcStatementBalanceHint')).toContainText('Dư nợ cuối kỳ');
-        await page.fill('#srcStatementBalance', '1695414');
-        await expect(page.locator('#srcStatementBalance')).toHaveValue('1.695.414');
+        await page.fill('#srcStatementBalance', '1644436');
+        await expect(page.locator('#srcStatementBalance')).toHaveValue('1.644.436');
         await page.click('#sourceForm button[type=submit]');
 
         await expect(dueLine(page)).toHaveCount(0);
-        await expect(card(page)).toContainText('Sao kê chốt 20/10/2026: dư nợ 1.695.414 đ');
+        await expect(card(page)).toContainText('Sao kê chốt 20/10/2026: dư nợ 1.644.436 đ');
         // The number is a fact about the statement: nothing else changes.
-        await expect(card(page).locator('.card-value')).toHaveText('-1.434.427 đ');
-        await expect(card(page)).toContainText('Số dư ban đầu -1.747.180 đ');
+        await expect(card(page).locator('.card-value')).toHaveText('-1.426.927 đ');
+        await expect(card(page)).toContainText('Số dư ban đầu -1.692.649 đ');
         expect(await source(page)).toMatchObject({
-            lastStatement: { date: '2026-10-20', balance: 1695414 },
+            lastStatement: { date: '2026-10-20', balance: 1644436 },
         });
 
         // It survives a reload, and the dialog shows it with its statement day.
         await page.reload();
         await openEditor(page);
-        await expect(page.locator('#srcStatementBalance')).toHaveValue('1.695.414');
+        await expect(page.locator('#srcStatementBalance')).toHaveValue('1.644.436');
         await expect(page.locator('#srcStatementBalanceHint')).toContainText(
             'Đang dùng sao kê chốt ngày 20/10/2026.',
         );
@@ -110,7 +110,7 @@ test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
                             item.name === CARD
                                 ? {
                                       ...item,
-                                      lastStatement: { date: '2026-10-20', balance: 1695414 },
+                                      lastStatement: { date: '2026-10-20', balance: 1644436 },
                                   }
                                 : item,
                         ),
@@ -123,7 +123,7 @@ test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
 
         await page.evaluate(() => switchTab('sources'));
         await expect(dueLine(page)).toHaveText(
-            'Cần trả 695.414 đ trước 04/11/2026 (quá hạn 3 ngày)',
+            'Cần trả 644.436 đ trước 04/11/2026 (quá hạn 3 ngày)',
         );
     });
 
@@ -136,7 +136,7 @@ test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
                 fm_sources: JSON.stringify(
                     SOURCES.map((item) =>
                         item.name === CARD
-                            ? { ...item, lastStatement: { date: '2026-09-20', balance: 1614164 } }
+                            ? { ...item, lastStatement: { date: '2026-09-20', balance: 1523907 } }
                             : item,
                     ),
                 ),
@@ -144,19 +144,19 @@ test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
         });
 
         await openEditor(page);
-        await expect(page.locator('#srcStatementBalance')).toHaveValue('1.614.164');
+        await expect(page.locator('#srcStatementBalance')).toHaveValue('1.523.907');
         await page.click('#sourceForm button[type=submit]');
         expect((await source(page)).lastStatement).toEqual({
             date: '2026-09-20',
-            balance: 1614164,
+            balance: 1523907,
         });
 
         await openEditor(page);
-        await page.fill('#srcStatementBalance', '1695414');
+        await page.fill('#srcStatementBalance', '1644436');
         await page.click('#sourceForm button[type=submit]');
         expect((await source(page)).lastStatement).toEqual({
             date: '2026-10-20',
-            balance: 1695414,
+            balance: 1644436,
         });
 
         await openEditor(page);
@@ -174,7 +174,7 @@ test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
         );
 
         await openEditor(page);
-        await page.fill('#srcStatementBalance', '1695414');
+        await page.fill('#srcStatementBalance', '1644436');
         await page.click('#sourceForm button[type=submit]');
 
         expect(state.alerts.at(-1)).toContain('ngày chốt sao kê');
@@ -198,24 +198,24 @@ test.describe('Dư nợ cuối kỳ của sao kê gần nhất', () => {
             now: NOW,
             seed: syncedSeed(ROWS, {
                 fm_sources: JSON.stringify(SOURCES),
-                fm_initial_balances: JSON.stringify({ [CARD]: -1747180 }),
+                fm_initial_balances: JSON.stringify({ [CARD]: -1692649 }),
             }),
         });
 
         await openEditor(page);
-        await page.fill('#srcStatementBalance', '1695414');
+        await page.fill('#srcStatementBalance', '1644436');
         await page.click('#sourceForm button[type=submit]');
         await wait(500);
 
         const remote = server.get({ v: '2' }).meta.sources.value.find((item) => item.name === CARD);
 
-        expect(remote.lastStatement).toEqual({ date: '2026-10-20', balance: 1695414 });
+        expect(remote.lastStatement).toEqual({ date: '2026-10-20', balance: 1644436 });
     });
 });
 
 // "Cần trả" without the closing balance of the statement is only a guess from the initial balance.
-// These are the cards' real numbers of 7/11/2026: the balance matches the bank (available
-// 35.782.854 of 37.800.000), the 20/10 statement is paid, and the card still said 51.766 was due
+// A made-up book with the shape of a real case (7/11/2026): the balance matches the bank (available
+// 22.990.354 of 25.000.000), the 20/10 statement is paid, and the card still said 48.213 was due
 // because "Khớp số dư" had pushed charges the book misses (fee / VAT lines) into the opening.
 const REAL_CHARGES = [
     ['2026-09-21', 100000],
@@ -223,21 +223,21 @@ const REAL_CHARGES = [
     ['2026-09-24', 132000],
     ['2026-09-28', 30000],
     ['2026-09-30', 582719],
-    ['2026-10-03', 87778],
-    ['2026-10-05', 552584],
+    ['2026-10-03', 91111],
+    ['2026-10-05', 498273],
     ['2026-10-10', 30000],
     ['2026-10-17', 30000],
-    ['2026-10-22', 587160],
+    ['2026-10-22', 612450],
     ['2026-10-23', 73333],
     ['2026-10-24', 30000],
     ['2026-10-30', 582719],
-    ['2026-11-03', 87778],
-    ['2026-11-05', 604390],
+    ['2026-11-03', 91111],
+    ['2026-11-05', 571820],
 ];
 const REAL_PAYMENTS = [
-    ['2026-09-21', 1614164],
-    ['2026-10-21', 1695414],
-    ['2026-10-21', 51766],
+    ['2026-09-21', 1523907],
+    ['2026-10-21', 1644436],
+    ['2026-10-21', 48213],
 ];
 const REAL_ROWS = [
     ...REAL_CHARGES.map(([date, amount], index) => charge(`R${index}`, date, amount)),
@@ -255,7 +255,7 @@ const REAL_ROWS = [
 ];
 const realSeed = (extra = {}) => ({
     fm_sources: JSON.stringify(SOURCES),
-    fm_initial_balances: JSON.stringify({ [CARD]: -1794696 }),
+    fm_initial_balances: JSON.stringify({ [CARD]: -1697333 }),
     fm_transactions: JSON.stringify(REAL_ROWS),
     ...extra,
 });
@@ -269,9 +269,9 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
         const { page } = await app({ now: NOW, seed: realSeed() });
 
         await page.evaluate(() => switchTab('sources'));
-        await expect(card(page).locator('.card-value')).toHaveText('-2.017.146 đ');
+        await expect(card(page).locator('.card-value')).toHaveText('-2.009.646 đ');
         await expect(dueLine(page)).toHaveText(
-            'Cần trả 51.766 đ trước 04/11/2026 (quá hạn 3 ngày)',
+            'Cần trả 48.213 đ trước 04/11/2026 (quá hạn 3 ngày)',
         );
         await expect(note(page)).toContainText('ước tính từ số dư ban đầu');
         await expect(note(page)).toContainText('Dư nợ cuối kỳ');
@@ -280,7 +280,7 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
         );
     });
 
-    test('nhập 1.695.414 trên thẻ: hết báo cần trả, số dư và số dư ban đầu giữ nguyên, mốc được lưu', async ({
+    test('nhập 1.644.436 trên thẻ: hết báo cần trả, số dư và số dư ban đầu giữ nguyên, mốc được lưu', async ({
         app,
     }) => {
         const { page } = await app({ now: NOW, seed: realSeed() });
@@ -291,21 +291,21 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
         await expect(page.locator('#moneyPromptModal')).toHaveClass(/open/);
         await expect(page.locator('#moneyPromptMessage')).toContainText('chốt ngày 20/10/2026');
         await expect(page.locator('#moneyPromptInput')).toHaveValue('');
-        await page.fill('#moneyPromptInput', '1695414');
-        await expect(page.locator('#moneyPromptInput')).toHaveValue('1.695.414');
+        await page.fill('#moneyPromptInput', '1644436');
+        await expect(page.locator('#moneyPromptInput')).toHaveValue('1.644.436');
         await page.click('#moneyPromptSubmit');
 
         await expect(dueLine(page)).toHaveCount(0);
         await expect(note(page)).toHaveCount(0);
         await expect(balanceButton(page)).toHaveCount(0);
-        await expect(card(page)).toContainText('Sao kê chốt 20/10/2026: dư nợ 1.695.414 đ');
-        await expect(card(page).locator('.card-value')).toHaveText('-2.017.146 đ');
-        await expect(card(page)).toContainText('Số dư ban đầu -1.794.696 đ');
+        await expect(card(page)).toContainText('Sao kê chốt 20/10/2026: dư nợ 1.644.436 đ');
+        await expect(card(page).locator('.card-value')).toHaveText('-2.009.646 đ');
+        await expect(card(page)).toContainText('Số dư ban đầu -1.697.333 đ');
         expect(await source(page)).toMatchObject({
-            lastStatement: { date: '2026-10-20', balance: 1695414 },
+            lastStatement: { date: '2026-10-20', balance: 1644436 },
         });
         await expect(page.locator('.toast').last()).toContainText(
-            'Đã lưu dư nợ cuối kỳ 1.695.414 đ',
+            'Đã lưu dư nợ cuối kỳ 1.644.436 đ',
         );
 
         // It survives a reload.
@@ -327,12 +327,12 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
         expect(Object.hasOwn(await source(page), 'lastStatement')).toBe(false);
         await expect(balanceButton(page)).toBeVisible();
 
-        // The statement was 1.800.000 and only 1.747.180 was paid: 52.820 is really still due.
+        // The statement was 1.800.000 and only 1.692.649 was paid: 107.351 is really still due.
         await balanceButton(page).click();
         await page.fill('#moneyPromptInput', '1800000');
         await page.click('#moneyPromptSubmit');
         await expect(dueLine(page)).toHaveText(
-            'Cần trả 52.820 đ trước 04/11/2026 (quá hạn 3 ngày)',
+            'Cần trả 107.351 đ trước 04/11/2026 (quá hạn 3 ngày)',
         );
         await expect(note(page)).toHaveCount(0);
     });
@@ -350,7 +350,7 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
         const first = await app({ now: NOW, seed: realSeed({ fm_sources: anchored }) });
 
         await first.page.evaluate(() => switchTab('sources'));
-        await expect(dueLine(first.page)).toContainText('Cần trả 52.820 đ');
+        await expect(dueLine(first.page)).toContainText('Cần trả 107.351 đ');
         await expect(note(first.page)).toHaveCount(0);
         await expect(balanceButton(first.page)).toHaveCount(0);
 
@@ -385,19 +385,19 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
             now: NOW,
             seed: syncedSeed(REAL_ROWS, {
                 fm_sources: JSON.stringify(SOURCES),
-                fm_initial_balances: JSON.stringify({ [CARD]: -1794696 }),
+                fm_initial_balances: JSON.stringify({ [CARD]: -1697333 }),
             }),
         });
 
         await page.evaluate(() => switchTab('sources'));
         await balanceButton(page).click();
-        await page.fill('#moneyPromptInput', '1695414');
+        await page.fill('#moneyPromptInput', '1644436');
         await page.click('#moneyPromptSubmit');
         await wait(500);
 
         const remote = server.get({ v: '2' }).meta.sources.value.find((item) => item.name === CARD);
 
-        expect(remote.lastStatement).toEqual({ date: '2026-10-20', balance: 1695414 });
+        expect(remote.lastStatement).toEqual({ date: '2026-10-20', balance: 1644436 });
     });
 
     test('trợ năng và điện thoại: dòng giải thích và nút mới không vi phạm axe, không tràn ngang', async ({
@@ -422,8 +422,8 @@ test.describe('Cần trả ước tính: báo rõ và nhập dư nợ cuối k�
 });
 
 // The book as it is after the VPBank statement was imported (fee / VAT lines included) and the
-// closing balance entered. "Khớp số dư" had put the 51.766 of fees posted after the statement day
-// into the initial balance (-1.665.930 instead of -1.614.164); the card says so, so that months
+// closing balance entered. "Khớp số dư" had put the 48.213 of fees posted after the statement day
+// into the initial balance (-1.572.120 instead of -1.523.907); the card says so, so that months
 // later the gap is not a mystery.
 const FEES = [
     ['2026-09-23', 11000],
@@ -452,7 +452,7 @@ const BOOK_ROWS = [
 const ANCHORED_SOURCES = JSON.stringify(
     SOURCES.map((item) =>
         item.name === CARD
-            ? { ...item, lastStatement: { date: '2026-10-20', balance: 1695414 } }
+            ? { ...item, lastStatement: { date: '2026-10-20', balance: 1644436 } }
             : item,
     ),
 );
@@ -464,15 +464,15 @@ const bookSeed = (opening) => ({
 const gapNote = (page) => card(page).locator('.card-gap-note');
 
 test.describe('Sổ lệch so với sao kê: ghi chú giải thích trên thẻ', () => {
-    test('số dư ban đầu chứa 51.766 phí chưa nhập: thẻ nói rõ khoản lệch, lý do và cách làm hết', async ({
+    test('số dư ban đầu chứa 48.213 phí chưa nhập: thẻ nói rõ khoản lệch, lý do và cách làm hết', async ({
         app,
     }) => {
-        const { page } = await app({ now: NOW, seed: bookSeed(-1665930) });
+        const { page } = await app({ now: NOW, seed: bookSeed(-1572120) });
 
         await page.evaluate(() => switchTab('sources'));
-        await expect(card(page)).toContainText('Sao kê chốt 20/10/2026: dư nợ 1.695.414 đ');
+        await expect(card(page)).toContainText('Sao kê chốt 20/10/2026: dư nợ 1.644.436 đ');
         await expect(gapNote(page)).toContainText(
-            'Sổ đang lệch 51.766 đ so với sao kê chốt 20/10/2026',
+            'Sổ đang lệch 48.213 đ so với sao kê chốt 20/10/2026',
         );
         await expect(gapNote(page)).toContainText('số dư ban đầu đang chứa khoản nợ này');
         await expect(gapNote(page)).toContainText('phí chuyển đổi ngoại tệ, VAT hoặc lãi');
@@ -484,13 +484,13 @@ test.describe('Sổ lệch so với sao kê: ghi chú giải thích trên thẻ'
     test('số dư ban đầu đúng thì không có ghi chú; sổ ghi nợ ít hơn sao kê thì nói theo chiều ngược lại', async ({
         app,
     }) => {
-        const exact = await app({ now: NOW, seed: bookSeed(-1614164) });
+        const exact = await app({ now: NOW, seed: bookSeed(-1523907) });
 
         await exact.page.evaluate(() => switchTab('sources'));
         await expect(card(exact.page)).toContainText('Sao kê chốt 20/10/2026');
         await expect(gapNote(exact.page)).toHaveCount(0);
 
-        const less = await app({ now: NOW, seed: bookSeed(-1514164) });
+        const less = await app({ now: NOW, seed: bookSeed(-1423907) });
 
         await less.page.evaluate(() => switchTab('sources'));
         await expect(gapNote(less.page)).toContainText(
@@ -504,7 +504,7 @@ test.describe('Sổ lệch so với sao kê: ghi chú giải thích trên thẻ'
     }) => {
         const { page } = await app({
             now: NOW,
-            seed: { ...bookSeed(-1665930), fm_sources: JSON.stringify(SOURCES) },
+            seed: { ...bookSeed(-1572120), fm_sources: JSON.stringify(SOURCES) },
         });
 
         await page.evaluate(() => switchTab('sources'));
@@ -513,12 +513,12 @@ test.describe('Sổ lệch so với sao kê: ghi chú giải thích trên thẻ'
     });
 
     test('Khớp số dư nhắc ngay rằng sổ đang lệch so với sao kê', async ({ app }) => {
-        // The available limit 35.782.854 is what the bank shows: the balance is already right
-        // (-2.017.146), so the opening stays and the gap is what the toast warns about.
+        // The available limit 22.990.354 is what the bank shows: the balance is already right
+        // (-2.009.646), so the opening stays and the gap is what the toast warns about.
         const { page } = await app({
             now: NOW,
-            seed: bookSeed(-1665930),
-            promptValue: '35782854',
+            seed: bookSeed(-1572120),
+            promptValue: '22990354',
         });
 
         await page.evaluate(() => switchTab('sources'));
@@ -527,14 +527,14 @@ test.describe('Sổ lệch so với sao kê: ghi chú giải thích trên thẻ'
         const toast = page.locator('.toast').last();
 
         await expect(toast).toContainText('Đã khớp [Thẻ Tín Dụng]');
-        await expect(toast).toContainText('sổ đang lệch 51.766 đ so với sao kê chốt 20/10/2026');
+        await expect(toast).toContainText('sổ đang lệch 48.213 đ so với sao kê chốt 20/10/2026');
         await expect(gapNote(page)).toBeVisible();
     });
 
     test('trợ năng và điện thoại: ghi chú không vi phạm axe, không tràn ngang', async ({ app }) => {
         const { page } = await app({
             now: NOW,
-            seed: bookSeed(-1665930),
+            seed: bookSeed(-1572120),
             viewport: { width: 390, height: 844 },
         });
 

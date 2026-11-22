@@ -5,7 +5,7 @@ const { test, expect, tx, wait, goTab, goTransactions, addExpense } = require('.
 const seedTransactions = (rows) => ({ fm_transactions: JSON.stringify(rows) });
 
 test.describe('Form nhập giao dịch', () => {
-    for (const amount of ['17000', '224500', '1']) {
+    for (const amount of ['17000', '204500', '1']) {
         test(`chấp nhận số tiền ${amount}đ`, async ({ app }) => {
             const { page } = await app();
 
@@ -125,7 +125,7 @@ test.describe('Modal sửa giao dịch', () => {
         app,
     }) => {
         const { page } = await app({
-            seed: seedTransactions([tx({ category: 'Đồ nghề và dụng cụ', amount: 224500 })]),
+            seed: seedTransactions([tx({ category: 'Đồ nghề và dụng cụ', amount: 204500 })]),
         });
 
         await goTransactions(page);

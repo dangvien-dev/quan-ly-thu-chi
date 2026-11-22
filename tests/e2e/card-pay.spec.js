@@ -1,5 +1,5 @@
 // "Đã trả" under the due line of a credit card: the dialog and the transfer it records.
-// The numbers are those of the owner's Thẻ Tín Dụng on 7/11/2026 (statement 21/09-20/10, due 4/11).
+// Made-up numbers for a Thẻ Tín Dụng on 7/11/2026 (statement 21/09-20/10, due 4/11).
 
 const { test, expect, tx, newServer, syncedSeed, scanA11y, settle, wait } = require('./helpers');
 
@@ -9,15 +9,15 @@ const BANK = 'Thẻ Ngân Hàng';
 const SOURCES = [
     { name: 'Tiền Mặt', kind: 'cash' },
     { name: BANK, kind: 'bank' },
-    { name: CARD, kind: 'credit', creditLimit: 37800000, statementDay: 20, dueDay: 4 },
-    { name: 'Spaylater', kind: 'credit', creditLimit: 30000000, statementDay: 24, dueDay: 10 },
+    { name: CARD, kind: 'credit', creditLimit: 25000000, statementDay: 20, dueDay: 4 },
+    { name: 'Spaylater', kind: 'credit', creditLimit: 20000000, statementDay: 24, dueDay: 10 },
     { name: 'Nợ Công Ty', kind: 'debt' },
 ];
-// The 712.493 đ opening debt is the statement of 20/10; 1.382.661 đ was spent after it.
-const SPENDING = [tx({ id: 'S1', date: '2026-10-25', source: CARD, amount: 1382661 })];
+// The 684.217 đ opening debt is the statement of 20/10; 1.378.714 đ was spent after it.
+const SPENDING = [tx({ id: 'S1', date: '2026-10-25', source: CARD, amount: 1378714 })];
 const seedFor = (rows = SPENDING, sources = SOURCES, extra = {}) => ({
     fm_sources: JSON.stringify(sources),
-    fm_initial_balances: JSON.stringify({ [CARD]: -712493 }),
+    fm_initial_balances: JSON.stringify({ [CARD]: -684217 }),
     fm_transactions: JSON.stringify(rows),
     ...extra,
 });
@@ -42,14 +42,14 @@ async function openPay(page) {
 }
 
 test.describe('Nút Đã trả trên dòng Cần trả', () => {
-    test('đúng tình huống của chủ repo: có nút, mở hộp thoại điền sẵn số phải trả và ngày hôm nay', async ({
+    test('tình huống thường gặp: có nút, mở hộp thoại điền sẵn số phải trả và ngày hôm nay', async ({
         app,
     }) => {
         const { page } = await open(app);
 
         await openSources(page);
         await expect(dueLine(page)).toHaveText(
-            'Cần trả 712.493 đ trước 04/11/2026 (quá hạn 3 ngày)',
+            'Cần trả 684.217 đ trước 04/11/2026 (quá hạn 3 ngày)',
         );
         await expect(payButton(page)).toBeVisible();
         await expect(payButton(page)).toHaveAccessibleName('Ghi khoản đã trả cho thẻ Thẻ Tín Dụng');
@@ -59,9 +59,9 @@ test.describe('Nút Đã trả trên dòng Cần trả', () => {
         await expect(page.locator('#cardPayModal')).toHaveClass(/open/);
         await expect(page.locator('#cardPayTitle')).toHaveText('Trả sao kê Thẻ Tín Dụng');
         await expect(page.locator('#cardPayMessage')).toContainText(
-            'Cần trả 712.493 đ trước 04/11/2026',
+            'Cần trả 684.217 đ trước 04/11/2026',
         );
-        await expect(page.locator('#cardPayAmount')).toHaveValue('712.493');
+        await expect(page.locator('#cardPayAmount')).toHaveValue('684.217');
         await expect(page.locator('#cardPayAmount')).toBeFocused();
         await expect(page.locator('#cardPayDate')).toHaveValue('2026-11-07');
         // Not the card itself, not another card, not a loan.
@@ -80,7 +80,7 @@ test.describe('Nút Đã trả trên dòng Cần trả', () => {
         await page.selectOption('#cardPaySource', BANK);
         await page.fill('#cardPayDate', '2026-11-03');
         await expect(page.locator('#cardPaySourceHint')).toHaveText(
-            `Tạo giao dịch chuyển tiền từ ${BANK} sang ${CARD}: số dư ${BANK} giảm, nợ ${CARD} giảm. Số dư ${CARD} sau khi ghi: -1.382.661 đ.`,
+            `Tạo giao dịch chuyển tiền từ ${BANK} sang ${CARD}: số dư ${BANK} giảm, nợ ${CARD} giảm. Số dư ${CARD} sau khi ghi: -1.378.714 đ.`,
         );
         await page.click('#cardPayForm button[type=submit]');
 
@@ -94,21 +94,21 @@ test.describe('Nút Đã trả trên dòng Cần trả', () => {
             source: BANK,
             targetSource: CARD,
             category: 'Chuyển tiền nội bộ',
-            amount: 712493,
+            amount: 684217,
             note: `Trả sao kê ${CARD}`,
         });
         expect(created.id).toMatch(/^TX_CARDPAY_\d+$/);
         expect(created.updatedAt).toBeTruthy();
 
-        expect(await balance(page, CARD)).toBe(-1382661);
-        expect(await balance(page, BANK)).toBe(-712493);
+        expect(await balance(page, CARD)).toBe(-1378714);
+        expect(await balance(page, BANK)).toBe(-684217);
         await expect(dueLine(page)).toHaveCount(0);
         await expect(payButton(page)).toHaveCount(0);
-        await expect(card(page).locator('.card-value')).toHaveText('-1.382.661 đ');
+        await expect(card(page).locator('.card-value')).toHaveText('-1.378.714 đ');
         // The statement is paid, so the card shows the due day alone and no reminder comes back.
         await expect(card(page)).toContainText('Hạn thanh toán ngày 4 (còn 27 ngày)');
         await expect(page.locator('#toast-container')).toContainText(
-            `Đã ghi trả 712.493 đ cho ${CARD} từ ${BANK}.`,
+            `Đã ghi trả 684.217 đ cho ${CARD} từ ${BANK}.`,
         );
         // The button is gone: the focus stays on the card.
         await expect(card(page).locator('button[data-action="edit-balance"]')).toBeFocused();
@@ -131,12 +131,12 @@ test.describe('Nút Đã trả trên dòng Cần trả', () => {
         await page.click('#cardPayForm button[type=submit]');
 
         await expect(dueLine(page)).toHaveText(
-            'Cần trả 412.493 đ trước 04/11/2026 (quá hạn 3 ngày)',
+            'Cần trả 384.217 đ trước 04/11/2026 (quá hạn 3 ngày)',
         );
         await expect(payButton(page)).toBeVisible();
 
         await payButton(page).click();
-        await expect(page.locator('#cardPayAmount')).toHaveValue('412.493');
+        await expect(page.locator('#cardPayAmount')).toHaveValue('384.217');
         await expect(page.locator('#cardPaySource')).toHaveValue(BANK);
 
         // Remembered on this device across a reload.
@@ -154,11 +154,11 @@ test.describe('Nút Đã trả trên dòng Cần trả', () => {
         await openPay(page);
         await page.fill('#cardPayAmount', '2500000');
         await expect(page.locator('#cardPaySourceHint')).toContainText(
-            `Số dư ${CARD} sau khi ghi: 404.846 đ.`,
+            `Số dư ${CARD} sau khi ghi: 437.069 đ.`,
         );
         await page.click('#cardPayForm button[type=submit]');
 
-        expect(await balance(page, CARD)).toBe(404846);
+        expect(await balance(page, CARD)).toBe(437069);
     });
 
     test('số tiền rỗng hoặc 0 thì báo và giữ hộp thoại; Esc đóng mà không ghi gì, focus về nút Đã trả', async ({
@@ -237,7 +237,7 @@ test.describe('Khi nào có nút Đã trả', () => {
                 source: BANK,
                 targetSource: CARD,
                 category: 'Chuyển tiền nội bộ',
-                amount: 712493,
+                amount: 684217,
             }),
         ]);
 
@@ -298,7 +298,7 @@ test.describe('Chữ "Hạn thanh toán" không mâu thuẫn với "quá hạn"'
         await openSources(early.page);
         await expect(card(early.page)).toContainText('Hạn thanh toán ngày 4 (còn 3 ngày)');
         await expect(dueLine(early.page)).toHaveText(
-            'Cần trả 712.493 đ trước 04/11/2026 (còn 3 ngày)',
+            'Cần trả 684.217 đ trước 04/11/2026 (còn 3 ngày)',
         );
     });
 });
@@ -311,7 +311,7 @@ test.describe('Đã trả và đồng bộ', () => {
             now: NOW,
             seed: syncedSeed(SPENDING, {
                 fm_sources: JSON.stringify(SOURCES),
-                fm_initial_balances: JSON.stringify({ [CARD]: -712493 }),
+                fm_initial_balances: JSON.stringify({ [CARD]: -684217 }),
             }),
         });
 
@@ -328,7 +328,7 @@ test.describe('Đã trả và đồng bộ', () => {
             type: 'transfer',
             source: BANK,
             targetSource: CARD,
-            amount: 712493,
+            amount: 684217,
         });
     });
 });

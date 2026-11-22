@@ -69,7 +69,7 @@ function parseAmount(value) {
 
     if (!text) return NaN;
 
-    // Plain numbers ("224500", "17000.5") are read as-is; "224.500" / "224,500" as grouped digits.
+    // Plain numbers ("204500", "17000.5") are read as-is; "204.500" / "204,500" as grouped digits.
     if (/^-?\d+(\.\d{1,2})?$/.test(text)) return Number(text);
 
     return Number(text.replace(/[.,\s]/g, ''));

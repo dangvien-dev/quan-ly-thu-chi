@@ -9,8 +9,8 @@ const BANK = 'Thẻ NH Vpbank';
 const SOURCES = [
     { name: 'Tiền Mặt', kind: 'cash' },
     { name: BANK, kind: 'bank' },
-    { name: CARD, kind: 'credit', creditLimit: 37800000, statementDay: 20, dueDay: 4 },
-    { name: SPAY, kind: 'credit', creditLimit: 30000000, statementDay: 24, dueDay: 10 },
+    { name: CARD, kind: 'credit', creditLimit: 25000000, statementDay: 20, dueDay: 4 },
+    { name: SPAY, kind: 'credit', creditLimit: 20000000, statementDay: 24, dueDay: 10 },
     { name: 'Visa không ngày chốt', kind: 'credit' },
 ];
 const on = (source, id, date, amount, extra = {}) => tx({ id, date, source, amount, ...extra });

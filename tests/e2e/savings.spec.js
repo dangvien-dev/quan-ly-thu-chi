@@ -350,7 +350,7 @@ test.describe('Tự động gửi khi đến ngày lãnh lương', () => {
             now: '2026-10-20T03:00:00Z',
             seed: seed({
                 savings: plan({ day: 10, since: '2026-07-15', lastMonth: '2026-07' }),
-                balances: { [BANK]: 30000000 },
+                balances: { [BANK]: 20000000 },
             }),
         });
 

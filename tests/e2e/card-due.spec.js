@@ -7,7 +7,7 @@ const NOW = '2026-11-07T03:00:00Z'; // 7/11/2026 in Vietnam; Spaylater is due on
 const SPAY = {
     name: 'Spaylater',
     kind: 'credit',
-    creditLimit: 30000000,
+    creditLimit: 20000000,
     statementDay: 24,
     dueDay: 10,
 };
@@ -15,7 +15,7 @@ const SOURCES = [{ name: 'Tiền Mặt', kind: 'cash' }, { name: 'Thẻ Ngân H�
 // The statement of 24/10 holds 1.000.000 đ; the purchase of 30/10 belongs to the next statement.
 const OCTOBER = [
     tx({ id: 'A', date: '2026-10-05', source: 'Spaylater', amount: 1000000 }),
-    tx({ id: 'B', date: '2026-10-30', source: 'Spaylater', amount: 464140 }),
+    tx({ id: 'B', date: '2026-10-30', source: 'Spaylater', amount: 418270 }),
 ];
 const payment = (amount, date = '2026-11-05') =>
     tx({
@@ -147,7 +147,7 @@ test.describe('Hạn thanh toán thẻ', () => {
         const { page } = await app(setup(OCTOBER, '2026-11-25T03:00:00Z'));
 
         await openSources(page);
-        await expect(dueLine(page)).toContainText('Cần trả 1.464.140 đ trước 10/12/2026');
+        await expect(dueLine(page)).toContainText('Cần trả 1.418.270 đ trước 10/12/2026');
         await expect(dueLine(page)).not.toHaveClass(/source-warn/);
     });
 

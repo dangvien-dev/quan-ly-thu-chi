@@ -279,8 +279,8 @@ test.describe('Nguồn tiền', () => {
 test.describe('Số dư ban đầu của nguồn nợ', () => {
     const spay = [
         tx({ id: 'S1', date: '2026-10-30', source: 'Spaylater', amount: 75000 }),
-        tx({ id: 'S2', date: '2026-10-29', source: 'Spaylater', amount: 164640 }),
-        tx({ id: 'S3', date: '2026-10-26', source: 'Spaylater', amount: 224500 }),
+        tx({ id: 'S2', date: '2026-10-29', source: 'Spaylater', amount: 138770 }),
+        tx({ id: 'S3', date: '2026-10-26', source: 'Spaylater', amount: 204500 }),
     ];
     const seed = (balances) => ({
         fm_transactions: JSON.stringify(spay),
@@ -290,7 +290,7 @@ test.describe('Số dư ban đầu của nguồn nợ', () => {
     test('chi qua Spaylater (số dư ban đầu 0) thì dư nợ bằng đúng tổng đã chi', async ({ app }) => {
         const { page } = await app({ now: NOW, seed: seed({}) });
 
-        await expect(page.locator('#lbl-total-debt')).toHaveText('464.140 đ');
+        await expect(page.locator('#lbl-total-debt')).toHaveText('418.270 đ');
 
         await goTab(page, 'sources');
 
@@ -308,7 +308,7 @@ test.describe('Số dư ban đầu của nguồn nợ', () => {
 
         const spaylater = card(page, 'Spaylater');
 
-        await expect(spaylater).toContainText('35.860 đ');
+        await expect(spaylater).toContainText('81.730 đ');
         await expect(spaylater).toContainText('Số dư ban đầu 500.000 đ');
         await expect(spaylater).toContainText('nên chưa tính là dư nợ');
 
@@ -322,7 +322,7 @@ test.describe('Số dư ban đầu của nguồn nợ', () => {
     }) => {
         const { page } = await app({ now: NOW, seed: seed({ Spaylater: -200000 }) });
 
-        await expect(page.locator('#lbl-total-debt')).toHaveText('664.140 đ');
+        await expect(page.locator('#lbl-total-debt')).toHaveText('618.270 đ');
 
         await goTab(page, 'sources');
 
@@ -369,16 +369,16 @@ test.describe('Số dư ban đầu của nguồn nợ', () => {
         await card(page, 'Spaylater').locator('button[data-action=edit-balance]').click();
 
         await expect(card(page, 'Spaylater')).not.toContainText('Số dư ban đầu');
-        await expect(card(page, 'Spaylater')).toContainText('-464.140 đ');
-        await expect(page.locator('#lbl-total-debt')).toHaveText('464.140 đ');
+        await expect(card(page, 'Spaylater')).toContainText('-418.270 đ');
+        await expect(page.locator('#lbl-total-debt')).toHaveText('418.270 đ');
     });
 });
 
 test.describe('Khớp số dư thực tế', () => {
     const spay = [
         tx({ id: 'S1', date: '2026-10-30', source: 'Spaylater', amount: 75000 }),
-        tx({ id: 'S2', date: '2026-10-29', source: 'Spaylater', amount: 164640 }),
-        tx({ id: 'S3', date: '2026-10-26', source: 'Spaylater', amount: 224500 }),
+        tx({ id: 'S2', date: '2026-10-29', source: 'Spaylater', amount: 138770 }),
+        tx({ id: 'S3', date: '2026-10-26', source: 'Spaylater', amount: 204500 }),
     ];
     const sourcesWith = (spaylater) =>
         JSON.stringify([
@@ -392,17 +392,17 @@ test.describe('Khớp số dư thực tế', () => {
         card(page, name).locator('button[data-action=match-balance]');
     const opening = (page, name) => page.evaluate((key) => initialBalances[key], name);
 
-    test('SPayLater hạn mức 30 triệu, khả dụng 28.656.419 → nợ 1.343.581, số dư ban đầu tự tính', async ({
+    test('SPayLater hạn mức 20 triệu, khả dụng 18.712.065 → nợ 1.287.935, số dư ban đầu tự tính', async ({
         app,
     }) => {
         const { page, state } = await app({
             now: NOW,
-            promptValue: '28.656.419',
+            promptValue: '18.712.065',
             seed: {
                 fm_transactions: JSON.stringify(spay),
                 // The wrong value that made the debt read 0: the available amount typed as a balance.
-                fm_initial_balances: JSON.stringify({ Spaylater: 28656419 }),
-                fm_sources: sourcesWith({ creditLimit: 30000000, statementDay: 24, dueDay: 10 }),
+                fm_initial_balances: JSON.stringify({ Spaylater: 18712065 }),
+                fm_sources: sourcesWith({ creditLimit: 20000000, statementDay: 24, dueDay: 10 }),
             },
         });
 
@@ -413,38 +413,38 @@ test.describe('Khớp số dư thực tế', () => {
 
         expect(state.confirms).toHaveLength(1);
         expect(state.confirms[0]).toContain('KHẢ DỤNG');
-        expect(state.confirms[0]).toContain('hạn mức 30.000.000 đ');
-        await expect(card(page, 'Spaylater')).toContainText('-1.343.581 đ');
+        expect(state.confirms[0]).toContain('hạn mức 20.000.000 đ');
+        await expect(card(page, 'Spaylater')).toContainText('-1.287.935 đ');
         await expect(card(page, 'Spaylater')).toContainText(
-            'Hạn mức 30.000.000 đ · Khả dụng 28.656.419 đ',
+            'Hạn mức 20.000.000 đ · Khả dụng 18.712.065 đ',
         );
-        await expect(card(page, 'Spaylater')).toContainText('Số dư ban đầu -879.441 đ');
+        await expect(card(page, 'Spaylater')).toContainText('Số dư ban đầu -869.665 đ');
         await expect(card(page, 'Spaylater')).not.toContainText('chưa tính là dư nợ');
-        await expect(page.locator('#lbl-total-debt')).toHaveText('1.343.581 đ');
+        await expect(page.locator('#lbl-total-debt')).toHaveText('1.287.935 đ');
         await expect(page.locator('#toast-container')).toContainText('Đã khớp [Spaylater]');
-        expect(await opening(page, 'Spaylater')).toBe(-879441);
+        expect(await opening(page, 'Spaylater')).toBe(-869665);
 
         await page.reload();
 
-        expect(await opening(page, 'Spaylater')).toBe(-879441);
+        expect(await opening(page, 'Spaylater')).toBe(-869665);
     });
 
     test('khớp lại đúng số đang hiện thì số dư ban đầu không đổi', async ({ app }) => {
         const { page } = await app({
             now: NOW,
-            promptValue: '28.656.419',
+            promptValue: '18.712.065',
             seed: {
                 fm_transactions: JSON.stringify(spay),
-                fm_initial_balances: JSON.stringify({ Spaylater: -879441 }),
-                fm_sources: sourcesWith({ creditLimit: 30000000 }),
+                fm_initial_balances: JSON.stringify({ Spaylater: -869665 }),
+                fm_sources: sourcesWith({ creditLimit: 20000000 }),
             },
         });
 
         await goTab(page, 'sources');
         await matchButton(page, 'Spaylater').click();
 
-        expect(await opening(page, 'Spaylater')).toBe(-879441);
-        await expect(card(page, 'Spaylater')).toContainText('-1.343.581 đ');
+        expect(await opening(page, 'Spaylater')).toBe(-869665);
+        await expect(card(page, 'Spaylater')).toContainText('-1.287.935 đ');
     });
 
     test('nguồn thường: nhập số dư thực tế, số dư ban đầu bù phần chênh với các giao dịch', async ({
@@ -488,7 +488,7 @@ test.describe('Khớp số dư thực tế', () => {
         expect(state.confirms[0]).toContain('đang nợ thì nhập số âm');
         await expect(card(page, 'Spaylater')).toContainText('-1.000.000 đ');
         await expect(page.locator('#lbl-total-debt')).toHaveText('1.000.000 đ');
-        expect(await opening(page, 'Spaylater')).toBe(-535860);
+        expect(await opening(page, 'Spaylater')).toBe(-581730);
     });
 
     test('nhập sai thì báo lỗi và giữ nguyên số dư ban đầu', async ({ app }) => {

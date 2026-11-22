@@ -45,8 +45,8 @@ test('normalizeDate: ngày thuần, dd/mm/yyyy, ISO UTC theo giờ máy, rác', 
 
 test('normalizeTransaction chuẩn hoá số tiền chuỗi, loại bỏ dòng rỗng, cấp id khi thiếu', () => {
     assert.equal(
-        run('normalizeTransaction({id:"a",type:"income",amount:"224.500"}).amount'),
-        224500,
+        run('normalizeTransaction({id:"a",type:"income",amount:"204.500"}).amount'),
+        204500,
     );
     assert.equal(
         run('normalizeTransaction({id:"a",type:"income",amount:"17000.5"}).amount'),
@@ -477,7 +477,7 @@ test.describe('hiển thị ngày và ô nhập tiền', () => {
     });
 
     test('formatMoneyDigits và parseMoneyText là hai chiều của nhau', () => {
-        for (const value of [0, 7, 999, 1000, 17000, 224500, 15000000, 999999999999]) {
+        for (const value of [0, 7, 999, 1000, 17000, 204500, 15000000, 999999999999]) {
             assert.equal(run(`parseMoneyText(formatMoneyDigits(String(${value})))`), value);
         }
     });
@@ -999,24 +999,24 @@ test.describe('sổ tiết kiệm', () => {
 });
 
 test('openingBalanceToMatch: chỉ dịch số dư ban đầu, giữ nguyên các giao dịch', () => {
-    // Opening 500.000 and 464.140 spent: the balance shows 35.860; the real balance is -1.343.581.
+    // Opening 500.000 and 418.270 spent: the balance shows 81.730; the real balance is -1.287.935.
     assert.equal(
-        run('openingBalanceToMatch({target:-1343581,balance:35860,opening:500000})'),
-        -879441,
+        run('openingBalanceToMatch({target:-1287935,balance:81730,opening:500000})'),
+        -869665,
     );
     // Matching the number already shown changes nothing.
     assert.equal(
-        run('openingBalanceToMatch({target:-1343581,balance:-1343581,opening:-879441})'),
-        -879441,
+        run('openingBalanceToMatch({target:-1287935,balance:-1287935,opening:-869665})'),
+        -869665,
     );
     // No opening balance stored yet.
     assert.equal(run('openingBalanceToMatch({target:1200000,balance:1500000})'), -300000);
 });
 
 test('balanceFromAvailable: khả dụng trừ hạn mức, âm nghĩa là đang nợ', () => {
-    assert.equal(run('balanceFromAvailable(30000000,28656419)'), -1343581);
-    assert.equal(run('balanceFromAvailable(30000000,30000000)'), 0);
-    assert.equal(run('balanceFromAvailable(30000000,31000000)'), 1000000);
+    assert.equal(run('balanceFromAvailable(20000000,18712065)'), -1287935);
+    assert.equal(run('balanceFromAvailable(20000000,20000000)'), 0);
+    assert.equal(run('balanceFromAvailable(20000000,21000000)'), 1000000);
 });
 
 test('normalizeSalaryPlan: mức cảnh báo dư nợ mặc định 30, ngoài 1-100 về 30, làm tròn', () => {
@@ -1131,7 +1131,7 @@ test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ k
         JSON.parse(
             JSON.stringify(run(`computeCardDue(${source},[${list}],${opening},"${today}")`)),
         );
-    const october = [row('2026-10-05', 'expense', 1000000), row('2026-10-30', 'expense', 464140)];
+    const october = [row('2026-10-05', 'expense', 1000000), row('2026-10-30', 'expense', 418270)];
 
     // On 7/11 the 24/10 statement (1.000.000) is due on 10/11; the purchase of 30/10 is next month's.
     assert.deepEqual(due(october, '2026-11-07'), {
@@ -1168,7 +1168,7 @@ test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ k
 
     assert.equal(next.statementDate, '2026-11-24');
     assert.equal(next.dueDate, '2026-12-10');
-    assert.equal(next.amount, 1464140);
+    assert.equal(next.amount, 1418270);
     // Due today counts as 0 days left.
     assert.equal(due(october, '2026-11-10').daysLeft, 0);
 
@@ -1177,7 +1177,7 @@ test('computeCardDue: số phải trả là dư nợ lúc chốt sao kê trừ k
 
     assert.deepEqual(due(october, '2026-11-07', plain), {
         name: 'Spay',
-        amount: 1464140,
+        amount: 1418270,
         statementDate: '',
         dueDate: '2026-11-10',
         daysLeft: 3,
@@ -1708,10 +1708,10 @@ test('detectCsvLayout: bảng giao dịch thật của sao kê thẻ VPBank (ti�
             '21/09/26',
             '21/09/26',
             'Credit Account I2B Virtual Card payment;',
-            '1,614,164.00',
+            '1,523,907.00',
             'VND',
             '',
-            '1,614,164.00',
+            '1,523,907.00',
         ],
         [
             '23/09/26',
@@ -1751,7 +1751,7 @@ test('detectCsvLayout: bảng giao dịch thật của sao kê thẻ VPBank (ti�
     assert.deepEqual(
         built.items.map((item) => [item.date, item.type, item.amount]),
         [
-            ['2026-09-21', 'income', 1614164],
+            ['2026-09-21', 'income', 1523907],
             ['2026-09-23', 'expense', 132000],
             ['2026-09-23', 'expense', 10000],
             ['2026-09-23', 'expense', 1000],
@@ -2297,36 +2297,36 @@ test('guessImportTransfer: những dòng thường không bị nhận nhầm là
 
 const CARD_20 = '{name:"Thẻ Tín Dụng",kind:"credit",statementDay:20,dueDay:4';
 const CARD_ROWS = `[
-    {id:"A",date:"2026-10-22",type:"expense",source:"Thẻ Tín Dụng",amount:587160},
+    {id:"A",date:"2026-10-22",type:"expense",source:"Thẻ Tín Dụng",amount:612450},
     {id:"B",date:"2026-10-23",type:"expense",source:"Thẻ Tín Dụng",amount:73333},
     {id:"C",date:"2026-10-24",type:"expense",source:"Thẻ Tín Dụng",amount:30000},
-    {id:"D",date:"2026-11-03",type:"expense",source:"Thẻ Tín Dụng",amount:87778},
-    {id:"E",date:"2026-11-05",type:"expense",source:"Thẻ Tín Dụng",amount:604390},
-    {id:"P",date:"2026-10-21",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:1695414}
+    {id:"D",date:"2026-11-03",type:"expense",source:"Thẻ Tín Dụng",amount:91111},
+    {id:"E",date:"2026-11-05",type:"expense",source:"Thẻ Tín Dụng",amount:571820},
+    {id:"P",date:"2026-10-21",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:1644436}
 ]`;
 
 test('computeCardDue với mốc sao kê: số cần trả không còn dính số dư ban đầu bị Khớp số dư làm lệch', () => {
     const due = (card, opening, today = '2026-11-07', rows = CARD_ROWS) =>
         plain(run(`computeCardDue(${card},${rows},${opening},"${today}")`));
 
-    // Without the closing balance: the opening balance that "Khớp số dư" pushed to -1.747.180 (the
-    // book was missing 51.766 of charges) makes the paid statement look 51.766 short.
-    assert.equal(due(`${CARD_20}}`, -1747180).amount, 51766);
-    assert.equal(due(`${CARD_20}}`, -1695414), null);
+    // Without the closing balance: the opening balance that "Khớp số dư" pushed to -1.692.649 (the
+    // book was missing 48.213 of charges) makes the paid statement look 48.213 short.
+    assert.equal(due(`${CARD_20}}`, -1692649).amount, 48213);
+    assert.equal(due(`${CARD_20}}`, -1644436), null);
 
     // With the closing balance of the 20/10 statement the opening balance does not matter.
-    const anchored = `${CARD_20},lastStatement:{date:"2026-10-20",balance:1695414}}`;
+    const anchored = `${CARD_20},lastStatement:{date:"2026-10-20",balance:1644436}}`;
 
-    assert.equal(due(anchored, -1747180), null);
+    assert.equal(due(anchored, -1692649), null);
     assert.equal(due(anchored, -999), null);
     assert.equal(due(anchored, 5000000), null);
 
     // Not paid yet (the payment is not in the book): the whole statement is due, overdue by 3 days.
     const unpaid = CARD_ROWS.replace(/,\s*\{id:"P"[^}]*\}/, '');
 
-    assert.deepEqual(due(anchored, -1747180, '2026-11-07', unpaid), {
+    assert.deepEqual(due(anchored, -1692649, '2026-11-07', unpaid), {
         name: 'Thẻ Tín Dụng',
-        amount: 1695414,
+        amount: 1644436,
         statementDate: '2026-10-20',
         dueDate: '2026-11-04',
         daysLeft: -3,
@@ -2341,96 +2341,96 @@ test('computeCardDue với mốc sao kê: số cần trả không còn dính s�
             '2026-11-07',
             '[{id:"P",date:"2026-10-25",type:"transfer",source:"X",targetSource:"Thẻ Tín Dụng",amount:1000000}]',
         ).amount,
-        695414,
+        644436,
     );
 
-    // A balance from an older statement is rolled forward by what happened since: 1.614.164 on 20/9,
-    // paid on 21/9, then 1.695.414 of charges, makes 1.695.414 owed on 20/10.
-    const older = `${CARD_20},lastStatement:{date:"2026-09-20",balance:1614164}}`;
+    // A balance from an older statement is rolled forward by what happened since: 1.523.907 on 20/9,
+    // paid on 21/9, then 1.644.436 of charges, makes 1.644.436 owed on 20/10.
+    const older = `${CARD_20},lastStatement:{date:"2026-09-20",balance:1523907}}`;
     const cycle = `[
-        {id:"P0",date:"2026-09-21",type:"transfer",source:"X",targetSource:"Thẻ Tín Dụng",amount:1614164},
+        {id:"P0",date:"2026-09-21",type:"transfer",source:"X",targetSource:"Thẻ Tín Dụng",amount:1523907},
         {id:"C1",date:"2026-09-23",type:"expense",source:"Thẻ Tín Dụng",amount:1000000},
-        {id:"C2",date:"2026-10-20",type:"expense",source:"Thẻ Tín Dụng",amount:695414}
+        {id:"C2",date:"2026-10-20",type:"expense",source:"Thẻ Tín Dụng",amount:644436}
     ]`;
 
-    assert.equal(due(older, 0, '2026-11-07', cycle).amount, 1695414);
+    assert.equal(due(older, 0, '2026-11-07', cycle).amount, 1644436);
 
     // A closing balance dated after the latest statement day is not used (the date was mistyped).
     const future = `${CARD_20},lastStatement:{date:"2026-10-21",balance:1}}`;
 
-    assert.equal(due(future, -1747180).amount, 51766);
+    assert.equal(due(future, -1692649).amount, 48213);
 
     // `estimated` tells the card whether the amount rests on a printed closing balance: with a
     // statement day but none, it is only a guess from the initial balance; a mistyped (future)
     // balance does not count either.
-    assert.equal(due(`${CARD_20}}`, -1747180).estimated, true);
-    assert.equal(due(future, -1747180).estimated, true);
-    assert.equal(due(anchored, -1747180, '2026-11-07', unpaid).estimated, false);
+    assert.equal(due(`${CARD_20}}`, -1692649).estimated, true);
+    assert.equal(due(future, -1692649).estimated, true);
+    assert.equal(due(anchored, -1692649, '2026-11-07', unpaid).estimated, false);
 });
 
-test('computeCardDue con số liệu thật của thẻ VPBank (7/11/2026): số dư khớp ngân hàng mà vẫn báo cần trả 51.766 cho tới khi có dư nợ cuối kỳ', () => {
+test('computeCardDue với tình huống thẻ VPBank (số liệu minh hoạ): số dư khớp ngân hàng mà vẫn báo cần trả 48.213 cho tới khi có dư nợ cuối kỳ', () => {
     const card = (extra = '') =>
-        `{name:"Thẻ Tín Dụng",kind:"credit",creditLimit:37800000,statementDay:20,dueDay:4${extra}}`;
+        `{name:"Thẻ Tín Dụng",kind:"credit",creditLimit:25000000,statementDay:20,dueDay:4${extra}}`;
     const expense = (date, amount) =>
         `{id:"E${date}${amount}",date:"${date}",type:"expense",source:"Thẻ Tín Dụng",amount:${amount}}`;
     const pay = (date, amount) =>
         `{id:"T${date}${amount}",date:"${date}",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:${amount}}`;
     // The book as it was: the statement of 21/09-20/10 lacks 77.000 of fee / VAT lines and the
-    // charges after it lack 51.766; "Khớp số dư" put both, and the extra payment, into the opening.
+    // charges after it lack 48.213; "Khớp số dư" put both, and the extra payment, into the opening.
     const book = `[${[
         expense('2026-09-21', 100000),
         expense('2026-09-23', 73333),
         expense('2026-09-24', 132000),
         expense('2026-09-28', 30000),
         expense('2026-09-30', 582719),
-        expense('2026-10-03', 87778),
-        expense('2026-10-05', 552584),
+        expense('2026-10-03', 91111),
+        expense('2026-10-05', 498273),
         expense('2026-10-10', 30000),
         expense('2026-10-17', 30000),
-        expense('2026-10-22', 587160),
+        expense('2026-10-22', 612450),
         expense('2026-10-23', 73333),
         expense('2026-10-24', 30000),
         expense('2026-10-30', 582719),
-        expense('2026-11-03', 87778),
-        expense('2026-11-05', 604390),
-        pay('2026-09-21', 1614164),
-        pay('2026-10-21', 1695414),
-        pay('2026-10-21', 51766),
+        expense('2026-11-03', 91111),
+        expense('2026-11-05', 571820),
+        pay('2026-09-21', 1523907),
+        pay('2026-10-21', 1644436),
+        pay('2026-10-21', 48213),
     ].join(',')}]`;
-    const due = (source) => plain(run(`computeCardDue(${source},${book},-1794696,"2026-11-07")`));
+    const due = (source) => plain(run(`computeCardDue(${source},${book},-1697333,"2026-11-07")`));
     const balance = run(
-        `${book}.reduce((total, row) => total + sourceEffect(row, "Thẻ Tín Dụng"), -1794696)`,
+        `${book}.reduce((total, row) => total + sourceEffect(row, "Thẻ Tín Dụng"), -1697333)`,
     );
 
-    // The card balance is exactly what the bank shows (available 35.782.854 of 37.800.000) ...
-    assert.equal(balance, 35782854 - 37800000);
-    // ... yet the 20/10 statement still looks 51.766 unpaid, and the card knows it is only a guess.
+    // The card balance is exactly what the bank shows (available 22.990.354 of 25.000.000) ...
+    assert.equal(balance, 22990354 - 25000000);
+    // ... yet the 20/10 statement still looks 48.213 unpaid, and the card knows it is only a guess.
     const guessed = due(card());
 
-    assert.equal(guessed.amount, 51766);
+    assert.equal(guessed.amount, 48213);
     assert.equal(guessed.estimated, true);
     // With the closing balance printed on the statement it is paid.
-    assert.equal(due(card(',lastStatement:{date:"2026-10-20",balance:1695414}')), null);
+    assert.equal(due(card(',lastStatement:{date:"2026-10-20",balance:1644436}')), null);
 });
 
-test('computeStatementGap: sổ lệch bao nhiêu so với dư nợ in trên sao kê (số liệu thật của thẻ VPBank 7/11/2026)', () => {
+test('computeStatementGap: sổ lệch bao nhiêu so với dư nợ in trên sao kê (tình huống thẻ VPBank, số liệu minh hoạ)', () => {
     const card = (extra = '') =>
-        `{name:"Thẻ Tín Dụng",kind:"credit",creditLimit:37800000,statementDay:20,dueDay:4${extra}}`;
-    const anchored = card(',lastStatement:{date:"2026-10-20",balance:1695414}');
+        `{name:"Thẻ Tín Dụng",kind:"credit",creditLimit:25000000,statementDay:20,dueDay:4${extra}}`;
+    const anchored = card(',lastStatement:{date:"2026-10-20",balance:1644436}');
     const charge = (date, amount) =>
         `{id:"C${date}${amount}",date:"${date}",type:"expense",source:"Thẻ Tín Dụng",amount:${amount}}`;
     const pay = (date, amount) =>
         `{id:"P${date}${amount}",date:"${date}",type:"transfer",source:"Thẻ NH Vpbank",targetSource:"Thẻ Tín Dụng",amount:${amount}}`;
-    // The cycle 21/09-20/10 as the book has it after the statement was imported: 1.618.414 of
-    // purchases and 77.000 of fee / VAT lines = 1.695.414, the statement's own number.
+    // The cycle 21/09-20/10 as the book has it after the statement was imported: 1.567.436 of
+    // purchases and 77.000 of fee / VAT lines = 1.644.436, the statement's own number.
     const book = `[${[
         charge('2026-09-21', 100000),
         charge('2026-09-23', 73333),
         charge('2026-09-24', 132000),
         charge('2026-09-28', 30000),
         charge('2026-09-30', 582719),
-        charge('2026-10-03', 87778),
-        charge('2026-10-05', 552584),
+        charge('2026-10-03', 91111),
+        charge('2026-10-05', 498273),
         charge('2026-10-10', 30000),
         charge('2026-10-17', 30000),
         charge('2026-09-23', 11000),
@@ -2440,36 +2440,36 @@ test('computeStatementGap: sổ lệch bao nhiêu so với dư nợ in trên sao
         charge('2026-10-04', 11000),
         charge('2026-10-10', 11000),
         charge('2026-10-17', 11000),
-        pay('2026-09-21', 1614164),
-        pay('2026-10-21', 1695414),
+        pay('2026-09-21', 1523907),
+        pay('2026-10-21', 1644436),
         // after the statement day: not part of what the statement printed
-        charge('2026-10-22', 587160),
-        charge('2026-11-05', 604390),
+        charge('2026-10-22', 612450),
+        charge('2026-11-05', 571820),
     ].join(',')}]`;
     const gap = (source, opening) =>
         plain(run(`computeStatementGap(${source},${book},${opening})`));
 
-    // The statement of 20/09 was 1.614.164: with that opening the book agrees with 20/10.
-    assert.equal(gap(anchored, -1614164), null);
-    // "Khớp số dư" put 51.766 of fees posted after 20/10 into the opening: the book owes that much
+    // The statement of 20/09 was 1.523.907: with that opening the book agrees with 20/10.
+    assert.equal(gap(anchored, -1523907), null);
+    // "Khớp số dư" put 48.213 of fees posted after 20/10 into the opening: the book owes that much
     // more on the statement day than the statement says.
-    assert.deepEqual(gap(anchored, -1665930), {
+    assert.deepEqual(gap(anchored, -1572120), {
         date: '2026-10-20',
-        printed: 1695414,
-        book: 1747180,
-        gap: 51766,
+        printed: 1644436,
+        book: 1692649,
+        gap: 48213,
     });
     // An opening that is too small leaves the book owing less than the statement.
-    assert.equal(gap(anchored, -1514164).gap, -100000);
+    assert.equal(gap(anchored, -1423907).gap, -100000);
     // A few đồng of rounding are not a missing transaction; 11 are.
-    assert.equal(gap(anchored, -1614174), null);
-    assert.equal(gap(anchored, -1614175).gap, 11);
+    assert.equal(gap(anchored, -1523917), null);
+    assert.equal(gap(anchored, -1523918).gap, 11);
     // No closing balance, or not a card: nothing to compare.
-    assert.equal(gap(card(), -1665930), null);
-    assert.equal(gap('{name:"Thẻ NH Vpbank",kind:"bank"}', -1665930), null);
+    assert.equal(gap(card(), -1572120), null);
+    assert.equal(gap('{name:"Thẻ NH Vpbank",kind:"bank"}', -1572120), null);
     assert.equal(run(`computeStatementGap(null,${book},0)`), null);
     // Only what happened up to the statement day counts: the purchases of 22/10 and 5/11 do not.
-    assert.equal(gap(anchored, -1614164), null);
+    assert.equal(gap(anchored, -1523907), null);
 });
 
 test('normalizeSource: mốc sao kê chỉ có với thẻ tín dụng, được làm tròn, bỏ khi không hợp lệ', () => {
@@ -2477,9 +2477,9 @@ test('normalizeSource: mốc sao kê chỉ có với thẻ tín dụng, được
     const card = { name: 'Thẻ', kind: 'credit', statementDay: 20 };
 
     assert.deepEqual(
-        normalize({ ...card, lastStatement: { date: '2026-10-20', balance: '1695414.4' } })
+        normalize({ ...card, lastStatement: { date: '2026-10-20', balance: '1644436.4' } })
             .lastStatement,
-        { date: '2026-10-20', balance: 1695414 },
+        { date: '2026-10-20', balance: 1644436 },
     );
     assert.deepEqual(
         normalize({ ...card, lastStatement: { date: '20/10/2026', balance: 0 } }).lastStatement,
@@ -2547,10 +2547,10 @@ test('computeCardCycleTotals và lọc theo khoảng ngày: phát sinh và đã 
     );
 
     // The 21/10 transfer is the payment; the five expenses are charges.
-    assert.deepEqual(totals, { charges: 1382661, payments: 1695414, count: 6 });
+    assert.deepEqual(totals, { charges: 1378714, payments: 1644436, count: 6 });
     assert.deepEqual(
         plain(run(`computeCardCycleTotals(${CARD_ROWS},"Thẻ Tín Dụng","2026-10-22","2026-10-24")`)),
-        { charges: 690493, payments: 0, count: 3 },
+        { charges: 715783, payments: 0, count: 3 },
     );
     // Cash taken from the card (a transfer out) is a charge; other sources are not counted.
     assert.deepEqual(
@@ -2767,7 +2767,7 @@ test('buildPdfStatementTable: một ngày trong mô tả không mở dòng mới
 });
 
 test('parsePdfStatementSummary và reconcilePdfStatement: phần tóm tắt trang 1 của sao kê VPBank', () => {
-    // The first page of the owner's statement: box with the due date, then the summary table.
+    // The first page of a VPBank-style statement (made-up numbers): box with the due date, then the summary table.
     const page = [
         pdfCentre('Kỳ sao kê / Statement cycle : 21/09/2026 - 20/10/2026', 350, 770),
         pdfPiece('Ngày đến hạn thanh toán', 40, 700),
@@ -2776,18 +2776,18 @@ test('parsePdfStatementSummary và reconcilePdfStatement: phần tóm tắt tran
         pdfPiece('Due date', 40, 690),
         pdfPiece('Minimum Amount Due (VND)', 190, 690),
         pdfPiece('04/11/2026', 40, 665),
-        pdfPiece('-84,771.00', 190, 665),
-        pdfPiece('-1,695,414.00', 400, 665),
-        pdfPiece('-1,695,414.00', 520, 665),
+        pdfPiece('-82,222.00', 190, 665),
+        pdfPiece('-1,644,436.00', 400, 665),
+        pdfPiece('-1,644,436.00', 520, 665),
         pdfPiece('Dư nợ đầu kỳ', 40, 600),
         pdfPiece('Beginning Balance', 40, 590),
-        pdfPiece('-1,614,164.00', 40, 565),
+        pdfPiece('-1,523,907.00', 40, 565),
         pdfPiece('+', 150, 565),
-        pdfPiece('-1,695,414.50', 190, 565),
+        pdfPiece('-1,644,436.50', 190, 565),
         pdfPiece('+', 320, 565),
-        pdfPiece('1,614,164.00', 360, 565),
+        pdfPiece('1,523,907.00', 360, 565),
         pdfPiece('=', 490, 565),
-        pdfPiece('-1,695,414.00', 520, 565),
+        pdfPiece('-1,644,436.00', 520, 565),
     ];
     const summary = plain(run(`parsePdfStatementSummary(pdfPageLines(${JSON.stringify(page)},0))`));
 
@@ -2795,11 +2795,11 @@ test('parsePdfStatementSummary và reconcilePdfStatement: phần tóm tắt tran
         cycleFrom: '2026-09-21',
         cycleTo: '2026-10-20',
         dueDate: '2026-11-04',
-        minimumDue: 84771,
-        closingBalance: 1695414,
-        beginningBalance: 1614164,
-        totalDebit: 1695414.5,
-        paid: 1614164,
+        minimumDue: 82222,
+        closingBalance: 1644436,
+        beginningBalance: 1523907,
+        totalDebit: 1644436.5,
+        paid: 1523907,
     });
 
     // Nothing of that in a page: empty summary, no reconciliation.
@@ -2815,19 +2815,19 @@ test('parsePdfStatementSummary và reconcilePdfStatement: phần tóm tắt tran
         '{headerIndex:0,columns:{date:0,description:2,debit:-1,credit:-1,amount:3,balance:-1,reference:-1}}';
     const rows = JSON.stringify([
         ['h', 'h', 'h', 'h'],
-        ['21/09/26', 'x', 'thanh toán', '1,614,164.00'],
+        ['21/09/26', 'x', 'thanh toán', '1,523,907.00'],
         ['22/09/26', 'x', 'chi 1', '-1,000,000.00'],
-        ['23/09/26', 'x', 'chi 2', '-695,414.50'],
+        ['23/09/26', 'x', 'chi 2', '-644,436.50'],
     ]);
     const reconcile = (summaryValue, positive = false) =>
         plain(run(`reconcilePdfStatement(${rows},${layout},${summaryValue},${positive})`));
 
     // What went out is added up exactly (the .50 counts), what came in too.
     assert.deepEqual(reconcile(JSON.stringify(summary)), {
-        charges: 1695414.5,
-        payments: 1614164,
-        expectedCharges: 1695414.5,
-        expectedPayments: 1614164,
+        charges: 1644436.5,
+        payments: 1523907,
+        expectedCharges: 1644436.5,
+        expectedPayments: 1523907,
         chargesOk: true,
         paymentsOk: true,
     });
@@ -2853,7 +2853,7 @@ test('planCardStatementUpdate: chỉ trả về những gì sao kê làm đổi 
         cycleFrom: '2026-09-21',
         cycleTo: '2026-10-20',
         dueDate: '2026-11-04',
-        closingBalance: 1695414,
+        closingBalance: 1644436,
     };
     const plan = (source, value = summary) =>
         plain(run(`planCardStatementUpdate(${JSON.stringify(source)},${JSON.stringify(value)})`));
@@ -2863,13 +2863,13 @@ test('planCardStatementUpdate: chỉ trả về những gì sao kê làm đổi 
     assert.deepEqual(plan(card), {
         statementDay: 20,
         dueDay: 4,
-        lastStatement: { date: '2026-10-20', balance: 1695414 },
+        lastStatement: { date: '2026-10-20', balance: 1644436 },
     });
     // A wrong statement day (21 instead of 20) is corrected.
     assert.equal(plan({ ...card, statementDay: 21, dueDay: 4 }).statementDay, 20);
     // Already right: only the balance is new.
     assert.deepEqual(plan({ ...card, statementDay: 20, dueDay: 4 }), {
-        lastStatement: { date: '2026-10-20', balance: 1695414 },
+        lastStatement: { date: '2026-10-20', balance: 1644436 },
     });
     // Already holds exactly this: nothing to do.
     assert.equal(
@@ -2877,7 +2877,7 @@ test('planCardStatementUpdate: chỉ trả về những gì sao kê làm đổi 
             ...card,
             statementDay: 20,
             dueDay: 4,
-            lastStatement: { date: '2026-10-20', balance: 1695414 },
+            lastStatement: { date: '2026-10-20', balance: 1644436 },
         }),
         null,
     );
@@ -2889,7 +2889,7 @@ test('planCardStatementUpdate: chỉ trả về những gì sao kê làm đổi 
             dueDay: 4,
             lastStatement: { date: '2026-10-20', balance: 5 },
         }).lastStatement,
-        { date: '2026-10-20', balance: 1695414 },
+        { date: '2026-10-20', balance: 1644436 },
     );
     assert.equal(
         plan({
@@ -2925,7 +2925,7 @@ test('planCardStatementUpdate: chỉ trả về những gì sao kê làm đổi 
 
 test('parseBankNumber: giá trị đúng không làm tròn, parseBankAmount làm tròn theo độ lớn', () => {
     assert.equal(run('parseBankNumber("-582,719.50")'), -582719.5);
-    assert.equal(run('parseBankNumber("1,695,414.00")'), 1695414);
+    assert.equal(run('parseBankNumber("1,644,436.00")'), 1644436);
     assert.equal(run('parseBankNumber("-22.22")'), -22.22);
     assert.ok(Number.isNaN(run('parseBankNumber("abc")')));
     assert.equal(run('parseBankAmount("-582,719.50")'), -582720);

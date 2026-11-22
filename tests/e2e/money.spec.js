@@ -78,8 +78,8 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
         await page.fill('#txAmount', '17000');
         await expect(page.locator('#txAmount')).toHaveValue('17.000');
 
-        await page.fill('#txAmount', '224.500 đ');
-        await expect(page.locator('#txAmount')).toHaveValue('224.500');
+        await page.fill('#txAmount', '204.500 đ');
+        await expect(page.locator('#txAmount')).toHaveValue('204.500');
     });
 
     test('tối đa 15 chữ số', async ({ app }) => {
@@ -108,7 +108,7 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
         app,
     }) => {
         const { page } = await app({
-            seed: { fm_transactions: JSON.stringify([tx({ id: 'TX_1', amount: 224500 })]) },
+            seed: { fm_transactions: JSON.stringify([tx({ id: 'TX_1', amount: 204500 })]) },
         });
 
         await page.click('header .btn');
@@ -118,10 +118,10 @@ test.describe('Ô nhập tiền có dấu phân cách hàng nghìn', () => {
 
         await goTransactions(page);
         await page.click('#transaction-table-body [data-action=edit]');
-        await expect(page.locator('#txAmount')).toHaveValue('224.500');
+        await expect(page.locator('#txAmount')).toHaveValue('204.500');
 
         await page.locator('#txAmount').pressSequentially('0');
-        await expect(page.locator('#txAmount')).toHaveValue('2.245.000');
+        await expect(page.locator('#txAmount')).toHaveValue('2.045.000');
     });
 
     test('mọi ô tiền là ô văn bản có bàn phím số, không còn type=number', async ({ app }) => {

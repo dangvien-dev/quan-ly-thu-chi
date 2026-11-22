@@ -8,7 +8,7 @@ const { createGas, dateCell } = require('./sandbox');
 const HEADER_7 = ['id', 'date', 'type', 'source', 'category', 'amount', 'note'];
 const HEADER_9 = [...HEADER_7, 'targetSource', 'updatedAt'];
 
-// The existing "Transactions" sheet of DataThuChi_CaNhan: 7 columns, real date cells.
+// The existing "Transactions" sheet of the owner's spreadsheet: 7 columns, real date cells.
 const existingSheet = () => [
     HEADER_7,
     [
@@ -26,7 +26,7 @@ const existingSheet = () => [
         'expense',
         'Spaylater',
         'Đồ nghề và dụng cụ',
-        224500,
+        204500,
         'Túi đồ nghề Daikin',
     ],
 ];
@@ -204,7 +204,7 @@ test.describe('giao thức v2', () => {
         const rows = gas.get();
 
         assert.equal(rows.find((item) => item.id === 'TX_1793107199811').amount, 18000);
-        assert.equal(rows.find((item) => item.id === 'TX_1793107122617').amount, 224500);
+        assert.equal(rows.find((item) => item.id === 'TX_1793107122617').amount, 204500);
     });
 
     test('deletes xóa dòng; xóa rồi upsert lại cùng id trong một yêu cầu thì còn đúng một dòng', () => {

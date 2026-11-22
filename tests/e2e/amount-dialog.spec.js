@@ -63,10 +63,10 @@ test.describe('Hộp thoại nhập số tiền', () => {
 
         await openEditBalance(page, 'Spaylater');
         await expect(page.locator(FIELD)).toHaveAttribute('inputmode', 'text');
-        await page.locator(FIELD).pressSequentially('-879441');
-        await expect(page.locator(FIELD)).toHaveValue('-879.441');
+        await page.locator(FIELD).pressSequentially('-869665');
+        await expect(page.locator(FIELD)).toHaveValue('-869.665');
         await page.keyboard.press('Enter');
-        expect(await initial(page, 'Spaylater')).toBe(-879441);
+        expect(await initial(page, 'Spaylater')).toBe(-869665);
 
         // The next question does not inherit the previous one's minus sign.
         await goTab(page, 'categories');
@@ -145,7 +145,7 @@ test.describe('Hộp thoại nhập số tiền', () => {
             seed: {
                 fm_sources: JSON.stringify([
                     { name: 'Tiền Mặt', kind: 'cash' },
-                    { name: 'Spaylater', kind: 'credit', creditLimit: 30000000 },
+                    { name: 'Spaylater', kind: 'credit', creditLimit: 20000000 },
                 ]),
             },
         });
@@ -163,12 +163,12 @@ test.describe('Hộp thoại nhập số tiền', () => {
                 .evaluate((element) => getComputedStyle(element).whiteSpace),
         ).toBe('pre-line');
 
-        await page.locator(FIELD).pressSequentially('28656419');
-        await expect(page.locator(FIELD)).toHaveValue('28.656.419');
+        await page.locator(FIELD).pressSequentially('18712065');
+        await expect(page.locator(FIELD)).toHaveValue('18.712.065');
         await page.keyboard.press('Enter');
 
-        await expect(card(page, 'Spaylater')).toContainText('-1.343.581 đ');
-        await expect(page.locator('#lbl-total-debt')).toHaveText('1.343.581 đ');
+        await expect(card(page, 'Spaylater')).toContainText('-1.287.935 đ');
+        await expect(page.locator('#lbl-total-debt')).toHaveText('1.287.935 đ');
     });
 
     test('trả nợ: số còn lại hiện sẵn có dấu chấm; gõ quá số còn lại thì báo, đúng số thì tất toán', async ({

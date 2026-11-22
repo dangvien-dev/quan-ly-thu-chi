@@ -21,8 +21,8 @@ const ACCOUNT = [
 // The card's statement: a charge, and the payment made from the person's own account.
 const CARD_STATEMENT = [
     HEADER,
-    '20/10/2026,FT010,,1.695.414,0,Credit Account I2B Virtual Card payment',
-    '21/10/2026,FT011,587.160,,0,CLAUDE.AI SUBSCRIPTION',
+    '20/10/2026,FT010,,1.644.436,0,Credit Account I2B Virtual Card payment',
+    '21/10/2026,FT011,612.450,,0,CLAUDE.AI SUBSCRIPTION',
 ].join('\r\n');
 
 const file = (text, name = 'sao-ke.csv') => ({
@@ -115,7 +115,7 @@ test.describe('Nhập sao kê: chuyển tiền giữa các nguồn', () => {
         app,
     }) => {
         const { page } = await open(app, {
-            fm_initial_balances: JSON.stringify({ [BANK]: 10000000, [CARD]: -1695414 }),
+            fm_initial_balances: JSON.stringify({ [BANK]: 10000000, [CARD]: -1644436 }),
         });
 
         await toPreview(page, CARD_STATEMENT, CARD);
@@ -123,10 +123,10 @@ test.describe('Nhập sao kê: chuyển tiền giữa các nguồn', () => {
         await expect(type(page, 0)).toHaveValue('transfer-in');
         await expect(counter(page, 0)).toHaveValue(BANK);
         await expect(row(page, 0)).toContainText('Có vẻ là trả sao kê thẻ');
-        await expect(row(page, 0).locator('td[data-label="Số tiền"]')).toHaveText('+1.695.414 đ');
+        await expect(row(page, 0).locator('td[data-label="Số tiền"]')).toHaveText('+1.644.436 đ');
         await expect(type(page, 1)).toHaveValue('expense');
         await expect(summary(page)).toContainText(
-            'chi 587.160 đ, thu 0 đ, chuyển tiền giữa các nguồn 1 giao dịch (1.695.414 đ)',
+            'chi 612.450 đ, thu 0 đ, chuyển tiền giữa các nguồn 1 giao dịch (1.644.436 đ)',
         );
 
         await page.click('#import-commit');
@@ -136,9 +136,9 @@ test.describe('Nhập sao kê: chuyển tiền giữa các nguồn', () => {
             source: BANK,
             targetSource: CARD,
             category: TRANSFER,
-            amount: 1695414,
+            amount: 1644436,
         });
-        expect(await balances(page)).toMatchObject({ [BANK]: 8304586, [CARD]: -587160 });
+        expect(await balances(page)).toMatchObject({ [BANK]: 8355564, [CARD]: -612450 });
     });
 
     test('nguồn người dùng vừa trả thẻ được ưu tiên làm nguồn trả', async ({ app }) => {

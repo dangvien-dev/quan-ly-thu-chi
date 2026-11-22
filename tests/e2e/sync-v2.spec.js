@@ -645,12 +645,12 @@ test.describe('Script cũ vẫn dùng được', () => {
 
 test.describe('Số dư ban đầu và quay lại cửa sổ (nhiều thiết bị)', () => {
     const NOW = '2026-10-30T03:00:00Z';
-    const spay = [tx({ id: 'S1', date: '2026-10-05', source: 'Spaylater', amount: 464140 })];
+    const spay = [tx({ id: 'S1', date: '2026-10-05', source: 'Spaylater', amount: 418270 })];
     const sourcesWithLimit = JSON.stringify([
         { name: 'Tiền Mặt', kind: 'cash' },
         { name: 'Thẻ Ngân Hàng', kind: 'bank' },
         { name: 'Thẻ Tín Dụng', kind: 'credit' },
-        { name: 'Spaylater', kind: 'credit', creditLimit: 30000000 },
+        { name: 'Spaylater', kind: 'credit', creditLimit: 20000000 },
         { name: 'Nợ Công Ty', kind: 'debt' },
     ]);
     const seed = {
@@ -662,19 +662,19 @@ test.describe('Số dư ban đầu và quay lại cửa sổ (nhiều thiết b�
 
     test('Khớp số dư đẩy lên server ngay, máy khác mở lên thấy đúng dư nợ', async ({ app }) => {
         const server = newServer('v2');
-        const a = await app({ server, now: NOW, seed, promptValue: '28.656.419' });
+        const a = await app({ server, now: NOW, seed, promptValue: '18.712.065' });
 
         await goTab(a.page, 'sources');
         await card(a.page, 'Spaylater').locator('button[data-action=match-balance]').click();
         await wait(500);
 
         // Nothing else was done on this device: the change must not wait for the next sync.
-        expect(serverBalances(server).Spaylater).toBe(-879441);
+        expect(serverBalances(server).Spaylater).toBe(-869665);
         expect(await pending(a.page)).toMatchObject({ meta: [] });
 
         const b = await app({ server, now: NOW });
 
-        await expect(b.page.locator('#lbl-total-debt')).toHaveText('1.343.581 đ');
+        await expect(b.page.locator('#lbl-total-debt')).toHaveText('1.287.935 đ');
     });
 
     test('Sửa số dư cũng đẩy lên server ngay', async ({ app }) => {
@@ -725,9 +725,9 @@ test.describe('Số dư ban đầu và quay lại cửa sổ (nhiều thiết b�
     }) => {
         const server = newServer('v2');
         const a = await app({ server, now: NOW, seed });
-        const b = await app({ server, now: NOW, promptValue: '28.656.419' });
+        const b = await app({ server, now: NOW, promptValue: '18.712.065' });
 
-        await expect(a.page.locator('#lbl-total-debt')).toHaveText('464.140 đ');
+        await expect(a.page.locator('#lbl-total-debt')).toHaveText('418.270 đ');
 
         await goTab(b.page, 'sources');
         await card(b.page, 'Spaylater').locator('button[data-action=match-balance]').click();
@@ -747,7 +747,7 @@ test.describe('Số dư ban đầu và quay lại cửa sổ (nhiều thiết b�
         await wait(500);
 
         expect(a.state.gets).toBe(before + 1);
-        await expect(a.page.locator('#lbl-total-debt')).toHaveText('1.343.581 đ');
+        await expect(a.page.locator('#lbl-total-debt')).toHaveText('1.287.935 đ');
         // The badge was not switched to "Đang tải..." for a background refresh that succeeded.
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
     });
