@@ -316,6 +316,88 @@ test.describe('giao thức v2', () => {
         assert.deepEqual(ids(gas), before);
     });
 
+    test('review vòng 2: replace có giao dịch hợp lệ nhưng meta quá lớn thì không đổi gì cả', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const budgets = { value: { 'Ăn uống': 1 }, updatedAt: '2026-10-28T00:00:00.000Z' };
+
+        sync(gas, { meta: { budgets } });
+
+        const before = gas.get({ v: '2' });
+        const reply = sync(gas, {
+            replace: true,
+            upserts: [row({ id: 'TX_RESTORED' })],
+            meta: {
+                budgets: { value: { 'Đi lại': 2 }, updatedAt: '2026-10-29T00:00:00.000Z' },
+                debts: { value: ['x'.repeat(50000)], updatedAt: '2026-10-29T00:00:00.000Z' },
+            },
+        });
+        const after = gas.get({ v: '2' });
+
+        assert.match(reply.error, /quá lớn/);
+        assert.deepEqual(after.transactions, before.transactions);
+        assert.deepEqual(after.meta, before.meta);
+    });
+
+    test('review vòng 2: ghi Meta lỗi giữa chừng thì Transactions cũng được đặt lại', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        sync(gas, {
+            meta: { budgets: { value: { a: 1 }, updatedAt: '2026-10-28T00:00:00.000Z' } },
+        });
+
+        const before = gas.get({ v: '2' });
+        const meta = gas.sheet('Meta');
+        const getRange = meta.getRange;
+        let failed = false;
+
+        // The Meta write fails after Transactions was already rewritten.
+        meta.getRange = (...args) => {
+            const range = getRange(...args);
+            const setValues = range.setValues;
+
+            range.setValues = (values) => {
+                if (!failed && args[0] === 2) {
+                    failed = true;
+                    throw new Error('Service error: Spreadsheets');
+                }
+
+                return setValues(values);
+            };
+
+            return range;
+        };
+
+        const reply = sync(gas, {
+            replace: true,
+            upserts: [row({ id: 'TX_RESTORED' })],
+            meta: { budgets: { value: { b: 2 }, updatedAt: '2026-10-29T00:00:00.000Z' } },
+        });
+
+        meta.getRange = getRange;
+        assert.ok(failed);
+        assert.match(reply.error, /Service error/);
+
+        const after = gas.get({ v: '2' });
+
+        assert.deepEqual(after.transactions, before.transactions);
+        assert.deepEqual(after.meta, before.meta);
+    });
+
+    test('review vòng 2: deletes làm trống Sheet cần confirmWipe; xóa bớt thì không', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const all = ids(gas);
+
+        assert.match(sync(gas, { deletes: all }).error, /confirmWipe/);
+        assert.deepEqual(ids(gas), all);
+
+        sync(gas, { deletes: [all[0]] });
+        assert.deepEqual(ids(gas), all.slice(1));
+
+        // The last transaction can still be deleted on purpose.
+        sync(gas, { deletes: all.slice(1), confirmWipe: true });
+        assert.deepEqual(ids(gas), []);
+    });
+
     test('SEC-005: ô quá 50.000 ký tự bị từ chối trước khi xóa, Sheet giữ nguyên', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
         const before = gas.get();

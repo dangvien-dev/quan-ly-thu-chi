@@ -28,8 +28,10 @@
  *          updatedAt}}}                   -> the same object, after applying the changes.
  *         A row or meta value is only overwritten by one with an equal or newer updatedAt.
  *         With replace: true the upserts are the complete list and meta is overwritten. A replace
- *         that would leave no transaction at all (while the sheet still has some) is refused
- *         unless the body also says confirmWipe: true, so no stray request can empty the sheet.
+ *         Any request that would leave no transaction at all (while the sheet still has some:
+ *         a replace with an empty list, or deletes of every row) is refused unless the body also
+ *         says confirmWipe: true, so no stray request can empty the sheet. A request is all or
+ *         nothing: transactions and meta are both checked before either sheet is written.
  *    GET  ?action=sync&payload=<json>     -> same as the POST (fallback when a POST is blocked).
  *  Legacy (the original script's requests, so older clients keep working)
  *    GET                                  -> JSON array of transactions
@@ -427,30 +429,33 @@ function readState_() {
     };
 }
 
-function applyTransactionChanges_(body) {
+/** Throws when one field of a transaction row cannot be stored in a Sheets cell. */
+function assertTransactionFits_(row) {
+    COLUMNS.forEach(function (name) {
+        assertCellFits_(row[name], 'Giao dịch "' + row.id + '" (' + name + ')');
+    });
+}
+
+/**
+ * The complete transaction list a sync request leads to, or null when it changes nothing. Reads
+ * only: every check (wipe guard, cell sizes) happens here, before anything is written.
+ * A request that would leave no transaction on a sheet that has some (a replace with an empty
+ * list, or deletes of every row) needs confirmWipe: true.
+ */
+function planTransactionChanges_(body) {
     const upserts = Array.isArray(body.upserts) ? body.upserts : [];
     const deletes = Array.isArray(body.deletes) ? body.deletes.map(String) : [];
     const replace = body.replace === true;
 
-    if (!replace && !upserts.length && !deletes.length) return;
+    if (!replace && !upserts.length && !deletes.length) return null;
 
-    if (
-        replace &&
-        body.confirmWipe !== true &&
-        !upserts.some(function (item) {
-            return cleanTransaction_(item) !== null;
-        }) &&
-        readTransactions_().length > 0
-    ) {
-        throw new Error('Từ chối xóa toàn bộ giao dịch: yêu cầu không có confirmWipe');
-    }
-
+    const existing = readTransactions_();
     // Rows by id, in sheet order (ids are unique in `order`).
     const rows = Object.create(null);
     const order = [];
 
     if (!replace) {
-        readTransactions_().forEach(function (row) {
+        existing.forEach(function (row) {
             const id = String(row.id);
 
             if (!(id in rows)) order.push(id);
@@ -479,28 +484,34 @@ function applyTransactionChanges_(body) {
     // A deleted id stays in `order` but no longer has a row; an id deleted and upserted again
     // appears once.
     const written = Object.create(null);
+    const list = order
+        .filter(function (id) {
+            if (!(id in rows) || id in written) return false;
 
-    writeTransactions_(
-        order
-            .filter(function (id) {
-                if (!(id in rows) || id in written) return false;
+            written[id] = true;
 
-                written[id] = true;
+            return true;
+        })
+        .map(function (id) {
+            return rows[id];
+        });
 
-                return true;
-            })
-            .map(function (id) {
-                return rows[id];
-            }),
-    );
+    if (!list.length && existing.length && body.confirmWipe !== true) {
+        throw new Error('Từ chối xóa toàn bộ giao dịch: yêu cầu không có confirmWipe');
+    }
+
+    list.forEach(assertTransactionFits_);
+
+    return list;
 }
 
-function applyMetaChanges_(incoming, force) {
-    if (!incoming || typeof incoming !== 'object') return;
+/** The complete Meta rows a sync request leads to, or null when nothing changes. Reads only. */
+function planMetaChanges_(incoming, force) {
+    if (!incoming || typeof incoming !== 'object') return null;
 
     const keys = Object.keys(incoming);
 
-    if (!keys.length) return;
+    if (!keys.length) return null;
 
     const current = readMetaRows_();
     let changed = false;
@@ -517,22 +528,68 @@ function applyMetaChanges_(incoming, force) {
             throw new Error('Dữ liệu "' + key + '" quá lớn để lưu trong một ô của Google Sheets');
         }
 
+        assertCellFits_(key, 'Khóa meta');
+        assertCellFits_(updatedAt, 'Dữ liệu "' + key + '" (updatedAt)');
+
         if (force || !current[key] || updatedAt >= current[key].updatedAt) {
             current[key] = { value: text, updatedAt: updatedAt };
             changed = true;
         }
     });
 
-    if (changed) writeMetaRows_(current);
+    return changed ? current : null;
 }
 
+/** The current data rows of a sheet, to put back with restoreDataRows_. */
+function snapshotDataRows_(name, columns) {
+    const sheet = getSheet_(name);
+    const width = ensureHeader_(sheet, columns).length;
+    const lastRow = sheet.getLastRow();
+
+    return {
+        sheet: sheet,
+        width: width,
+        rows: lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, width).getValues() : [],
+    };
+}
+
+function restoreDataRows_(snapshot) {
+    try {
+        replaceDataRows_(snapshot.sheet, snapshot.width, snapshot.rows);
+    } catch (error) {
+        // Best effort: the error that made us restore is the one reported.
+    }
+}
+
+/**
+ * One sync request is all or nothing: the whole payload (transactions and meta) is checked before
+ * anything is written, and if the Meta write fails after Transactions was rewritten, Transactions
+ * is put back (each write already restores its own sheet when it fails).
+ */
 function handleSync_(body) {
     if (!body || typeof body !== 'object' || !isAuthorized_(body.token)) {
         throw new Error('unauthorized');
     }
 
-    applyTransactionChanges_(body);
-    applyMetaChanges_(body.meta, body.replace === true);
+    const transactions = planTransactionChanges_(body);
+    const meta = planMetaChanges_(body.meta, body.replace === true);
+
+    if (transactions) {
+        const before = meta ? snapshotDataRows_(TRANSACTIONS_SHEET, COLUMNS) : null;
+
+        writeTransactions_(transactions);
+
+        if (meta) {
+            try {
+                writeMetaRows_(meta);
+            } catch (error) {
+                restoreDataRows_(before);
+                throw error;
+            }
+        }
+    } else if (meta) {
+        writeMetaRows_(meta);
+    }
 
     return readState_();
 }
