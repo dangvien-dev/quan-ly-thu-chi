@@ -510,6 +510,9 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(asked).toBe(2);
         expect(await page.evaluate(() => transactions.length)).toBe(3);
         expect(serverRows(server)).toEqual([]);
+        // Review round 2: not "Đã lưu" while rows exist only on this device.
+        await expect(page.locator('#sync-status')).toContainText('Chờ xử lý (3)');
+        await expect(page.locator('#sync-status')).not.toContainText('Đã lưu');
 
         // A later sync in the same session (a new transaction) neither asks again nor uploads them.
         await addExpense(page, 5000, 'moi');
@@ -518,12 +521,44 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(state.confirms.length).toBe(asked);
         expect(serverRows(server).map((item) => item.note)).toEqual(['moi']);
         expect(await page.evaluate(() => transactions.length)).toBe(4);
+        await expect(page.locator('#sync-status')).toContainText('Chờ xử lý (3)');
 
         // Opening the app again asks again.
         await page.reload();
         await wait(600);
 
         expect(state.confirms.length).toBeGreaterThan(asked);
+    });
+
+    test('review vòng 2: xóa giao dịch cuối cùng vẫn lên Sheet (gửi kèm confirmWipe)', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        await goTransactions(page);
+        await page.click('#transaction-table-body [data-action=delete]');
+        await wait(500);
+
+        expect(serverRows(server)).toEqual([]);
+        expect(lastBody(state).confirmWipe).toBe(true);
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 2: xóa một trong nhiều giao dịch không gửi confirmWipe', async ({ app }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        await goTransactions(page);
+        await page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_2']);
+        expect(lastBody(state).confirmWipe).toBe(false);
     });
 
     test('SEC-001: tập nhỏ mất quá nửa (6 → 1) cũng hỏi', async ({ app }) => {

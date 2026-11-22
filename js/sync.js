@@ -62,13 +62,27 @@ const SYNC_BADGES = {
     locked: '<i class="fa-solid fa-lock" style="color:var(--danger)"></i> Sai mã bảo vệ',
 };
 
+/** Transactions kept here with "Để sau": on this device but not on the Sheet. */
+function deferredLossCount() {
+    return transactions.filter((transaction) => deferredLossIds.has(transaction.id)).length;
+}
+
 function setSyncBadge(state, detail = '') {
     const badge = document.getElementById('sync-status');
 
-    if (badge) {
-        badge.innerHTML = SYNC_BADGES[state];
-        badge.title = detail;
+    if (!badge) return;
+
+    const waiting = state === 'synced' ? deferredLossCount() : 0;
+
+    if (waiting) {
+        // Not "saved": these rows exist only here until the user decides (see decideRemoteLoss).
+        badge.innerHTML = `<i class="fa-solid fa-circle-exclamation" style="color:var(--warning)"></i> Chờ xử lý (${waiting})`;
+        badge.title = `${waiting} giao dịch có trên máy này nhưng không còn trên Google Sheet và đang chờ bạn quyết định. Tải lại ứng dụng để chọn Khôi phục hoặc Xóa.`;
+        return;
     }
+
+    badge.innerHTML = SYNC_BADGES[state];
+    badge.title = detail;
 }
 
 /** The badge state for a failed request: a wrong token is not a connection problem. */
@@ -407,15 +421,18 @@ function buildV2Payload() {
         (key) => META_DEFS[key],
     );
     const updated = readMetaUpdated();
+    const deletes = replace ? [] : readDeletedIds();
 
     return {
         action: 'sync',
         token: webAppToken,
         replace,
-        // Code.gs refuses a replace that empties the Sheet unless it is asked for explicitly.
-        confirmWipe: replace && upserts.length === 0,
+        // Code.gs refuses a request that empties the Sheet unless it is asked for explicitly: only
+        // when this device holds no transaction any more (reset, empty backup, the last one
+        // deleted) is an empty Sheet what the user wants.
+        confirmWipe: transactions.length === 0 && (replace || deletes.length > 0),
         upserts,
-        deletes: replace ? [] : readDeletedIds(),
+        deletes,
         meta: Object.fromEntries(
             metaKeys.map((key) => [
                 key,
