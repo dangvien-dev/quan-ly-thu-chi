@@ -114,8 +114,9 @@ function createGas({
     const stats = { locks: 0, held: false, flushes: 0, flushesOutsideLock: 0 };
     // Script Properties the script may also write (a copy: the options object may be frozen).
     const props = { ...properties };
-    // faults.flush: how many coming SpreadsheetApp.flush() calls throw.
-    const faults = { flush: 0 };
+    // faults.flush: how many coming SpreadsheetApp.flush() calls throw. faults.property: a function
+    // (key, value) => boolean; a Script Property write for which it returns true throws.
+    const faults = { flush: 0, property: null };
     const book = new Map(
         Object.entries(sheets).map(([name, grid]) => [name, createSheet(grid, sizes[name])]),
     );
@@ -156,6 +157,10 @@ function createGas({
             getScriptProperties: () => ({
                 getProperty: (key) => props[key] ?? null,
                 setProperty(key, value) {
+                    if (faults.property && faults.property(key, String(value))) {
+                        throw new Error('Service error: PropertiesService');
+                    }
+
                     props[key] = String(value);
                 },
             }),

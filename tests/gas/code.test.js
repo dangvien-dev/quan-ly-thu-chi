@@ -44,6 +44,36 @@ const row = (overrides = {}) => ({
     ...overrides,
 });
 const sync = (gas, body) => gas.post({ action: 'sync', ...body });
+const BUDGET = (value) => ({ budgets: { value, updatedAt: '2026-11-22T00:00:00.000Z' } });
+
+/** The first bulk write of data rows to Transactions throws once (a quota or timeout on Google). */
+function failFirstTransactionsWrite(gas) {
+    const sheet = gas.sheet('Transactions');
+    const getRange = sheet.getRange;
+    let failed = false;
+
+    sheet.getRange = (...args) => {
+        const range = getRange(...args);
+        const setValues = range.setValues;
+
+        range.setValues = (values) => {
+            if (!failed && args[0] === 2 && values.length > 1) {
+                failed = true;
+                throw new Error('Service error: Spreadsheets');
+            }
+
+            return setValues(values);
+        };
+
+        return range;
+    };
+
+    return () => {
+        sheet.getRange = getRange;
+
+        return failed;
+    };
+}
 const ids = (gas) => gas.get().map((item) => item.id);
 
 test.describe('yêu cầu cũ (tương thích với client và script ban đầu)', () => {
@@ -497,10 +527,11 @@ test.describe('giao thức v2', () => {
             { confirmWipe: null, deletes: [] },
         ]) {
             assert.match(sync(gas, body).error, /không hợp lệ/, JSON.stringify(body));
-            assert.deepEqual(gas.get({ v: '2' }), {
-                ...before,
-                serverTime: gas.get({ v: '2' }).serverTime,
-            });
+            // serverTime moves with the clock: compare everything else.
+            assert.deepEqual(
+                { ...gas.get({ v: '2' }), serverTime: '' },
+                { ...before, serverTime: '' },
+            );
         }
     });
 
@@ -529,19 +560,81 @@ test.describe('giao thức v2', () => {
         assert.deepEqual(ids(gas), ['TX_B', 'TX_A']);
     });
 
-    test('review vòng 4: appliedCheck cho biết một requestId đã được áp dụng chưa, không ghi gì', () => {
+    test('review vòng 5: appliedCheck trả true / false / "unknown", state có revision, kiểm tra không ghi gì', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
 
-        sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' });
+        assert.equal(gas.get({ v: '2' }).revision, 0);
+        assert.equal(sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' }).revision, 1);
 
         const before = ids(gas);
 
-        assert.equal(sync(gas, { appliedCheck: 'req-1' }).applied, true);
-        assert.equal(sync(gas, { appliedCheck: 'req-x' }).applied, false);
+        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, true);
+        // Never sent, and nothing could have pushed it out of the log: provably not applied.
+        assert.equal(sync(gas, { appliedCheck: 'req-x', appliedAfter: 0 }).applied, false);
+        assert.equal(sync(gas, { appliedCheck: 'req-x', appliedAfter: 1 }).applied, false);
+        // The client's view is unknown, or newer than the log: nothing can be proven.
+        assert.equal(sync(gas, { appliedCheck: 'req-x' }).applied, 'unknown');
+        assert.equal(sync(gas, { appliedCheck: 'req-x', appliedAfter: 5 }).applied, 'unknown');
+        assert.deepEqual(ids(gas), before);
+        assert.equal(gas.get({ v: '2' }).revision, 1);
+    });
+
+    test('review vòng 5: appliedAfter sai kiểu bị từ chối', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = ids(gas);
+
+        for (const appliedAfter of [-1, '3', 1.5, null, Infinity]) {
+            assert.match(
+                sync(gas, { appliedCheck: 'req-1', appliedAfter }).error,
+                /không hợp lệ/,
+                String(appliedAfter),
+            );
+        }
+
         assert.deepEqual(ids(gas), before);
     });
 
-    test('review vòng 4: flush lỗi sau khi ghi thì báo "không chắc đã ghi xong" và không ghi nhận requestId', () => {
+    test('review vòng 5: request đã bị đẩy khỏi sổ (100+ yêu cầu sau đó) là "unknown", không phải false', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        // Device A's replace is applied (its reply is lost), then B writes, then many more writes.
+        sync(gas, {
+            replace: true,
+            upserts: [row({ id: 'TX_A' })],
+            meta: BUDGET(0),
+            requestId: 'req-A',
+        });
+        sync(gas, { upserts: [row({ id: 'TX_B' })], requestId: 'req-B' });
+
+        for (let i = 0; i < 120; i++) sync(gas, { meta: BUDGET(i + 1), requestId: `pad-${i}` });
+
+        assert.equal(gas.get({ v: '2' }).revision, 122);
+        assert.ok(JSON.parse(gas.properties.FM_REQUEST_LOG).entries.length <= 100);
+
+        // A comes back: the log no longer holds its id, and the script must not say "no".
+        assert.equal(sync(gas, { appliedCheck: 'req-A', appliedAfter: 0 }).applied, 'unknown');
+        assert.equal(sync(gas, { appliedCheck: 'req-B', appliedAfter: 1 }).applied, 'unknown');
+        // A request sent after what the client last saw cannot have been dropped.
+        assert.equal(sync(gas, { appliedCheck: 'req-never', appliedAfter: 122 }).applied, false);
+        // Recent ones are still known.
+        assert.equal(sync(gas, { appliedCheck: 'pad-119', appliedAfter: 100 }).applied, true);
+        assert.deepEqual(ids(gas), ['TX_A', 'TX_B']);
+    });
+
+    test('review vòng 5: yêu cầu không đổi gì không được ghi vào sổ, nên không đẩy yêu cầu thật ra khỏi sổ', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-A' });
+
+        for (let i = 0; i < 150; i++) {
+            sync(gas, { upserts: [], deletes: [], meta: {}, requestId: `empty-${i}` });
+        }
+
+        assert.equal(gas.get({ v: '2' }).revision, 1);
+        assert.equal(sync(gas, { appliedCheck: 'req-A', appliedAfter: 0 }).applied, true);
+    });
+
+    test('review vòng 5: flush lỗi sau khi ghi: dữ liệu có thể đã vào Sheet nên request là "unknown", gửi lại cùng mã bị từ chối', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
 
         gas.faults.flush = 1;
@@ -549,7 +642,125 @@ test.describe('giao thức v2', () => {
         const reply = sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' });
 
         assert.match(reply.error, /Không chắc/);
-        assert.equal(sync(gas, { appliedCheck: 'req-1' }).applied, false);
+        assert.ok(ids(gas).includes('TX_A')); // it did reach the sheet
+
+        // Another device writes in between; then the first one asks.
+        sync(gas, { upserts: [row({ id: 'TX_B' })], requestId: 'req-B' });
+        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, 'unknown');
+        assert.match(
+            sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' }).error,
+            /không rõ đã ghi xong/,
+        );
+    });
+
+    test('review vòng 5: ghi nhật ký lỗi sau khi Sheet đã ghi: yêu cầu vẫn thành công, appliedCheck là "unknown"', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        // The entry is written as 'uncertain' first and flipped to "ok" afterwards: only that fails.
+        gas.faults.property = (key, value) => value.includes('"ok"');
+
+        const reply = sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' });
+
+        gas.faults.property = null;
+        assert.equal(reply.error, undefined);
+        assert.ok(ids(gas).includes('TX_A'));
+        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, 'unknown');
+    });
+
+    test('review vòng 5: không ghi được nhật ký trước khi ghi thì không ghi gì vào Sheet và request là false', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = ids(gas);
+
+        gas.faults.property = () => true;
+
+        const reply = sync(gas, {
+            replace: true,
+            upserts: [row({ id: 'TX_A' })],
+            meta: BUDGET(1),
+            requestId: 'req-1',
+        });
+
+        gas.faults.property = null;
+        assert.match(reply.error, /nhật ký yêu cầu/);
+        assert.deepEqual(ids(gas), before);
+        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, false);
+    });
+
+    test('review vòng 5: ghi lỗi nhưng đã khôi phục và flush xong thì request bị gỡ khỏi sổ (false), revision không đổi', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = gas.get();
+        const stop = failFirstTransactionsWrite(gas);
+        const reply = sync(gas, { upserts: [row({ id: 'TX_NEW' })], requestId: 'req-1' });
+
+        assert.ok(stop());
+        assert.match(reply.error, /Service error/);
+        assert.deepEqual(gas.get(), before);
+        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, false);
+        assert.equal(gas.get({ v: '2' }).revision, 0);
+    });
+
+    test('review vòng 5: khôi phục cũng lỗi thì request là "unknown"', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        sync(gas, { meta: BUDGET(1) });
+
+        for (const [name, from] of [
+            ['Meta', 1], // every data write to Meta fails
+            ['Transactions', 2], // the first write passes, the rollback fails
+        ]) {
+            const sheet = gas.sheet(name);
+            const getRange = sheet.getRange;
+            let writes = 0;
+
+            sheet.getRange = (...args) => {
+                const range = getRange(...args);
+                const setValues = range.setValues;
+
+                range.setValues = (values) => {
+                    writes++;
+                    if (args[0] === 2 && writes >= from) throw new Error(`quota ${name}`);
+                    return setValues(values);
+                };
+
+                return range;
+            };
+        }
+
+        const reply = sync(gas, {
+            replace: true,
+            upserts: [row({ id: 'TX_RESTORED' })],
+            meta: BUDGET(2),
+            requestId: 'req-1',
+        });
+
+        assert.match(reply.error, /KHÔNG khôi phục được/);
+        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, 'unknown');
+    });
+
+    test('review vòng 5: đường lỗi cũng flush trước khi nhả khóa; flush lỗi sau khi khôi phục thì báo "không chắc" và là "unknown"', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const stop = failFirstTransactionsWrite(gas);
+        const flushesBefore = gas.stats.flushes;
+        const reply = sync(gas, { upserts: [row({ id: 'TX_NEW' })], requestId: 'req-1' });
+
+        assert.ok(stop());
+        assert.match(reply.error, /Service error/);
+        // The rollback was flushed while the lock was held (once by the write, once by the lock).
+        assert.ok(gas.stats.flushes >= flushesBefore + 2);
+        assert.equal(gas.stats.flushesOutsideLock, 0);
+
+        // The same failure, but the flush that should apply the rollback fails too.
+        const other = createGas({ sheets: { Transactions: existingSheet() } });
+        const stopOther = failFirstTransactionsWrite(other);
+
+        other.faults.flush = 1;
+
+        const second = sync(other, { upserts: [row({ id: 'TX_NEW' })], requestId: 'req-2' });
+
+        assert.ok(stopOther());
+        assert.match(second.error, /Không chắc dữ liệu đã được ghi xong/);
+        assert.match(second.error, /sau lỗi: Service error: Spreadsheets/);
+        assert.equal(sync(other, { appliedCheck: 'req-2', appliedAfter: 0 }).applied, 'unknown');
     });
 
     test('SEC-005: ô quá 50.000 ký tự bị từ chối trước khi xóa, Sheet giữ nguyên', () => {

@@ -27,11 +27,16 @@
  *    POST {action: 'sync', token, replace, upserts: [...], deletes: [ids], meta: {key: {value,
  *          updatedAt}}}                   -> the same object, after applying the changes.
  *         A row or meta value is only overwritten by one with an equal or newer updatedAt.
- *         With replace: true the upserts are the complete list and meta is overwritten. A replace
+ *         With replace: true the upserts are the complete list and meta is overwritten.
  *         Any request that would leave no transaction at all (while the sheet still has some:
  *         a replace with an empty list, or deletes of every row) is refused unless the body also
- *         says confirmWipe: true, so no stray request can empty the sheet. A request is all or
- *         nothing: transactions and meta are both checked before either sheet is written.
+ *         says confirmWipe: true, so no stray request can empty the sheet. A request is checked
+ *         as a whole before either sheet is written (the writes themselves are best effort).
+ *         A write may carry requestId; every state reply carries revision. A client that lost the
+ *         reply to a write asks {appliedCheck: <requestId>, appliedAfter: <revision it had seen
+ *         when it built that request>} and gets applied: true, false or "unknown". "unknown"
+ *         means the script cannot prove either (the request log dropped it, or the write ended
+ *         in a flush / log failure): the client must then never send a replace or deletes again.
  *    GET  ?action=sync&payload=<json>     -> same as the POST (fallback when a POST is blocked).
  *  Legacy (the original script's requests, so older clients keep working)
  *    GET                                  -> JSON array of transactions
@@ -136,11 +141,26 @@ function withLock_(action) {
     lock.waitLock(20000);
 
     try {
-        const result = action();
+        let result;
+        let failure = null;
 
-        // Apply pending spreadsheet changes while the lock is still held, so the next request
-        // (or reader) starts from what this one wrote.
-        flushOrUncertain_();
+        try {
+            result = action();
+        } catch (error) {
+            failure = error;
+        }
+
+        // Apply pending spreadsheet changes while the lock is still held, whether the action
+        // worked or failed and put the old rows back: a rollback that is still pending is not
+        // "nothing changed" yet, and the next request (or reader) must start from what the sheet
+        // really holds.
+        try {
+            SpreadsheetApp.flush();
+        } catch (flushError) {
+            throw uncertainFlush_(flushError, failure);
+        }
+
+        if (failure) throw failure;
 
         return result;
     } finally {
@@ -149,53 +169,158 @@ function withLock_(action) {
 }
 
 /**
- * SpreadsheetApp.flush(), with its failure reported as what it is: the writes before it may or
- * may not have reached the sheet, so neither a rollback nor a blind retry is known to be safe.
+ * The error for a SpreadsheetApp.flush() that failed: the writes before it may or may not have
+ * reached the sheet, so neither a rollback nor a blind retry is known to be safe. `earlier` is the
+ * error the flush was following, if any. `uncertain` is what handleSync_ looks at.
  */
-function flushOrUncertain_() {
+function uncertainFlush_(flushError, earlier) {
+    const text = function (error) {
+        return String(error && error.message ? error.message : error);
+    };
+    const failure = new Error(
+        'Không chắc dữ liệu đã được ghi xong (' +
+            text(flushError) +
+            ')' +
+            (earlier ? ' sau lỗi: ' + text(earlier) : '') +
+            '. Mở Google Sheet kiểm tra dữ liệu; app không tự gửi lại lệnh thay thế hoặc xóa khi chưa chắc.',
+    );
+
+    failure.uncertain = true;
+
+    return failure;
+}
+
+// --- REQUEST LOG ---
+// A client that lost the reply to a write must not send a destructive request again (a replace
+// drops what another device added since, a delete removes a row that was re-created): it asks
+// whether the request was applied (appliedCheck) and is told true, false or 'unknown'.
+//
+// One Script Property holds {rev, floor, entries: [[requestId, rev, status], ...]}, oldest first.
+//  - rev counts the writes that carry a requestId. Every state reply carries it (revision), and a
+//    client says which revision it had seen when it built a request (appliedAfter).
+//  - A request is logged as 'uncertain' BEFORE any sheet is touched and becomes 'ok' only after
+//    its data was flushed. A flush or log failure, or an execution that stops half way, therefore
+//    never leaves it looking as if it had not run. It is taken out again only when a failed write
+//    is known to have left the sheets as they were.
+//  - Only the newest MAX_LOGGED_REQUESTS entries are kept; floor is the highest revision of an
+//    entry that was dropped. A request that is not in the log is "false" only when it cannot have
+//    been dropped: it would have a revision above appliedAfter, so floor <= appliedAfter proves
+//    it never ran. Anything else is 'unknown', never "no".
+const REQUEST_LOG_KEY = 'FM_REQUEST_LOG';
+const MAX_LOGGED_REQUESTS = 100;
+const MAX_REQUEST_LOG_CHARS = 8000; // a Script Property value holds at most 9 KB
+
+function readRequestLog_() {
     try {
-        SpreadsheetApp.flush();
+        const log = JSON.parse(
+            PropertiesService.getScriptProperties().getProperty(REQUEST_LOG_KEY) || 'null',
+        );
+
+        if (
+            log &&
+            Array.isArray(log.entries) &&
+            typeof log.rev === 'number' &&
+            typeof log.floor === 'number'
+        ) {
+            return log;
+        }
+    } catch (error) {
+        // An unreadable log counts as empty; its lost history makes older requests 'unknown'
+        // (a client's appliedAfter is then above rev).
+    }
+
+    return { rev: 0, floor: 0, entries: [] };
+}
+
+function writeRequestLog_(log) {
+    const next = { rev: log.rev, floor: log.floor, entries: log.entries.slice() };
+
+    while (
+        next.entries.length > MAX_LOGGED_REQUESTS ||
+        (next.entries.length > 1 && JSON.stringify(next).length > MAX_REQUEST_LOG_CHARS)
+    ) {
+        next.floor = Math.max(next.floor, next.entries.shift()[1]);
+    }
+
+    PropertiesService.getScriptProperties().setProperty(REQUEST_LOG_KEY, JSON.stringify(next));
+}
+
+function findRequest_(log, id) {
+    for (let i = 0; i < log.entries.length; i++) {
+        if (log.entries[i][0] === id) return log.entries[i];
+    }
+
+    return null;
+}
+
+/**
+ * Logs `id` as about to be applied. Throws, with nothing written yet, when that cannot be
+ * recorded. Returns the log as it was, to put back if the request turns out not to have changed
+ * anything.
+ */
+function startRequest_(id) {
+    const before = readRequestLog_();
+
+    try {
+        writeRequestLog_({
+            rev: before.rev + 1,
+            floor: before.floor,
+            entries: before.entries.concat([[id, before.rev + 1, 'uncertain']]),
+        });
     } catch (error) {
         throw new Error(
-            'Không chắc dữ liệu đã được ghi xong (' +
+            'Không ghi được nhật ký yêu cầu (' +
                 String(error && error.message ? error.message : error) +
-                '). Mở Google Sheet kiểm tra trước khi sửa tay; app sẽ hỏi lại server trước khi gửi lại.',
+                '); chưa ghi gì vào Sheet.',
         );
     }
+
+    return before;
 }
 
-// --- REQUEST IDS ---
-// Ids of the last write requests that were applied (Script Property, newest last), so a request
-// that is sent again after its reply was lost is not applied a second time.
-const APPLIED_REQUESTS_KEY = 'FM_APPLIED_REQUESTS';
-const MAX_APPLIED_REQUESTS = 50;
-
-function appliedRequests_() {
+/**
+ * The writes of `id` are flushed: it was applied. Failing to record that is not fatal: the entry
+ * stays 'uncertain', so a client that asks is told 'unknown' and merges instead of sending again.
+ */
+function finishRequest_(id) {
     try {
-        const list = JSON.parse(
-            PropertiesService.getScriptProperties().getProperty(APPLIED_REQUESTS_KEY) || '[]',
-        );
+        const log = readRequestLog_();
+        const entry = findRequest_(log, id);
 
-        return Array.isArray(list) ? list : [];
+        if (entry) {
+            entry[2] = 'ok';
+            writeRequestLog_(log);
+        }
     } catch (error) {
-        return [];
+        // stays 'uncertain'
     }
 }
 
-function wasApplied_(id) {
-    return appliedRequests_().indexOf(id) !== -1;
+/** A failed write that is known to have left the sheets as they were: the request never ran. */
+function abandonRequest_(before) {
+    try {
+        writeRequestLog_(before);
+    } catch (error) {
+        // stays 'uncertain': a client that asks is told 'unknown', which is safe
+    }
 }
 
-function recordApplied_(id) {
-    const list = appliedRequests_().filter(function (item) {
-        return item !== id;
-    });
+/** true: applied. false: proven never applied. 'unknown': cannot tell (see REQUEST LOG). */
+function requestStatus_(id, afterRevision) {
+    const log = readRequestLog_();
+    const entry = findRequest_(log, id);
 
-    list.push(id);
-    PropertiesService.getScriptProperties().setProperty(
-        APPLIED_REQUESTS_KEY,
-        JSON.stringify(list.slice(-MAX_APPLIED_REQUESTS)),
-    );
+    if (entry) return entry[2] === 'ok' ? true : 'unknown';
+
+    if (
+        typeof afterRevision !== 'number' ||
+        afterRevision > log.rev || // the log is older than the client's view: its history is lost
+        log.floor > afterRevision // the entry may have been dropped
+    ) {
+        return 'unknown';
+    }
+
+    return false;
 }
 
 /**
@@ -295,6 +420,7 @@ function restoreFailure_(error, label, restoreError) {
 
     failure.rootMessage = cause;
     failure.failedSheets = sheets;
+    failure.uncertain = true;
 
     return failure;
 }
@@ -531,6 +657,7 @@ function readState_() {
         version: PROTOCOL_VERSION,
         transactions: readTransactions_(),
         meta: readMeta_(),
+        revision: readRequestLog_().rev,
         serverTime: new Date().toISOString(),
     };
 }
@@ -551,6 +678,9 @@ function validateSyncBody_(body) {
     const requestKey = function (value) {
         return typeof value === 'string' && value.length > 0 && value.length <= 100;
     };
+    const revision = function (value) {
+        return typeof value === 'number' && isFinite(value) && value >= 0 && value % 1 === 0;
+    };
 
     if (!optional(body.replace, isBoolean_)) fail('replace phải là true / false');
     if (!optional(body.confirmWipe, isBoolean_)) fail('confirmWipe phải là true / false');
@@ -559,6 +689,7 @@ function validateSyncBody_(body) {
     if (!optional(body.meta, isPlainObject_)) fail('meta phải là một đối tượng');
     if (!optional(body.requestId, requestKey)) fail('requestId');
     if (!optional(body.appliedCheck, requestKey)) fail('appliedCheck');
+    if (!optional(body.appliedAfter, revision)) fail('appliedAfter');
 
     // A replace states the complete content: both lists must be there explicitly.
     if (body.replace === true) {
@@ -725,30 +856,11 @@ function restoreDataRows_(snapshot) {
 }
 
 /**
- * A sync request is checked as a whole before anything is written (planTransactionChanges_,
- * planMetaChanges_). Apps Script has no transactions, so the writes themselves are best effort:
- * a failed write puts its sheet back, a Meta write that fails after Transactions was rewritten
- * puts Transactions back, and when a rollback itself fails the error says so explicitly.
- * A request with a requestId is applied at most once (FM_APPLIED_REQUESTS); a client that lost
- * a reply asks with appliedCheck whether its last request went through before sending again.
+ * Writes the planned rows. Apps Script has no transactions, so this is best effort: a failed write
+ * puts its sheet back, a Meta write that fails after Transactions was rewritten puts Transactions
+ * back, and when a rollback itself fails the error says so explicitly (restoreFailure_).
  */
-function handleSync_(body) {
-    if (!body || typeof body !== 'object' || !isAuthorized_(body.token)) {
-        throw new Error('unauthorized');
-    }
-
-    validateSyncBody_(body);
-
-    // Sent again after its reply was lost: it was applied already, and applying it again could
-    // undo what another device wrote in between (a replace drops its rows, a delete removes a row
-    // it re-created). Only the current state is returned.
-    if (body.requestId && wasApplied_(body.requestId)) {
-        return withApplied_(readState_(), true);
-    }
-
-    const transactions = planTransactionChanges_(body);
-    const meta = planMetaChanges_(body.meta, body.replace === true);
-
+function writeChanges_(transactions, meta) {
     if (transactions) {
         const before = meta ? snapshotDataRows_(TRANSACTIONS_SHEET, COLUMNS) : null;
 
@@ -768,12 +880,76 @@ function handleSync_(body) {
     } else if (meta) {
         writeMetaRows_(meta);
     }
+}
 
-    // Recorded only once the writes are known to be in the sheet.
-    if (body.requestId) {
-        flushOrUncertain_();
-        recordApplied_(body.requestId);
+/**
+ * Applies a planned request. A request with a requestId is logged first (see REQUEST LOG), so a
+ * failure at any later point - a failed write, a flush that throws, a log write that fails, an
+ * execution that stops - can never make it look as if it had not run. Only a failed write whose
+ * rollback was flushed successfully is known to have changed nothing; then the log entry is taken
+ * out again.
+ */
+function applyChanges_(requestId, transactions, meta) {
+    const logBefore = requestId ? startRequest_(requestId) : null;
+    let failure = null;
+    let flushFailure = null;
+
+    try {
+        writeChanges_(transactions, meta);
+    } catch (error) {
+        failure = error;
     }
+
+    // Flushed on both paths: a rollback that is still pending is not "nothing changed" yet.
+    try {
+        SpreadsheetApp.flush();
+    } catch (error) {
+        flushFailure = error;
+    }
+
+    if (failure) {
+        if (logBefore && !flushFailure && !failure.uncertain) abandonRequest_(logBefore);
+
+        throw flushFailure ? uncertainFlush_(flushFailure, failure) : failure;
+    }
+
+    if (flushFailure) throw uncertainFlush_(flushFailure, null);
+
+    if (requestId) finishRequest_(requestId);
+}
+
+/**
+ * A sync request is checked as a whole before anything is written (planTransactionChanges_,
+ * planMetaChanges_); the writes themselves are applyChanges_. A request that changes nothing
+ * is not logged, so it cannot push real requests out of the log.
+ */
+function handleSync_(body) {
+    if (!body || typeof body !== 'object' || !isAuthorized_(body.token)) {
+        throw new Error('unauthorized');
+    }
+
+    validateSyncBody_(body);
+
+    const requestId = body.requestId || '';
+    const known = requestId ? findRequest_(readRequestLog_(), requestId) : null;
+
+    if (known) {
+        // Sent again. One that was applied is not applied a second time (a replace would drop what
+        // another device added since, a delete would remove a row it re-created): only the current
+        // state is returned. One whose outcome is not known is refused for the same reason.
+        if (known[2] !== 'ok') {
+            throw new Error(
+                'Yêu cầu này đã được gửi trước đó và không rõ đã ghi xong chưa. Mở Google Sheet kiểm tra dữ liệu trước khi gửi lại.',
+            );
+        }
+
+        return withApplied_(readState_(), true);
+    }
+
+    const transactions = planTransactionChanges_(body);
+    const meta = planMetaChanges_(body.meta, body.replace === true);
+
+    if (transactions || meta) applyChanges_(requestId, transactions, meta);
 
     let state;
 
@@ -787,7 +963,9 @@ function handleSync_(body) {
         );
     }
 
-    return body.appliedCheck ? withApplied_(state, wasApplied_(body.appliedCheck)) : state;
+    return body.appliedCheck
+        ? withApplied_(state, requestStatus_(body.appliedCheck, body.appliedAfter))
+        : state;
 }
 
 function withApplied_(state, applied) {
