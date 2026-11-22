@@ -86,7 +86,7 @@ CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR. Test
 
 1. Mở Google Sheet > Extensions > Apps Script, thay toàn bộ mã bằng nội dung `apps-script/Code.gs`.
 2. Deploy > Manage deployments > Edit > Version: New version > Deploy (URL `/exec` giữ nguyên). Nếu tạo **New deployment** thì URL đổi: bắt buộc chọn **Execute as: Me** và **Who has access: Anyone** (mặc định là "Chỉ mình tôi" / "Người dùng truy cập vào ứng dụng web" làm app báo `Failed to fetch` và "Dùng bản offline"), rồi dán URL mới vào **mọi** thiết bị, điện thoại trước.
-3. **Bắt buộc**: Project Settings > Script properties > thêm `FM_TOKEN` với một chuỗi bí mật dài (32 ký tự trở lên), rồi nhập cùng giá trị vào **Cài đặt & Dữ liệu > Mã bảo vệ** trên mọi thiết bị và bấm Lưu. Chưa có `FM_TOKEN` thì script từ chối mọi yêu cầu (app báo "Sai mã bảo vệ"). Chỉ khi dữ liệu thật sự được phép công khai mới thêm `FM_ALLOW_OPEN` = `true` thay cho token. App không bao giờ đưa mã bảo vệ vào URL: đọc bằng `GET ?v=2` (không token) rồi `POST` có token trong body.
+3. **Bắt buộc**: Project Settings > Script properties > thêm `FM_TOKEN` với một chuỗi bí mật dài (32 ký tự trở lên), rồi nhập cùng giá trị vào **Cài đặt & Dữ liệu > Mã bảo vệ** trên mọi thiết bị và bấm Lưu. Chưa có `FM_TOKEN` thì script từ chối mọi yêu cầu (app báo "Sai mã bảo vệ"). Chỉ khi dữ liệu thật sự được phép công khai mới thêm `FM_ALLOW_OPEN` = `true` thay cho token. App không bao giờ đưa mã bảo vệ vào URL: đọc bằng `GET ?v=2` (không token) rồi `POST` có token trong body; khi `POST` không gửi được thì thay đổi được giữ lại để gửi sau, không chuyển sang `GET` (cách dự phòng `GET ?action=sync` chỉ dùng khi không có mã bảo vệ).
 4. Sau khi đổi URL (New deployment), vào **Manage deployments** và **Archive** các deployment cũ: URL cũ vẫn chạy cho tới khi bị archive.
 
 Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sheet `Meta` được tạo khi cần. Dữ liệu cũ được giữ; các dòng chuyển tiền do bản cũ ghi sẽ tự chuyển sang dạng mới.
@@ -96,7 +96,9 @@ Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sh
 - Chỉ ghi lên Sheet sau khi đã đọc Sheet thành công trong phiên đó.
 - Quay lại cửa sổ hoặc tab (sau ít nhất 30 giây) thì ứng dụng đọc lại Sheet để nhận thay đổi từ máy khác, không cần tải lại trang.
 - Thay đổi chưa được Sheet xác nhận (mất mạng, lỗi) được giữ lại và gộp với Sheet ở lần mở sau; giao dịch đã xóa trên máy này không bị "sống lại".
-- Sheet trống không bao giờ xóa dữ liệu trên máy.
+- Sheet trống không bao giờ tự xóa dữ liệu trên máy. Với v2, khi Sheet bỗng thiếu nhiều giao dịch máy này đã đồng bộ (Sheet trống, hoặc thiếu từ 10 dòng và quá nửa), app hỏi trước: **OK** (khuyên dùng) giữ dữ liệu trên máy và đưa lại lên Sheet, **Hủy** xóa trên máy cho giống Sheet. Máy khác xóa vài giao dịch thì vẫn nhận việc xóa như thường.
+- `Code.gs` từ chối một yêu cầu `replace` làm trống Sheet nếu không có `confirmWipe: true` (app chỉ gửi cờ này khi chính người dùng "Xóa toàn bộ dữ liệu" hoặc khôi phục một bản sao lưu rỗng), và kiểm tra mọi ô ≤ 50.000 ký tự **trước khi** xóa dữ liệu cũ, nên một lần ghi lỗi không để lại Sheet trống. Ghi chú giao dịch tối đa 2.000 ký tự.
+- **Sau khi cập nhật `Code.gs` phải deploy lại** (Manage deployments > Edit > New version) và kiểm tra lại: Script properties có `FM_TOKEN`, không có `FM_ALLOW_OPEN`; mở `<URL>/exec?v=2` trong cửa sổ ẩn danh phải ra `unauthorized`.
 - Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet. Khôi phục **giữ nguyên URL Web App đang dùng của máy**; máy chưa có URL chỉ lấy URL trong file khi đó là URL `https://script.google.com/.../exec` và người dùng đồng ý (hộp hỏi ghi rõ URL), nên một file sao lưu lạ không đẩy được dữ liệu đi nơi khác.
 - Với v2, nếu sửa một giao dịch trên máy này trong khi máy khác xóa nó thì bản sửa được giữ lại.
 
