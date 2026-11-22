@@ -32,11 +32,12 @@
  *         a replace with an empty list, or deletes of every row) is refused unless the body also
  *         says confirmWipe: true, so no stray request can empty the sheet. A request is checked
  *         as a whole before either sheet is written (the writes themselves are best effort).
- *         A write may carry requestId; every state reply carries revision. A client that lost the
- *         reply to a write asks {appliedCheck: <requestId>, appliedAfter: <revision it had seen
- *         when it built that request>} and gets applied: true, false or "unknown". "unknown"
- *         means the script cannot prove either (the request log dropped it, or the write ended
- *         in a flush / log failure): the client must then never send a replace or deletes again.
+ *         A write may carry requestId; every state reply carries revision and epoch. A client that
+ *         lost the reply to a write asks {appliedCheck: <requestId>, appliedAfter: <revision it
+ *         had seen when it built that request>, appliedEpoch: <epoch it had seen>} and gets
+ *         applied: true, false or "unknown". "unknown" means the script cannot prove either (the
+ *         request log dropped it or was lost, or the write ended in a flush / log failure): the
+ *         client must then never send a replace or deletes again.
  *    GET  ?action=sync&payload=<json>     -> same as the POST (fallback when a POST is blocked).
  *  Legacy (the original script's requests, so older clients keep working)
  *    GET                                  -> JSON array of transactions
@@ -198,6 +199,9 @@ function uncertainFlush_(flushError, earlier) {
 // One Script Property holds {rev, floor, entries: [[requestId, rev, status], ...]}, oldest first.
 //  - rev counts the writes that carry a requestId. Every state reply carries it (revision), and a
 //    client says which revision it had seen when it built a request (appliedAfter).
+//  - epoch names this log. A log that is missing, unreadable or of another shape is replaced by a
+//    new one with a NEW epoch (and rev 0), so a client that remembers the old epoch is told
+//    'unknown' - a log that starts again at rev 0 can never be mistaken for the history it lost.
 //  - A request is logged as 'uncertain' BEFORE any sheet is touched and becomes 'ok' only after
 //    its data was flushed. A flush or log failure, or an execution that stops half way, therefore
 //    never leaves it looking as if it had not run. It is taken out again only when a failed write
@@ -205,11 +209,20 @@ function uncertainFlush_(flushError, earlier) {
 //  - Only the newest MAX_LOGGED_REQUESTS entries are kept; floor is the highest revision of an
 //    entry that was dropped. A request that is not in the log is "false" only when it cannot have
 //    been dropped: it would have a revision above appliedAfter, so floor <= appliedAfter proves
-//    it never ran. Anything else is 'unknown', never "no".
+//    it never ran. Anything else (an unknown or different epoch included) is 'unknown', never "no".
 const REQUEST_LOG_KEY = 'FM_REQUEST_LOG';
 const MAX_LOGGED_REQUESTS = 100;
 const MAX_REQUEST_LOG_CHARS = 8000; // a Script Property value holds at most 9 KB
 
+function newEpoch_() {
+    return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+/**
+ * The request log. When there is none (the first request ever) or it cannot be read, a new one with
+ * a new epoch is created and stored at once, so every later reader sees the same epoch. If it
+ * cannot be stored the epoch is different each time, which only ever makes answers 'unknown'.
+ */
 function readRequestLog_() {
     try {
         const log = JSON.parse(
@@ -220,20 +233,34 @@ function readRequestLog_() {
             log &&
             Array.isArray(log.entries) &&
             typeof log.rev === 'number' &&
-            typeof log.floor === 'number'
+            typeof log.floor === 'number' &&
+            typeof log.epoch === 'string' &&
+            log.epoch
         ) {
             return log;
         }
     } catch (error) {
-        // An unreadable log counts as empty; its lost history makes older requests 'unknown'
-        // (a client's appliedAfter is then above rev).
+        // unreadable: replaced below
     }
 
-    return { rev: 0, floor: 0, entries: [] };
+    const fresh = { epoch: newEpoch_(), rev: 0, floor: 0, entries: [] };
+
+    try {
+        writeRequestLog_(fresh);
+    } catch (error) {
+        // not stored: see above
+    }
+
+    return fresh;
 }
 
 function writeRequestLog_(log) {
-    const next = { rev: log.rev, floor: log.floor, entries: log.entries.slice() };
+    const next = {
+        epoch: log.epoch,
+        rev: log.rev,
+        floor: log.floor,
+        entries: log.entries.slice(),
+    };
 
     while (
         next.entries.length > MAX_LOGGED_REQUESTS ||
@@ -263,6 +290,7 @@ function startRequest_(id) {
 
     try {
         writeRequestLog_({
+            epoch: before.epoch,
             rev: before.rev + 1,
             floor: before.floor,
             entries: before.entries.concat([[id, before.rev + 1, 'uncertain']]),
@@ -306,15 +334,16 @@ function abandonRequest_(before) {
 }
 
 /** true: applied. false: proven never applied. 'unknown': cannot tell (see REQUEST LOG). */
-function requestStatus_(id, afterRevision) {
+function requestStatus_(id, afterRevision, epoch) {
     const log = readRequestLog_();
     const entry = findRequest_(log, id);
 
     if (entry) return entry[2] === 'ok' ? true : 'unknown';
 
     if (
+        epoch !== log.epoch || // another log than the client saw (or none it knew of): history lost
         typeof afterRevision !== 'number' ||
-        afterRevision > log.rev || // the log is older than the client's view: its history is lost
+        afterRevision > log.rev || // the log is older than the client's view
         log.floor > afterRevision // the entry may have been dropped
     ) {
         return 'unknown';
@@ -653,11 +682,14 @@ function readMeta_() {
 
 // --- SYNC (v2) ---
 function readState_() {
+    const log = readRequestLog_();
+
     return {
         version: PROTOCOL_VERSION,
         transactions: readTransactions_(),
         meta: readMeta_(),
-        revision: readRequestLog_().rev,
+        revision: log.rev,
+        epoch: log.epoch,
         serverTime: new Date().toISOString(),
     };
 }
@@ -690,6 +722,7 @@ function validateSyncBody_(body) {
     if (!optional(body.requestId, requestKey)) fail('requestId');
     if (!optional(body.appliedCheck, requestKey)) fail('appliedCheck');
     if (!optional(body.appliedAfter, revision)) fail('appliedAfter');
+    if (!optional(body.appliedEpoch, requestKey)) fail('appliedEpoch');
 
     // A replace states the complete content: both lists must be there explicitly.
     if (body.replace === true) {
@@ -964,7 +997,10 @@ function handleSync_(body) {
     }
 
     return body.appliedCheck
-        ? withApplied_(state, requestStatus_(body.appliedCheck, body.appliedAfter))
+        ? withApplied_(
+              state,
+              requestStatus_(body.appliedCheck, body.appliedAfter, body.appliedEpoch),
+          )
         : state;
 }
 

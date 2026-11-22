@@ -44,6 +44,9 @@ const row = (overrides = {}) => ({
     ...overrides,
 });
 const sync = (gas, body) => gas.post({ action: 'sync', ...body });
+/** What a client that saw `epoch` (by default the current one) is told about request `id`. */
+const applied = (gas, id, appliedAfter, epoch = gas.get({ v: '2' }).epoch) =>
+    sync(gas, { appliedCheck: id, appliedAfter, appliedEpoch: epoch }).applied;
 const BUDGET = (value) => ({ budgets: { value, updatedAt: '2026-11-22T00:00:00.000Z' } });
 
 /** The first bulk write of data rows to Transactions throws once (a quota or timeout on Google). */
@@ -568,13 +571,13 @@ test.describe('giao thức v2', () => {
 
         const before = ids(gas);
 
-        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, true);
+        assert.equal(applied(gas, 'req-1', 0), true);
         // Never sent, and nothing could have pushed it out of the log: provably not applied.
-        assert.equal(sync(gas, { appliedCheck: 'req-x', appliedAfter: 0 }).applied, false);
-        assert.equal(sync(gas, { appliedCheck: 'req-x', appliedAfter: 1 }).applied, false);
+        assert.equal(applied(gas, 'req-x', 0), false);
+        assert.equal(applied(gas, 'req-x', 1), false);
         // The client's view is unknown, or newer than the log: nothing can be proven.
         assert.equal(sync(gas, { appliedCheck: 'req-x' }).applied, 'unknown');
-        assert.equal(sync(gas, { appliedCheck: 'req-x', appliedAfter: 5 }).applied, 'unknown');
+        assert.equal(applied(gas, 'req-x', 5), 'unknown');
         assert.deepEqual(ids(gas), before);
         assert.equal(gas.get({ v: '2' }).revision, 1);
     });
@@ -592,6 +595,68 @@ test.describe('giao thức v2', () => {
         }
 
         assert.deepEqual(ids(gas), before);
+    });
+
+    test('review vòng 6: state có epoch, ổn định giữa các lần đọc và lần ghi; appliedEpoch sai kiểu bị từ chối', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const { epoch } = gas.get({ v: '2' });
+
+        assert.match(epoch, /^e\w+$/);
+        assert.equal(gas.get({ v: '2' }).epoch, epoch);
+        assert.equal(
+            sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' }).epoch,
+            epoch,
+        );
+        assert.equal(gas.get({ v: '2' }).epoch, epoch);
+
+        for (const appliedEpoch of [5, '', null, 'x'.repeat(101)]) {
+            assert.match(
+                sync(gas, { appliedCheck: 'req-1', appliedAfter: 0, appliedEpoch }).error,
+                /không hợp lệ/,
+                String(appliedEpoch),
+            );
+        }
+    });
+
+    test('review vòng 6: sổ bị xóa / hỏng / sai schema thì request cũ là "unknown" dù appliedAfter = 0, dòng máy khác được giữ', () => {
+        for (const damage of [
+            (gas) => delete gas.properties.FM_REQUEST_LOG,
+            (gas) => (gas.properties.FM_REQUEST_LOG = '{oops'),
+            (gas) => (gas.properties.FM_REQUEST_LOG = JSON.stringify({ rev: 'x', entries: 5 })),
+            // a log of the older shape, without an epoch
+            (gas) =>
+                (gas.properties.FM_REQUEST_LOG = JSON.stringify({ rev: 2, floor: 0, entries: [] })),
+        ]) {
+            const gas = createGas({ sheets: { Transactions: existingSheet() } });
+            const epoch = gas.get({ v: '2' }).epoch; // device A has seen revision 0
+
+            // A's replace is applied (its reply is lost); then B writes.
+            sync(gas, {
+                replace: true,
+                upserts: [row({ id: 'TX_A' })],
+                meta: BUDGET(1),
+                requestId: 'req-A',
+            });
+            sync(gas, { upserts: [row({ id: 'TX_B' })], requestId: 'req-B' });
+            assert.equal(applied(gas, 'req-A', 0, epoch), true);
+
+            damage(gas);
+
+            // The log starts again at revision 0, which must not read as "never ran".
+            assert.equal(applied(gas, 'req-A', 0, epoch), 'unknown');
+            assert.notEqual(gas.get({ v: '2' }).epoch, epoch);
+
+            // Not even after the new log has caught up with the revisions A remembers.
+            for (let i = 0; i < 5; i++) sync(gas, { meta: BUDGET(i + 10), requestId: `n-${i}` });
+
+            assert.equal(applied(gas, 'req-A', 0, epoch), 'unknown');
+            assert.equal(applied(gas, 'req-A', 2, epoch), 'unknown');
+            assert.equal(applied(gas, 'req-B', 1, epoch), 'unknown');
+            assert.deepEqual(ids(gas), ['TX_A', 'TX_B']);
+
+            // A client that saw the NEW epoch gets proper answers again.
+            assert.equal(applied(gas, 'req-never', gas.get({ v: '2' }).revision), false);
+        }
     });
 
     test('review vòng 5: request đã bị đẩy khỏi sổ (100+ yêu cầu sau đó) là "unknown", không phải false', () => {
@@ -612,12 +677,12 @@ test.describe('giao thức v2', () => {
         assert.ok(JSON.parse(gas.properties.FM_REQUEST_LOG).entries.length <= 100);
 
         // A comes back: the log no longer holds its id, and the script must not say "no".
-        assert.equal(sync(gas, { appliedCheck: 'req-A', appliedAfter: 0 }).applied, 'unknown');
-        assert.equal(sync(gas, { appliedCheck: 'req-B', appliedAfter: 1 }).applied, 'unknown');
+        assert.equal(applied(gas, 'req-A', 0), 'unknown');
+        assert.equal(applied(gas, 'req-B', 1), 'unknown');
         // A request sent after what the client last saw cannot have been dropped.
-        assert.equal(sync(gas, { appliedCheck: 'req-never', appliedAfter: 122 }).applied, false);
+        assert.equal(applied(gas, 'req-never', 122), false);
         // Recent ones are still known.
-        assert.equal(sync(gas, { appliedCheck: 'pad-119', appliedAfter: 100 }).applied, true);
+        assert.equal(applied(gas, 'pad-119', 100), true);
         assert.deepEqual(ids(gas), ['TX_A', 'TX_B']);
     });
 
@@ -631,7 +696,7 @@ test.describe('giao thức v2', () => {
         }
 
         assert.equal(gas.get({ v: '2' }).revision, 1);
-        assert.equal(sync(gas, { appliedCheck: 'req-A', appliedAfter: 0 }).applied, true);
+        assert.equal(applied(gas, 'req-A', 0), true);
     });
 
     test('review vòng 5: flush lỗi sau khi ghi: dữ liệu có thể đã vào Sheet nên request là "unknown", gửi lại cùng mã bị từ chối', () => {
@@ -646,7 +711,7 @@ test.describe('giao thức v2', () => {
 
         // Another device writes in between; then the first one asks.
         sync(gas, { upserts: [row({ id: 'TX_B' })], requestId: 'req-B' });
-        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, 'unknown');
+        assert.equal(applied(gas, 'req-1', 0), 'unknown');
         assert.match(
             sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' }).error,
             /không rõ đã ghi xong/,
@@ -664,7 +729,7 @@ test.describe('giao thức v2', () => {
         gas.faults.property = null;
         assert.equal(reply.error, undefined);
         assert.ok(ids(gas).includes('TX_A'));
-        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, 'unknown');
+        assert.equal(applied(gas, 'req-1', 0), 'unknown');
     });
 
     test('review vòng 5: không ghi được nhật ký trước khi ghi thì không ghi gì vào Sheet và request là false', () => {
@@ -683,7 +748,7 @@ test.describe('giao thức v2', () => {
         gas.faults.property = null;
         assert.match(reply.error, /nhật ký yêu cầu/);
         assert.deepEqual(ids(gas), before);
-        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, false);
+        assert.equal(applied(gas, 'req-1', 0), false);
     });
 
     test('review vòng 5: ghi lỗi nhưng đã khôi phục và flush xong thì request bị gỡ khỏi sổ (false), revision không đổi', () => {
@@ -695,7 +760,7 @@ test.describe('giao thức v2', () => {
         assert.ok(stop());
         assert.match(reply.error, /Service error/);
         assert.deepEqual(gas.get(), before);
-        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, false);
+        assert.equal(applied(gas, 'req-1', 0), false);
         assert.equal(gas.get({ v: '2' }).revision, 0);
     });
 
@@ -734,7 +799,7 @@ test.describe('giao thức v2', () => {
         });
 
         assert.match(reply.error, /KHÔNG khôi phục được/);
-        assert.equal(sync(gas, { appliedCheck: 'req-1', appliedAfter: 0 }).applied, 'unknown');
+        assert.equal(applied(gas, 'req-1', 0), 'unknown');
     });
 
     test('review vòng 5: đường lỗi cũng flush trước khi nhả khóa; flush lỗi sau khi khôi phục thì báo "không chắc" và là "unknown"', () => {
@@ -760,7 +825,7 @@ test.describe('giao thức v2', () => {
         assert.ok(stopOther());
         assert.match(second.error, /Không chắc dữ liệu đã được ghi xong/);
         assert.match(second.error, /sau lỗi: Service error: Spreadsheets/);
-        assert.equal(sync(other, { appliedCheck: 'req-2', appliedAfter: 0 }).applied, 'unknown');
+        assert.equal(applied(other, 'req-2', 0), 'unknown');
     });
 
     test('SEC-005: ô quá 50.000 ký tự bị từ chối trước khi xóa, Sheet giữ nguyên', () => {
