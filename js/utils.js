@@ -2862,3 +2862,13 @@ function parseMoneyText(text) {
 
     return /^-?\d+$/.test(cleaned) ? Number(cleaned) : NaN;
 }
+
+/**
+ * Whether a page served from this host shares its browser storage with other sites. GitHub Pages
+ * serves every project of an account from one host (<account>.github.io/<repo>), and localStorage
+ * belongs to the origin (scheme + host + port), not to a folder: another page on the same host can
+ * read the data and the access token kept here.
+ */
+function isSharedPagesOrigin(hostname) {
+    return /^[^.]+\.github\.io$/i.test(String(hostname ?? ''));
+}

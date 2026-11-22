@@ -3171,3 +3171,18 @@ test('isMassRemoteLoss: Sheet trống, mất quá nửa hoặc từ 20 dòng th�
     assert.equal(mass(20, 1000, 980), true);
     assert.equal(mass(19, 1000, 981), false);
 });
+
+test('isSharedPagesOrigin: chỉ <tài khoản>.github.io dùng chung bộ nhớ giữa các trang', () => {
+    const shared = (host) => run(`isSharedPagesOrigin(${JSON.stringify(host)})`);
+
+    assert.equal(shared('dangvien-dev.github.io'), true);
+    assert.equal(shared('Ten-Khac.GitHub.io'), true);
+    assert.equal(shared('github.io'), false);
+    assert.equal(shared('a.b.github.io'), false);
+    assert.equal(shared('thuchi.example.com'), false);
+    assert.equal(shared('example.com.github.io.evil.test'), false);
+    assert.equal(shared('localhost'), false);
+    assert.equal(shared('127.0.0.1'), false);
+    assert.equal(shared(''), false);
+    assert.equal(run('isSharedPagesOrigin(null)'), false);
+});
