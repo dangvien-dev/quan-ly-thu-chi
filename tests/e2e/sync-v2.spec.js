@@ -59,6 +59,29 @@ async function restoreBackup(page, rows) {
     await wait(600);
 }
 
+/**
+ * The next `method` ('setItem' | 'removeItem') of this key on localStorage throws, once: a crash or a
+ * full disk at that very step. A reload then plays "the app was opened again".
+ */
+function failStorageOnce(page, method, key) {
+    return page.evaluate(
+        ([which, name]) => {
+            const original = Storage.prototype[which];
+            let thrown = false;
+
+            Storage.prototype[which] = function (entry, ...rest) {
+                if (!thrown && entry === name) {
+                    thrown = true;
+                    throw new Error('QuotaExceededError (test)');
+                }
+
+                return original.call(this, entry, ...rest);
+            };
+        },
+        [method, key],
+    );
+}
+
 /** Behaves like a Code.gs that predates request ids: replies carry neither applied nor revision. */
 function withoutRequestIds(server) {
     const postText = server.postText;
@@ -1568,6 +1591,222 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         // The second backup is the user's current intent: it replaces the Sheet as asked.
         expect(idsOf(serverRows(server))).toEqual(['TX_2']);
         expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_2']);
+    });
+
+    test('review vòng 9: replace đã áp dụng, rồi lỗi ghi localStorage ngay sau ACK (trước khi dọn hàng chờ): mở lại thì hỏi về requestId cũ, không gửi replace mới, dòng của máy khác còn nguyên', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+        const stored = (key) => a.page.evaluate((name) => localStorage.getItem(name), key);
+
+        await failStorageOnce(a.page, 'setItem', 'fm_sync_baseline'); // the first step after the ACK
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+
+        // The Sheet applied it; this device never finished noting that down.
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(await stored('fm_sync_inflight')).toBeTruthy(); // the way back to the request
+        expect(await stored('fm_sync_dirty')).toBe('replace');
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        expect(a.state.posts.some((post) => post.body.appliedCheck)).toBe(true);
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_BACKUP', 'tu-may-B']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_B', 'TX_BACKUP']);
+        expect(await stored('fm_sync_inflight')).toBeNull();
+        expect(await stored('fm_sync_dirty')).toBeNull();
+    });
+
+    test('review vòng 9: lỗi ghi localStorage khi xóa bản ghi inflight (sau khi đã dọn hàng chờ): mở lại thì hỏi lại và dọn lại được, không gửi lại gì', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+        const stored = (key) => a.page.evaluate((name) => localStorage.getItem(name), key);
+
+        await failStorageOnce(a.page, 'removeItem', 'fm_sync_inflight');
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+
+        expect(await stored('fm_sync_dirty')).toBeNull(); // settled already
+        expect(await stored('fm_sync_inflight')).toBeTruthy(); // but the record is still there
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        // Settling again changes nothing that was settled, and brings B's row.
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_BACKUP', 'tu-may-B']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_B', 'TX_BACKUP']);
+        expect(await stored('fm_sync_inflight')).toBeNull();
+        expect(await stored('fm_sync_dirty')).toBeNull();
+    });
+
+    test('review vòng 9: lệnh xóa đã áp dụng, rồi lỗi ghi localStorage ngay sau ACK, máy khác tạo lại dòng đó: mở lại thì không xóa lại dòng vừa tạo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+        const deletesOfTx1 = () =>
+            a.state.posts.filter((post) => (post.body.deletes || []).includes('TX_1')).length;
+
+        await failStorageOnce(a.page, 'setItem', 'fm_sync_baseline');
+        await goTransactions(a.page);
+        await a.page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(600);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_2', 'TX_3']); // applied
+        expect(deletesOfTx1()).toBe(1);
+
+        // Another device creates the row again, newer.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_1', { updatedAt: '2026-11-22T09:00:00.000Z', note: 'tao lai' })],
+            requestId: 'B-1',
+        });
+
+        await a.page.reload();
+        await wait(1000);
+
+        expect(deletesOfTx1()).toBe(1); // the deletion is not sent a second time
+        expect(notesOf(serverRows(server))).toContain('tao lai');
+        expect(await a.page.evaluate(() => transactions.map((item) => item.note))).toContain(
+            'tao lai',
+        );
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_deleted_ids'))).toBeNull();
+    });
+
+    test('review vòng 9: đổi URL mà lỗi ghi localStorage khi xóa inflight: replace đang chờ đã được hạ về gộp trước đó, bản ghi inflight còn nguyên', async ({
+        app,
+    }) => {
+        const serverA = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+        const stored = (key) => a.page.evaluate((name) => localStorage.getItem(name), key);
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(await stored('fm_sync_dirty')).toBe('replace');
+
+        await failStorageOnce(a.page, 'removeItem', 'fm_sync_inflight');
+        await a.page.evaluate((url) => {
+            try {
+                setScriptUrl(url);
+            } catch {
+                // the storage failure surfaces here
+            }
+        }, URL_B);
+
+        // The pending replace was given up BEFORE the record could not be removed.
+        expect(await stored('fm_sync_dirty')).not.toBe('replace');
+        expect(await stored('fm_sync_inflight')).toBeTruthy();
+        expect(a.state.posts.filter((post) => post.url.startsWith(URL_B))).toHaveLength(0);
+    });
+
+    test('review vòng 9: server mở (GET v2 không token): bản ghi inflight có baseRevision và baseEpoch, replace chưa từng tới server được chứng minh là false và vẫn được gửi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_OLD')] }); // open: no token
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+        // Neither the POST nor its GET fallback reaches the Sheet.
+        a.state.dropRequests = 2;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(idsOf(serverRows(server))).toEqual(['TX_OLD']);
+
+        const record = JSON.parse(
+            await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight')),
+        );
+
+        expect(record.baseRevision).toEqual(expect.any(Number));
+        expect(record.baseEpoch).toEqual(expect.any(String));
+
+        await a.page.evaluate(() => resumeSync());
+        await wait(1000);
+
+        const check = a.state.posts.find((post) => post.body.appliedCheck);
+
+        expect(check.body.appliedAfter).toEqual(expect.any(Number));
+        expect(check.body.appliedEpoch).toEqual(expect.any(String));
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']); // the restore the user asked for
+        await expect(a.page.locator('#sync-review')).toBeHidden();
+    });
+
+    test('review vòng 9: phản hồi cũ bị snapshot mới hơn vượt mặt không kéo fm_sync_revision (revision và epoch) về sổ cũ của server', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const stored = () =>
+            a.page.evaluate(() => JSON.parse(localStorage.getItem('fm_sync_revision')));
+        const first = await stored();
+
+        // D is applied on the Sheet (log 1, revision 1) but the reply is slow.
+        a.state.holdReplies = 1;
+        await addExpense(a.page, 7000, 'tx-D');
+        await wait(300);
+
+        // The Sheet's request log is lost: from now on another epoch. A newer read brings it here.
+        delete server.properties.FM_REQUEST_LOG;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(400);
+
+        const fresh = await stored();
+
+        expect(fresh.epoch).not.toBe(first.epoch);
+
+        // The old reply (the old log) arrives: not accepted, and neither are its numbers.
+        a.state.releaseReply(0);
+        await wait(500);
+        expect(await stored()).toEqual(fresh);
     });
 
     for (const backend of ['v2', 'legacy']) {

@@ -40,6 +40,11 @@
 //    has been applied already (claimSnapshot); an older one would roll the local data back. And a
 //    reply only settles the replace that was pending when its request was built, never one made
 //    while it was on its way (fm_sync_replace_seq, clearSentPending).
+//  - The record of a request that was sent (fm_sync_inflight) is the only way to ask the server
+//    what became of it, so it is the LAST thing to go: the pending lists and flags are settled first,
+//    in steps that can be repeated, and a crash in between leaves a record that is simply asked
+//    about again. The revision / epoch the record leans on are only taken from snapshots that were
+//    accepted (claimSnapshot), never from a reply that a newer one overtook.
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
@@ -148,6 +153,19 @@ function getSyncDirty() {
     return readStoredText(SYNC_DIRTY_KEY);
 }
 
+/**
+ * Sets the dirty flag to exactly `mode` ('' removes it), even over 'replace' (which setSyncDirty never
+ * lowers). One write: clearing and then setting again would leave a moment, and a crash, with no flag
+ * while changes are still pending.
+ */
+function overwriteSyncDirty(mode) {
+    if (mode) {
+        localStorage.setItem(SYNC_DIRTY_KEY, mode);
+    } else {
+        localStorage.removeItem(SYNC_DIRTY_KEY);
+    }
+}
+
 /** How many replace intents this device has made (persisted: in-flight records carry it). */
 function readReplaceSeq() {
     return Number(readStoredText(SYNC_REPLACE_SEQ_KEY)) || 0;
@@ -194,6 +212,15 @@ function clearDeletedIds() {
 /** Is there anything the server has not confirmed yet? Meta only counts for protocol v2. */
 function hasPendingChanges() {
     return Boolean(getSyncDirty()) || (syncProtocol === 'v2' && readList(SYNC_META_KEY).length > 0);
+}
+
+/**
+ * Work this device still has to settle with the Sheet: changes not sent yet, or a request that was
+ * sent and whose outcome is not noted down (a record of fm_sync_inflight left by a crash, or by a
+ * reply that never came). Such a record is settled on its own, not only when the next change comes.
+ */
+function hasUnsettledWork() {
+    return hasPendingChanges() || (syncProtocol === 'v2' && Boolean(readInflight()));
 }
 
 // --- CHANGE QUEUE ---
@@ -519,25 +546,37 @@ async function postSyncV2(payload) {
         throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
     }
 
-    rememberRevision(state);
-
     return state;
 }
 
-/** Keeps the revision and epoch of the server's request log (absent from an older Code.gs). */
+/**
+ * Keeps the revision and epoch of the server's request log (absent from an older Code.gs). Call it
+ * for a snapshot that has been ACCEPTED (claimSnapshot), not for every reply: the reply of an older
+ * request that a newer snapshot overtook would take the numbers back. Within one epoch the revision
+ * only grows; a smaller number could only weaken what appliedAfter proves.
+ */
 function rememberRevision(state) {
-    if (Number.isInteger(state.revision) && state.revision >= 0) {
-        localStorage.setItem(
-            SYNC_REVISION_KEY,
-            JSON.stringify({
-                url: webAppUrl,
-                revision: state.revision,
-                epoch: typeof state.epoch === 'string' ? state.epoch : null,
-            }),
-        );
-    } else {
+    if (!(Number.isInteger(state.revision) && state.revision >= 0)) {
         localStorage.removeItem(SYNC_REVISION_KEY);
+        return;
     }
+
+    const epoch = typeof state.epoch === 'string' ? state.epoch : null;
+    const known = readStoredJson(SYNC_REVISION_KEY, null);
+    const sameLog =
+        Boolean(known) &&
+        known.url === webAppUrl &&
+        known.epoch === epoch &&
+        Number.isInteger(known.revision);
+
+    localStorage.setItem(
+        SYNC_REVISION_KEY,
+        JSON.stringify({
+            url: webAppUrl,
+            revision: sameLog ? Math.max(known.revision, state.revision) : state.revision,
+            epoch,
+        }),
+    );
 }
 
 /** {revision, epoch} last seen from the current server; null members when there is none. */
@@ -614,9 +653,7 @@ function clearSentPending(payload) {
     writeList(SYNC_META_KEY, meta);
 
     // A replace has been applied; anything still pending is an ordinary change made meanwhile.
-    setSyncDirty('');
-
-    if (upserts.length || deletes.length) setSyncDirty('merge');
+    overwriteSyncDirty(upserts.length || deletes.length ? 'merge' : '');
 }
 
 function unionBy(primary, secondary, keyOf) {
@@ -907,9 +944,8 @@ function abandonDestructiveWrite(intent, why) {
             transactions.map((transaction) => transaction.id),
         );
         addToList(SYNC_META_KEY, Object.keys(META_DEFS));
-        // 'replace' is sticky (setSyncDirty ignores 'merge' while it is set): clear it first.
-        setSyncDirty('');
-        setSyncDirty('merge');
+        // Everything is queued by now; only then does the flag change (one write).
+        overwriteSyncDirty('merge');
         notes.push(
             'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp: dữ liệu trên máy được gộp với Sheet thay vì ghi đè (dòng định bỏ có thể quay lại). Muốn thay toàn bộ Sheet, hãy thực hiện lại.',
         );
@@ -965,10 +1001,7 @@ function giveUpDeletesAtFirstContact(state) {
  */
 function secureUnconfirmedWrites(why) {
     const inflight = readInflight();
-
-    localStorage.removeItem(SYNC_INFLIGHT_KEY);
-
-    return abandonDestructiveWrite(
+    const notice = abandonDestructiveWrite(
         {
             replace: getSyncDirty() === 'replace',
             deletes:
@@ -983,6 +1016,11 @@ function secureUnconfirmedWrites(why) {
         },
         why,
     );
+
+    // Only when what it stood for has been given up: until then it is the way back to the request.
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
+
+    return notice;
 }
 
 // --- WARNINGS THAT STAY ---
@@ -1089,7 +1127,10 @@ async function settleInflightV2() {
 
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
 
-    if (claimSnapshot(seq)) reconcileV2(state);
+    if (claimSnapshot(seq)) {
+        rememberRevision(state);
+        reconcileV2(state);
+    }
 
     if (notice) announceUnsentWrites(notice);
 }
@@ -1116,13 +1157,20 @@ async function pushV2() {
     // a failed rollback, an HTTP error after a timeout) can follow a write, so the next push asks.
     const state = await postSyncV2(payload);
 
-    localStorage.removeItem(SYNC_INFLIGHT_KEY);
+    // Settle first, remove the record LAST: a crash or a full disk in between must leave a record
+    // to ask the server about (appliedCheck), not a replace or deletion that is still pending with
+    // nothing to say it was sent. Every step can be repeated (settleInflightV2 repeats them).
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
-    // The reply confirms what was sent; only that. And as a snapshot it may be older than a read
-    // that was applied while it was on its way: then it is not merged (its rows are in that read).
+    // The reply confirms what was sent; only that.
     clearSentPending({ ...payload, replaceSeq: record.replaceSeq });
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
 
-    if (claimSnapshot(seq)) reconcileV2(state);
+    // As a snapshot it may be older than a read that was applied while it was on its way: then it
+    // is not merged (its rows are in that read) and its revision is not taken either.
+    if (claimSnapshot(seq)) {
+        rememberRevision(state);
+        reconcileV2(state);
+    }
 
     if (hasPendingChanges()) {
         pushQueued = true;
@@ -1153,7 +1201,7 @@ function syncToGoogleSheet(mode = 'merge') {
 
 function pushToGoogleSheet() {
     // Never write before a read has told us which protocol the script speaks.
-    if (!syncProtocol || !hasPendingChanges()) return Promise.resolve();
+    if (!syncProtocol || !hasUnsettledWork()) return Promise.resolve();
 
     const generation = syncGeneration;
 
@@ -1245,11 +1293,13 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
             } else if (result && result.version === 2) {
                 syncProtocol = 'v2';
                 updateSyncNote();
+                // Also from the tokenless GET of an open server, which never goes through postSyncV2.
+                rememberRevision(result);
                 giveUpDeletesAtFirstContact(result);
                 reconcileV2(result);
                 remoteReady = true;
 
-                if (hasPendingChanges()) {
+                if (hasUnsettledWork()) {
                     syncToGoogleSheet();
                 } else {
                     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);

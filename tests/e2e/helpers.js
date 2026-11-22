@@ -58,6 +58,14 @@ function newServer(backend = 'legacy', { rows = [], properties, sheets = {} } = 
     return server;
 }
 
+/** Whether a sync body writes (any protocol), as opposed to reading the state. */
+const isWriteBody = (body) =>
+    Boolean(body) &&
+    (Array.isArray(body.transactions) || // the legacy script's write
+        body.replace === true ||
+        (Array.isArray(body.upserts) && body.upserts.length > 0) ||
+        (Array.isArray(body.deletes) && body.deletes.length > 0));
+
 /** Rows currently in the server's Transactions sheet, as objects. */
 function serverRows(server) {
     return server.backend === 'v2'
@@ -150,6 +158,25 @@ async function openApp(browser, opts = {}) {
             state.gets++;
             state.getUrls.push(request.url());
 
+            // state.dropRequests also covers the GET fallback of a write (it carries the body in
+            // `payload`): without a token, a POST that cannot be made is sent that way.
+            const carried = new URL(request.url()).searchParams.get('payload');
+
+            if (state.dropRequests > 0 && carried) {
+                let body = null;
+
+                try {
+                    body = JSON.parse(carried);
+                } catch {
+                    // not a sync body
+                }
+
+                if (isWriteBody(body)) {
+                    state.dropRequests--;
+                    return route.abort();
+                }
+            }
+
             if (opts.getDelay) await wait(opts.getDelay);
 
             // opts.getFails: reading the default server fails (the others, opts.servers, still work).
@@ -187,13 +214,10 @@ async function openApp(browser, opts = {}) {
         // state.loseReplies: the server applies the next N write POSTs (a replace, upserts or
         // deletes; not the empty read) but their replies never arrive.
         const body = state.posts.at(-1).body || {};
-        const writes =
-            Array.isArray(body.transactions) || // the legacy script's write
-            body.replace === true ||
-            (Array.isArray(body.upserts) && body.upserts.length > 0) ||
-            (Array.isArray(body.deletes) && body.deletes.length > 0);
+        const writes = isWriteBody(body);
 
-        // state.dropRequests: the next N write POSTs never reach the server (a dropped connection).
+        // state.dropRequests: the next N write requests never reach the server (a dropped connection;
+        // a POST and then its GET fallback are two requests).
         if (state.dropRequests > 0 && writes) {
             state.dropRequests--;
             return route.abort();
