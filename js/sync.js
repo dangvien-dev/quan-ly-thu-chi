@@ -30,20 +30,26 @@
 //  - A replace or a delete whose reply was lost is only sent again when the server can prove it
 //    was never applied. When it cannot (or is an older Code.gs that does not answer), the data of
 //    both sides is merged instead and nothing is destroyed (see abandonDestructiveWrite).
+//  - A replace or a deletion that is still unconfirmed when the Web App URL changes is never sent
+//    to the new Sheet (secureUnconfirmedWrites); the user is told and the notice stays visible.
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
 const SYNC_DELETED_KEY = 'fm_deleted_ids'; // ids deleted here, not yet deleted on the server
 const SYNC_UPSERTS_KEY = 'fm_pending_upserts'; // ids created or edited here (v2)
 const SYNC_META_KEY = 'fm_pending_meta'; // meta kinds changed here (v2)
-// The last v2 write whose reply never arrived: {requestId, url, baseRevision, replace,
+// The last v2 write whose reply never arrived: {requestId, url, baseRevision, baseEpoch, replace,
 // upserts: [{id, updatedAt}], deletes, meta: {key: {updatedAt}}}. Before sending anything else the
 // server is asked whether it was applied (appliedCheck): true, false or 'unknown'. Only a proven
 // "false" lets a replace or deletes go out again; 'unknown' never does (settleInflightV2).
 const SYNC_INFLIGHT_KEY = 'fm_sync_inflight';
-// {url, revision}: the revision of the server's request log in the last state received from `url`.
-// A request records it (baseRevision) so the server can tell "never applied" from "forgotten".
+// {url, revision, epoch}: the revision and epoch of the server's request log in the last state
+// received from `url`. A request records them (baseRevision, baseEpoch) so the server can tell
+// "never applied" from "forgotten" (a log that was lost starts again with another epoch).
 const SYNC_REVISION_KEY = 'fm_sync_revision';
+// Warnings about writes that were not sent on purpose (see abandonDestructiveWrite): kept until the
+// user has seen them, so a toast that went by is not the only trace.
+const SYNC_REVIEW_KEY = 'fm_sync_review';
 const GET_FALLBACK_MAX_URL = 6000;
 // Rows the user chose to "decide later" for (see decideRemoteLoss): kept here, not uploaded, and
 // not asked about again until the app is opened again.
@@ -186,12 +192,24 @@ function queueMeta(key) {
 }
 
 // --- SETTINGS ---
-function setScriptUrl(url) {
+/**
+ * `keepPending`: the caller has just queued a replace for exactly this URL on purpose (restoring a
+ * backup on a device that had no URL and takes the file's), so nothing is secured.
+ */
+function setScriptUrl(url, { keepPending = false } = {}) {
+    // What was written to the old Sheet and never confirmed must not reach the new one.
+    const notice =
+        url !== webAppUrl && !keepPending
+            ? secureUnconfirmedWrites(webAppUrl ? 'url' : 'connect')
+            : '';
+
     webAppUrl = url;
     localStorage.setItem('fm_script_url', url);
     remoteReady = false;
     syncProtocol = '';
     updateSyncNote();
+
+    if (notice) announceUnsentWrites(notice);
 
     return syncFromGoogleSheet();
 }
@@ -424,25 +442,31 @@ async function postSyncV2(payload) {
     return state;
 }
 
-/** Keeps the revision of the server's request log (absent from a Code.gs that predates it). */
+/** Keeps the revision and epoch of the server's request log (absent from an older Code.gs). */
 function rememberRevision(state) {
     if (Number.isInteger(state.revision) && state.revision >= 0) {
         localStorage.setItem(
             SYNC_REVISION_KEY,
-            JSON.stringify({ url: webAppUrl, revision: state.revision }),
+            JSON.stringify({
+                url: webAppUrl,
+                revision: state.revision,
+                epoch: typeof state.epoch === 'string' ? state.epoch : null,
+            }),
         );
     } else {
         localStorage.removeItem(SYNC_REVISION_KEY);
     }
 }
 
-/** The revision last seen from the current server, or null when there is none to rely on. */
-function lastKnownRevision() {
+/** {revision, epoch} last seen from the current server; null members when there is none. */
+function lastKnownServerView() {
     const record = readStoredJson(SYNC_REVISION_KEY, null);
+    const usable = Boolean(record) && record.url === webAppUrl;
 
-    return record && record.url === webAppUrl && Number.isInteger(record.revision)
-        ? record.revision
-        : null;
+    return {
+        revision: usable && Number.isInteger(record.revision) ? record.revision : null,
+        epoch: usable && typeof record.epoch === 'string' ? record.epoch : null,
+    };
 }
 
 function buildV2Payload() {
@@ -737,10 +761,13 @@ function newRequestId() {
 
 /** What clearSentPending needs to know about a request, small enough to keep across reloads. */
 function inflightRecord(payload) {
+    const view = lastKnownServerView();
+
     return {
         requestId: payload.requestId,
         url: webAppUrl,
-        baseRevision: lastKnownRevision(),
+        baseRevision: view.revision,
+        baseEpoch: view.epoch,
         replace: payload.replace,
         upserts: payload.upserts.map((item) => ({ id: item.id, updatedAt: item.updatedAt })),
         deletes: payload.deletes,
@@ -765,18 +792,28 @@ function isDestructiveWrite(inflight) {
 }
 
 /**
- * The server could not say whether a replace / deletion went through (and it is not safe to guess:
- * it would remove what another device added or re-created since). Nothing is destroyed either way:
+ * A replace or deletion that must not be sent (the server could not say whether it went through,
+ * or the Web App URL changed since): sending it could remove what another device wrote or what
+ * the other Sheet holds. Nothing is destroyed either way:
  *  - a replace becomes an ordinary merge: everything held here is queued as a change and the
  *    server's content is kept (rows the replace was meant to drop may come back);
- *  - deletions are not sent again: a row still on the server comes back here, one already gone
- *    stays gone.
- * Returns the sentence to tell the user.
+ *  - deletions are not sent: a row still on the server comes back here, one already gone stays
+ *    gone.
+ * `intent` is {replace, deletes}; `why` is 'unknown', 'url' (the Web App URL changed) or 'connect'
+ * (a first Sheet was just switched on). Returns the sentence to tell the
+ * user ('' when there was nothing to give up).
  */
-function abandonDestructiveWrite(inflight) {
+function abandonDestructiveWrite(intent, why) {
     const notes = [];
+    const leads = {
+        url: 'Bạn vừa đổi Google Sheet khi còn thay đổi chưa được Sheet cũ xác nhận, nên app không gửi chúng sang Sheet mới. ',
+        connect:
+            'Bạn vừa bật Google Sheet khi còn một lần thay toàn bộ dữ liệu chưa gửi đi, nên app không gửi nó lên Sheet. ',
+        unknown: 'Không rõ lần ghi trước lên Google Sheet đã được áp dụng chưa (mất phản hồi). ',
+    };
+    const lead = leads[why];
 
-    if (inflight.replace && getSyncDirty() === 'replace') {
+    if (intent.replace && getSyncDirty() === 'replace') {
         addToList(
             SYNC_UPSERTS_KEY,
             transactions.map((transaction) => transaction.id),
@@ -786,11 +823,11 @@ function abandonDestructiveWrite(inflight) {
         setSyncDirty('');
         setSyncDirty('merge');
         notes.push(
-            'Không rõ lần thay toàn bộ dữ liệu trên Google Sheet trước đó đã được áp dụng chưa (mất phản hồi). Để không làm mất dữ liệu của máy khác, app đã gộp dữ liệu trên máy này với Google Sheet thay vì ghi đè; muốn thay toàn bộ Sheet thì hãy thực hiện lại.',
+            'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp: dữ liệu trên máy được gộp với Sheet thay vì ghi đè (dòng định bỏ có thể quay lại). Muốn thay toàn bộ Sheet, hãy thực hiện lại.',
         );
     }
 
-    const dropped = new Set(inflight.deletes || []);
+    const dropped = new Set(intent.deletes || []);
 
     if (dropped.size) {
         writeList(
@@ -798,11 +835,88 @@ function abandonDestructiveWrite(inflight) {
             readDeletedIds().filter((id) => !dropped.has(id)),
         );
         notes.push(
-            `Không rõ lệnh xóa ${dropped.size} giao dịch trước đó đã được áp dụng chưa (mất phản hồi) nên app không gửi lại lệnh xóa. Giao dịch nào còn trên Google Sheet sẽ quay lại máy này; hãy xóa lại nếu cần.`,
+            `Lệnh xóa ${dropped.size} giao dịch không được gửi lại: giao dịch nào còn trên Google Sheet sẽ quay về máy này, hãy xóa lại nếu cần.`,
         );
     }
 
-    return notes.join(' ');
+    return notes.length ? lead + notes.join(' ') : '';
+}
+
+/**
+ * The Web App URL is about to change (or the server of an in-flight write is not the current one):
+ * what is still unconfirmed - an in-flight request, a pending replace, pending deletions - was made
+ * against the old Sheet and is not sent to the new one. Returns the notice ('' when nothing was
+ * pending). `why` 'connect' = there was no Sheet before: only a pending replace (which would
+ * overwrite the Sheet that is being connected) is given up; deletions made while no Sheet was
+ * configured are ordinary changes and are still sent.
+ */
+function secureUnconfirmedWrites(why) {
+    const inflight = readInflight();
+
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
+
+    return abandonDestructiveWrite(
+        {
+            replace: getSyncDirty() === 'replace',
+            deletes:
+                why === 'connect'
+                    ? []
+                    : Array.from(
+                          new Set([
+                              ...(inflight ? inflight.deletes || [] : []),
+                              ...readDeletedIds(),
+                          ]),
+                      ),
+        },
+        why,
+    );
+}
+
+// --- WARNINGS THAT STAY ---
+function readSyncReview() {
+    const list = readStoredJson(SYNC_REVIEW_KEY, []);
+
+    return Array.isArray(list) ? list.filter((item) => typeof item === 'string') : [];
+}
+
+/** Shows the warnings the user has not dismissed yet (the banner under the header). */
+function renderSyncReview() {
+    const banner = document.getElementById('sync-review');
+
+    if (!banner) return;
+
+    const list = readSyncReview();
+    const body = document.getElementById('sync-review-list');
+
+    body.replaceChildren(
+        ...list.map((text) => {
+            const item = document.createElement('p');
+
+            item.textContent = text;
+
+            return item;
+        }),
+    );
+    banner.hidden = !list.length;
+}
+
+function addSyncReview(text) {
+    writeList(
+        SYNC_REVIEW_KEY,
+        [...readSyncReview().filter((item) => item !== text), text].slice(-5),
+    );
+    renderSyncReview();
+}
+
+function dismissSyncReview() {
+    writeList(SYNC_REVIEW_KEY, []);
+    renderSyncReview();
+}
+
+/** A toast for the moment, and a notice that stays until it is dismissed. */
+function announceUnsentWrites(notice) {
+    addSyncReview(notice);
+    showToast(notice, 'warning', 20000);
 }
 
 /**
@@ -819,9 +933,13 @@ async function settleInflightV2() {
 
     if (!inflight) return;
 
-    // A request made to another deployment cannot be asked about here.
+    // A request made to another deployment cannot be asked about here, and what it left pending
+    // must not go to this one.
     if (inflight.url && inflight.url !== webAppUrl) {
-        localStorage.removeItem(SYNC_INFLIGHT_KEY);
+        const notice = secureUnconfirmedWrites('url');
+
+        if (notice) announceUnsentWrites(notice);
+
         return;
     }
 
@@ -834,6 +952,7 @@ async function settleInflightV2() {
         meta: {},
         appliedCheck: inflight.requestId,
         ...(Number.isInteger(inflight.baseRevision) ? { appliedAfter: inflight.baseRevision } : {}),
+        ...(typeof inflight.baseEpoch === 'string' ? { appliedEpoch: inflight.baseEpoch } : {}),
     });
     let notice = '';
 
@@ -841,13 +960,16 @@ async function settleInflightV2() {
         localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
         clearSentPending(inflight);
     } else if (state.applied !== false && isDestructiveWrite(inflight)) {
-        notice = abandonDestructiveWrite(inflight);
+        notice = abandonDestructiveWrite(
+            { replace: inflight.replace === true, deletes: inflight.deletes || [] },
+            'unknown',
+        );
     }
 
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
     reconcileV2(state);
 
-    if (notice) showToast(notice, 'warning', 20000);
+    if (notice) announceUnsentWrites(notice);
 }
 
 async function pushV2() {

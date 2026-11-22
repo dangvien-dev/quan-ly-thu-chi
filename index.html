@@ -116,6 +116,19 @@
                 </div>
             </header>
 
+            <!-- Changes that were deliberately not sent to the Sheet (see js/sync.js); they stay
+                 here, also after a reload, until the user has seen them -->
+            <div id="sync-review" class="sync-review" role="status" hidden>
+                <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                <div class="sync-review-body">
+                    <strong>Cần xem lại việc đồng bộ</strong>
+                    <div id="sync-review-list"></div>
+                </div>
+                <button type="button" class="btn btn-outline" onclick="dismissSyncReview()">
+                    Đã xem
+                </button>
+            </div>
+
             <!-- TAB 1: TỔNG QUAN -->
             <section id="tab-overview" class="view-section active">
                 <div class="grid-cards">

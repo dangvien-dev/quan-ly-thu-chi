@@ -24,6 +24,18 @@ const inflight = (page) => page.evaluate(() => localStorage.getItem('fm_sync_inf
 const replaces = (state) => state.posts.filter((post) => post.body.replace === true).length;
 const notesOf = (rows) => rows.map((item) => item.note).sort();
 
+const URL_B = 'https://script.google.com/macros/s/OTHER/exec';
+const idsOf = (rows) => rows.map((item) => item.id).sort();
+
+/** The warning is on the page now, and still there after a reload (it is not just a toast). */
+async function expectReviewKept(page, text) {
+    await expect(page.locator('#sync-review')).toBeVisible();
+    await expect(page.locator('#sync-review-list')).toContainText(text);
+    await page.reload();
+    await expect(page.locator('#sync-review')).toBeVisible();
+    await expect(page.locator('#sync-review-list')).toContainText(text);
+}
+
 /** Restores a backup holding `rows` on a device: the app sends a replace of everything. */
 async function restoreBackup(page, rows) {
     await goTab(page, 'settings');
@@ -754,8 +766,9 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         ]);
         expect(await inflight(a.page)).toBeNull();
         await expect(a.page.locator('#toast-container')).toContainText(
-            'Không rõ lần thay toàn bộ dữ liệu',
+            'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp',
         );
+        await expectReviewKept(a.page, 'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp');
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
     });
 
@@ -796,8 +809,9 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(replaces(a.state)).toBe(replacesBefore);
         expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9', 'tu-may-B']);
         await expect(a.page.locator('#toast-container')).toContainText(
-            'Không rõ lần thay toàn bộ dữ liệu',
+            'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp',
         );
+        await expectReviewKept(a.page, 'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp');
     });
 
     test('review vòng 5: request chưa từng tới server (mất kết nối) được chứng minh là false nên replace vẫn được gửi, không thông báo', async ({
@@ -875,8 +889,9 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
             'tao lai',
         ]);
         await expect(page.locator('#toast-container')).toContainText(
-            'Không rõ lệnh xóa 1 giao dịch',
+            'Lệnh xóa 1 giao dịch không được gửi lại',
         );
+        await expectReviewKept(page, 'Lệnh xóa 1 giao dịch không được gửi lại');
         expect(await inflight(page)).toBeNull();
     });
 
@@ -901,6 +916,235 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(notesOf(serverRows(server)).filter((note) => note === 'them-moi')).toHaveLength(1);
         await expect(page.locator('#toast-container .toast')).toHaveCount(0);
         await expect(page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 6: sổ yêu cầu của server bị xóa (epoch mới): replace không bị gửi lại dù appliedAfter = 0, dòng máy khác còn nguyên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_9')]); // applied, reply lost (A had seen revision 0)
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        // The script's properties are reset: the log starts again at revision 0.
+        delete server.properties.FM_REQUEST_LOG;
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        const check = a.state.posts.find((post) => post.body.appliedCheck);
+
+        expect(check.body.appliedAfter).toBe(0);
+        expect(check.body.appliedEpoch).toEqual(expect.any(String));
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        expect(await inflight(a.page)).toBeNull();
+        await expectReviewKept(a.page, 'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp');
+    });
+
+    test('review vòng 6: đổi URL khi replace chưa được xác nhận: replace không bao giờ tới Sheet mới, dữ liệu Sheet mới còn nguyên; chuyển về Sheet cũ cũng không gửi replace', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+        const replacesTo = (url) =>
+            a.state.posts.filter((post) => post.url.startsWith(url) && post.body.replace === true)
+                .length;
+
+        // A restores a backup: the replace reaches the first Sheet, the reply is lost.
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_9')]);
+        expect(idsOf(serverRows(serverA))).toEqual(['TX_9']);
+        expect(await inflight(a.page)).toBeTruthy();
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe('replace');
+
+        // The user points the app at another Sheet that has data of its own.
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        expect(replacesTo(URL_B)).toBe(0);
+        expect(notesOf(serverRows(serverB))).toContain('rieng-cua-B');
+        expect(await inflight(a.page)).toBeNull();
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).not.toBe(
+            'replace',
+        );
+        await expectReviewKept(a.page, 'Bạn vừa đổi Google Sheet');
+
+        // And back to the first one: still no replace is sent anywhere.
+        const replacesToA = replacesTo(SCRIPT_URL);
+
+        await a.page.evaluate((url) => setScriptUrl(url), SCRIPT_URL);
+        await wait(900);
+
+        expect(replacesTo(SCRIPT_URL)).toBe(replacesToA);
+        expect(replacesTo(URL_B)).toBe(0);
+        expect(notesOf(serverRows(serverA))).toContain('ghi chu TX_9');
+        expect(notesOf(serverRows(serverB))).toContain('rieng-cua-B');
+    });
+
+    test('review vòng 6: đổi URL khi lệnh xóa chưa được xác nhận: lệnh xóa không tới Sheet mới, giao dịch quay về máy, có cảnh báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+
+        a.state.loseReplies = 1;
+        await goTransactions(a.page);
+        await a.page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+        expect(idsOf(serverRows(serverA))).toEqual(['TX_2', 'TX_3']);
+
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        const deletesToB = a.state.posts.filter(
+            (post) => post.url.startsWith(URL_B) && (post.body.deletes || []).length > 0,
+        );
+
+        expect(deletesToB).toHaveLength(0);
+        expect(idsOf(serverRows(serverB))).toEqual(['TX_1', 'TX_2', 'TX_3']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_1', 'TX_2', 'TX_3']);
+        await expectReviewKept(a.page, 'Lệnh xóa 1 giao dịch không được gửi lại');
+    });
+
+    test('review vòng 6: replace và lệnh xóa đang chờ (Sheet cũ không với tới, chưa có request nào) không bị gửi sang Sheet mới khi đổi URL', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            getFails: true, // the first Sheet cannot be read, so nothing was ever sent to it
+            seed: syncedSeed(rows, {
+                fm_script_token: TOKEN,
+                fm_sync_dirty: 'replace',
+                fm_deleted_ids: JSON.stringify(['TX_1']),
+            }),
+        });
+
+        expect(a.state.posts).toHaveLength(0);
+        expect(await inflight(a.page)).toBeNull();
+
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        const toB = a.state.posts.filter((post) => post.url.startsWith(URL_B));
+
+        expect(toB.length).toBeGreaterThan(0);
+        expect(toB.some((post) => post.body.replace === true)).toBe(false);
+        expect(toB.some((post) => (post.body.deletes || []).length > 0)).toBe(false);
+        expect(notesOf(serverRows(serverB))).toContain('rieng-cua-B');
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).not.toBe(
+            'replace',
+        );
+        await expectReviewKept(a.page, 'Bạn vừa đổi Google Sheet');
+    });
+
+    test('review vòng 6: bật Sheet lần đầu khi còn replace chưa gửi (đã xóa hết dữ liệu lúc chưa có Sheet): replace không ghi đè Sheet, lệnh xóa thường vẫn được gửi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_1', { note: 'co-san-tren-Sheet' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const { page, state } = await app({
+            server,
+            seed: {
+                fm_script_url: '', // no Sheet yet
+                fm_script_token: TOKEN,
+                fm_transactions: JSON.stringify([row('TX_2')]),
+                fm_sync_dirty: 'replace', // "Xóa toàn bộ dữ liệu" was used while no Sheet was set
+                fm_deleted_ids: JSON.stringify(['TX_X']),
+            },
+        });
+
+        expect(state.posts).toHaveLength(0);
+
+        await page.evaluate((url) => setScriptUrl(url), SCRIPT_URL);
+        await wait(900);
+
+        expect(state.posts.some((post) => post.body.replace === true)).toBe(false);
+        expect(state.posts.some((post) => (post.body.deletes || []).includes('TX_X'))).toBe(true);
+        expect(notesOf(serverRows(server))).toContain('co-san-tren-Sheet');
+        await expectReviewKept(page, 'Bạn vừa bật Google Sheet');
+    });
+
+    test('review vòng 6: khôi phục sao lưu trên máy chưa có URL: lấy URL trong file và vẫn thay toàn bộ Sheet (không bị coi là đổi URL)', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const { page, state } = await app({ server, seed: { fm_script_token: TOKEN } });
+
+        // No URL on this device yet: the file's URL is adopted (the user agrees in the dialog).
+        await page.evaluate(() => localStorage.removeItem('fm_script_url'));
+        await page.reload();
+        await wait(300);
+        await restoreBackup(page, [row('TX_9')]);
+        await wait(600);
+
+        expect(state.posts.some((post) => post.body.replace === true)).toBe(true);
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        await expect(page.locator('#sync-review')).toBeHidden();
+    });
+
+    test('review vòng 6: cảnh báo đồng bộ nằm lại qua lần tải lại cho tới khi bấm "Đã xem"', async ({
+        app,
+    }) => {
+        const { page } = await app({
+            server: newServer('v2', { rows: [row('TX_1')], properties: { FM_TOKEN: TOKEN } }),
+            seed: syncedSeed([row('TX_1')], {
+                fm_script_token: TOKEN,
+                fm_sync_review: JSON.stringify(['Bạn vừa đổi Google Sheet (thử)']),
+            }),
+        });
+
+        await expect(page.locator('#sync-review')).toBeVisible();
+        await expect(page.locator('#sync-review-list')).toContainText('Bạn vừa đổi Google Sheet');
+        await page.reload();
+        await expect(page.locator('#sync-review')).toBeVisible();
+
+        await page.getByRole('button', { name: 'Đã xem' }).click();
+        await expect(page.locator('#sync-review')).toBeHidden();
+        await page.reload();
+        await expect(page.locator('#sync-review')).toBeHidden();
+        expect(await page.evaluate(() => localStorage.getItem('fm_sync_review'))).toBeNull();
     });
 
     test('SEC-001: tập nhỏ mất quá nửa (6 → 1) cũng hỏi', async ({ app }) => {

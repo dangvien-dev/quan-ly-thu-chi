@@ -173,6 +173,7 @@ function initializeApp() {
     generateRecurringTransactions();
     generateSavingsDeposits();
     remindOverdueDebts();
+    renderSyncReview();
     // Remind about card dues once the Sheet has been read (or failed), so a statement paid from
     // another device is not reported as due.
     syncFromGoogleSheet().then(remindCardDues);

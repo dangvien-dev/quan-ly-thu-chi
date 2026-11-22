@@ -13,6 +13,12 @@ const TABS = [
     'settings',
 ];
 const NOW = '2026-10-28T03:00:00Z';
+// A warning from sync (js/sync.js) that stays on the page until it is dismissed.
+const REVIEW = JSON.stringify([
+    'Bạn vừa đổi Google Sheet khi còn thay đổi chưa được Sheet cũ xác nhận, nên app không gửi chúng sang Sheet mới. Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp.',
+    'Lệnh xóa 1 giao dịch không được gửi lại: giao dịch nào còn trên Google Sheet sẽ quay về máy này.',
+]);
+const withReview = (base) => ({ ...base, seed: { ...base.seed, fm_sync_review: REVIEW } });
 
 /** Enough data that every table and list on every tab has content. */
 const fullSeed = {
@@ -87,6 +93,18 @@ test.describe('Quét trợ năng tự động (axe, WCAG 2 A/AA)', () => {
             expect(violationsOf(results)).toEqual([]);
         });
     }
+
+    test('cảnh báo đồng bộ (banner "Cần xem lại việc đồng bộ") không có vi phạm', async ({
+        app,
+    }) => {
+        const { page } = await app(withReview(fullSeed));
+
+        await expect(page.locator('#sync-review')).toBeVisible();
+
+        const results = await scanA11y(page);
+
+        expect(violationsOf(results)).toEqual([]);
+    });
 
     for (const modal of [
         ['giao dịch', () => window.openModal()],
@@ -233,6 +251,28 @@ test.describe('Giao diện điện thoại (390 × 844)', () => {
             expect(overflow).toEqual({ page: 0, wide: [] });
         });
     }
+
+    test('cảnh báo đồng bộ không làm tràn ngang, không đè lên nội dung bên dưới và nút "Đã xem" bấm được', async ({
+        app,
+    }) => {
+        const { page } = await app(withReview(phone));
+        const box = await page.evaluate(() => {
+            const banner = document.getElementById('sync-review').getBoundingClientRect();
+            const next = document.querySelector('.view-section.active').getBoundingClientRect();
+            const button = document.querySelector('#sync-review .btn').getBoundingClientRect();
+
+            return {
+                page: document.documentElement.scrollWidth - window.innerWidth,
+                right: banner.right <= window.innerWidth,
+                above: banner.bottom <= next.top,
+                tall: button.height >= 36,
+            };
+        });
+
+        expect(box).toEqual({ page: 0, right: true, above: true, tall: true });
+        await page.getByRole('button', { name: 'Đã xem' }).click();
+        await expect(page.locator('#sync-review')).toBeHidden();
+    });
 
     test('các bảng khác hiển thị dạng thẻ có nhãn từng trường (sổ giao dịch là danh sách 1 dòng)', async ({
         app,

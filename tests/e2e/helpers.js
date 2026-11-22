@@ -68,7 +68,9 @@ function serverRows(server) {
 /**
  * Open the app in a new context.
  * opts: seed (localStorage), remote (rows the spreadsheet starts with), backend ('legacy' | 'v2'),
- *       server (an existing newServer() to share), properties (Script Properties), now (fixed clock),
+ *       server (an existing newServer() to share), servers ({[web app URL]: newServer()} for other
+ *       Sheets: a request to one of these URLs is answered by that server, any other by `server`),
+ *       properties (Script Properties), now (fixed clock),
  *       getDelay, getFails, postFails, postResponse (raw reply text), blockChart,
  *       serviceWorkers, viewport, hasTouch + isMobile (a phone: `pointer: coarse`), promptValue (answers the amount dialog of askMoney() as window.prompt
  *       used to be answered: the text typed into it, null to cancel, left out to accept what is
@@ -122,8 +124,12 @@ async function openApp(browser, opts = {}) {
     Object.defineProperty(state, 'remote', { get: () => serverRows(gas) });
     state.gas = gas;
 
+    // Which spreadsheet answers a request: the one behind its Web App URL (opts.servers) or `gas`.
+    const serverAt = (url) => (opts.servers && opts.servers[url.split('?')[0]]) || gas;
+
     await context.route('https://script.google.com/**', async (route) => {
         const request = route.request();
+        const target = serverAt(request.url());
 
         // Apps Script does not answer a CORS preflight: emulate that.
         if (request.method() === 'OPTIONS') return route.fulfill({ status: 405, body: '' });
@@ -134,19 +140,21 @@ async function openApp(browser, opts = {}) {
 
             if (opts.getDelay) await wait(opts.getDelay);
 
-            if (opts.getFails) return route.abort();
+            // opts.getFails: reading the default server fails (the others, opts.servers, still work).
+            if (opts.getFails && target === gas) return route.abort();
 
             return route.fulfill({
                 status: 200,
                 headers: CORS,
                 contentType: 'application/json',
-                body: gas.getText(Object.fromEntries(new URL(request.url()).searchParams)),
+                body: target.getText(Object.fromEntries(new URL(request.url()).searchParams)),
             });
         }
 
         const raw = request.postData();
 
         state.posts.push({
+            url: request.url(),
             contentType: request.headers()['content-type'] || '',
             raw,
             body: JSON.parse(raw),
@@ -170,7 +178,7 @@ async function openApp(browser, opts = {}) {
 
         if (state.loseReplies > 0 && writes) {
             state.loseReplies--;
-            gas.postText(raw);
+            target.postText(raw);
             return route.abort();
         }
 
@@ -178,7 +186,7 @@ async function openApp(browser, opts = {}) {
             status: 200,
             headers: CORS,
             contentType: 'application/json',
-            body: opts.postResponse || gas.postText(raw),
+            body: opts.postResponse || target.postText(raw),
         });
     });
 
