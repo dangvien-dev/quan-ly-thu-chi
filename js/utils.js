@@ -1236,6 +1236,7 @@ function buildImportItems(rows, layout, { source = '', positiveIsExpense = false
     const items = [];
     const skipped = [];
     const seen = new Map();
+    const legacySeen = new Map();
     const cellOf = (row, column) => (column >= 0 ? (row[column] ?? '') : '');
     const hasSplit = columns.debit >= 0 || columns.credit >= 0;
 
@@ -1281,16 +1282,24 @@ function buildImportItems(rows, layout, { source = '', positiveIsExpense = false
         const note = cleanImportNote(cellOf(row, columns.description));
         const reference = cellOf(row, columns.reference);
         const key = [source, date, type, amount, normalizeSearchText(note), reference].join('|');
-        const base = `TX_IMP_${date.replace(/-/g, '')}_${hashText(key)}`;
-        // Counted by the id, not by the content: two DIFFERENT rows whose 32-bit hash is the same
-        // must not end up with one id (the second would silently replace the first). Identical rows
-        // share a base, so their ids are what they always were ("_2", "_3").
+        const day = date.replace(/-/g, '');
+        // The id is made of the row's content with a strong hash: 64 bits of its SHA-256. (It used
+        // to be a 32-bit hash: two different rows could share an id, across files or devices, and the
+        // later one was then skipped as "imported before" or overwrote the earlier on the Sheet.)
+        // Identical rows share a base and are told apart by "_2", "_3".
+        const base = `TX_IMP_${day}_${sha256Hex(key).slice(0, 16)}`;
         const occurrence = (seen.get(base) || 0) + 1;
+        // The id the same row had before (32-bit hash, counted by content): ledgers made by older
+        // versions hold those, and markImportDuplicates must still recognise them.
+        const legacyBase = `TX_IMP_${day}_${hashText(key)}`;
+        const legacyOccurrence = (legacySeen.get(key) || 0) + 1;
 
         seen.set(base, occurrence);
+        legacySeen.set(key, legacyOccurrence);
         items.push({
             row: index + 1,
             id: `${base}${occurrence > 1 ? `_${occurrence}` : ''}`,
+            legacyId: `${legacyBase}${legacyOccurrence > 1 ? `_${legacyOccurrence}` : ''}`,
             date,
             type,
             amount,
@@ -1326,7 +1335,8 @@ function guessPositiveIsExpense(rows, layout) {
 
 /**
  * Say which candidates the book already has, for the money source they are imported into.
- *  - status 'imported': this very row was imported before (same id), so it is left out for good;
+ *  - status 'imported': this very row was imported before (same id, or the id older versions gave it
+ *    when the transaction has the same effect), so it is left out for good;
  *  - status 'duplicate': a transaction with the same effect on the source (to the đồng, or 1 đ off
  *    from IMPORT_AMOUNT_TOLERANCE_FROM up) within IMPORT_DUPLICATE_DAYS (typed by hand, or a
  *    transfer) is probably the same one; `match` is its id. Each existing transaction explains at
@@ -1335,8 +1345,21 @@ function guessPositiveIsExpense(rows, layout) {
  * Both are unticked (`include` false) so a person decides; everything else is ticked.
  */
 function markImportDuplicates(items, existing, sourceName) {
-    const ids = new Set(existing.map((transaction) => transaction.id));
+    const byId = new Map(existing.map((transaction) => [transaction.id, transaction]));
+    const ids = new Set(byId.keys());
     const pool = new Map();
+    // A transaction that carries the id this row had in older versions (a 32-bit hash). That hash
+    // can be shared by a different row, so it only counts as "the same row" when the transaction has
+    // the same effect on the source; if not, a person decides (the row is shown, unticked).
+    const legacyOf = (item) => {
+        const found = item.legacyId && item.legacyId !== item.id ? byId.get(item.legacyId) : null;
+
+        if (!found) return null;
+
+        const effect = item.type === 'income' ? item.amount : -item.amount;
+
+        return { id: found.id, same: sourceEffect(found, sourceName) === effect };
+    };
 
     existing.forEach((transaction) => {
         const effect = sourceEffect(transaction, sourceName);
@@ -1354,7 +1377,7 @@ function markImportDuplicates(items, existing, sourceName) {
     const pairs = [];
 
     items.forEach((item, position) => {
-        if (ids.has(item.id)) return;
+        if (ids.has(item.id) || legacyOf(item)) return;
 
         const effect = item.type === 'income' ? item.amount : -item.amount;
         const time = parseLocalDate(item.date).getTime();
@@ -1386,6 +1409,14 @@ function markImportDuplicates(items, existing, sourceName) {
     return items.map((item, position) => {
         if (ids.has(item.id)) {
             return { ...item, status: 'imported', match: '', include: false };
+        }
+
+        const legacy = legacyOf(item);
+
+        if (legacy) {
+            return legacy.same
+                ? { ...item, status: 'imported', match: '', include: false }
+                : { ...item, status: 'duplicate', match: legacy.id, include: false };
         }
 
         if (matchOf.has(position)) {

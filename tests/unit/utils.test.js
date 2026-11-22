@@ -1902,7 +1902,7 @@ test('buildImportItems: id chỉ phụ thuộc nội dung dòng và nguồn; dò
     const first = ids('VCB');
 
     assert.equal(new Set(first).size, 3);
-    assert.match(first[0], /^TX_IMP_20261027_[0-9a-f]{8}$/);
+    assert.match(first[0], /^TX_IMP_20261027_[0-9a-f]{16}$/);
     assert.equal(first[1], `${first[0]}_2`);
     // Importing again, or a later statement that repeats a row, gives the same id.
     assert.deepEqual(ids('VCB'), first);
@@ -3386,13 +3386,13 @@ test('metaEditedSince: dấu thời gian trước, vân tay mạnh sau', () => {
     assert.equal(edited(load({ a: 2 }, T), { updatedAt: T, h: '037a0253.51' }), false);
 });
 
-test('buildImportItems: hai dòng khác nhau cùng ngày có hashText 32-bit va chạm vẫn có id khác nhau (nhập sao kê không âm thầm mất dòng)', () => {
+test('buildImportItems: id mạnh (64 bit SHA-256), id cũ 32-bit vẫn được tính để nhận ra sổ cũ; hai dòng khác nhau mà hash 32-bit trùng không còn cùng id', () => {
     // `|2026-11-22|expense|11814|cafe|` and `|2026-11-22|expense|47379|grab|` have the same FNV-1a value.
     const rows = [
         ['Ngày', 'Nội dung', 'Số tiền'],
         ['22/11/2026', 'cafe', '-11.814'],
         ['22/11/2026', 'grab', '-47.379'],
-        ['22/11/2026', 'cafe', '-11.814'], // an identical row: as before it gets "_2"
+        ['22/11/2026', 'cafe', '-11.814'], // an identical row: "_2", as it always was
     ];
     const layout = {
         headerIndex: 0,
@@ -3411,10 +3411,125 @@ test('buildImportItems: hai dòng khác nhau cùng ngày có hashText 32-bit va 
 
     assert.equal(run('hashText("|2026-11-22|expense|11814|cafe|")'), '1261bfd1');
     assert.equal(run('hashText("|2026-11-22|expense|47379|grab|")'), '1261bfd1');
+
+    // The old ids (what ledgers made by older versions hold): the colliding rows share one.
+    assert.deepEqual(
+        built.items.map((item) => item.legacyId),
+        ['TX_IMP_20261122_1261bfd1', 'TX_IMP_20261122_1261bfd1', 'TX_IMP_20261122_1261bfd1_2'],
+    );
+    // The ids now: three different ones, 64 bits of SHA-256 of the same key, "_2" for the repeat.
     assert.equal(new Set(ids).size, 3, ids.join(' '));
-    assert.deepEqual(ids, [
-        'TX_IMP_20261122_1261bfd1',
-        'TX_IMP_20261122_1261bfd1_2',
-        'TX_IMP_20261122_1261bfd1_3',
+    ids.forEach((id) => assert.match(id, /^TX_IMP_20261122_[0-9a-f]{16}(_2)?$/));
+    assert.equal(ids[2], `${ids[0]}_2`);
+    assert.equal(
+        ids[0],
+        `TX_IMP_20261122_${run('sha256Hex("|2026-11-22|expense|11814|cafe|")').slice(0, 16)}`,
+    );
+});
+
+test('markImportDuplicates: id mạnh trùng là đã nhập; id cũ 32-bit trùng chỉ là đã nhập khi cùng tác động lên nguồn, không thì để người dùng quyết (không bỏ âm thầm)', () => {
+    const mark = (items, existing, source = 'VCB') =>
+        plain(
+            run(
+                `markImportDuplicates(${JSON.stringify(items)},${JSON.stringify(existing)},${JSON.stringify(source)})`,
+            ),
+        );
+    const item = (id, legacyId, amount, extra = {}) => ({
+        id,
+        legacyId,
+        date: '2026-11-22',
+        type: 'expense',
+        amount,
+        note: '',
+        ...extra,
+    });
+    const book = (id, amount, extra = {}) => ({
+        id,
+        date: '2026-11-22',
+        type: 'expense',
+        source: 'VCB',
+        amount,
+        ...extra,
+    });
+    const LEGACY = 'TX_IMP_20261122_1261bfd1';
+    const first = (marked) => [marked[0].status, marked[0].include, marked[0].match];
+
+    // The strong id is there: imported before.
+    assert.deepEqual(
+        first(
+            mark(
+                [item('TX_IMP_20261122_aaaaaaaaaaaaaaaa', LEGACY, 11814)],
+                [book('TX_IMP_20261122_aaaaaaaaaaaaaaaa', 11814)],
+            ),
+        ),
+        ['imported', false, ''],
+    );
+
+    // A ledger from an older version: the transaction has the old id and the same effect: the same
+    // row, imported before (re-importing an old statement does not double it).
+    assert.deepEqual(
+        first(
+            mark([item('TX_IMP_20261122_bbbbbbbbbbbbbbbb', LEGACY, 11814)], [book(LEGACY, 11814)]),
+        ),
+        ['imported', false, ''],
+    );
+
+    // The old id belongs to a DIFFERENT row (another amount): not skipped, not ticked: a person decides.
+    assert.deepEqual(
+        first(
+            mark([item('TX_IMP_20261122_cccccccccccccccc', LEGACY, 47379)], [book(LEGACY, 11814)]),
+        ),
+        ['duplicate', false, LEGACY],
+    );
+
+    // The other direction of the same amount is a different effect too.
+    assert.equal(
+        mark(
+            [item('TX_IMP_20261122_dddddddddddddddd', LEGACY, 11814, { type: 'income' })],
+            [book(LEGACY, 11814)],
+        )[0].status,
+        'duplicate',
+    );
+
+    // Nothing in the book: new and ticked.
+    assert.deepEqual(first(mark([item('TX_IMP_20261122_eeeeeeeeeeeeeeee', LEGACY, 11814)], [])), [
+        'new',
+        true,
+        '',
     ]);
+
+    // The review's case across two files: file A was imported (its row is in the book under its
+    // strong id); file B has a different row with the same old id and its own strong id: new.
+    const rowsA = [
+        ['Ngày', 'Nội dung', 'Số tiền'],
+        ['22/11/2026', 'cafe', '-11.814'],
+    ];
+    const rowsB = [
+        ['Ngày', 'Nội dung', 'Số tiền'],
+        ['22/11/2026', 'grab', '-47.379'],
+    ];
+    const layout = {
+        headerIndex: 0,
+        columns: {
+            date: 0,
+            description: 1,
+            amount: 2,
+            debit: -1,
+            credit: -1,
+            balance: -1,
+            reference: -1,
+        },
+    };
+    const build = (rows) =>
+        plain(run(`buildImportItems(${JSON.stringify(rows)},${JSON.stringify(layout)})`)).items;
+    const [a] = build(rowsA);
+    const [b] = build(rowsB);
+
+    // Two files, one row each: the old ids collide (same key hash), the ids now do not, and the
+    // book that holds file A's row (under its id) does not make file B's row "imported before".
+    assert.equal(a.legacyId, b.legacyId);
+    assert.notEqual(a.id, b.id);
+    assert.deepEqual(first(mark([b], [book(a.id, 11814)])), ['new', true, '']);
+    // The review's own pair, from a book whose A row has the OLD id: B is shown, unticked.
+    assert.deepEqual(first(mark([b], [book(a.legacyId, 11814)])), ['duplicate', false, a.legacyId]);
 });
