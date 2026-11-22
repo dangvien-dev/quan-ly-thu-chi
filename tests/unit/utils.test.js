@@ -1902,7 +1902,7 @@ test('buildImportItems: id chỉ phụ thuộc nội dung dòng và nguồn; dò
     const first = ids('VCB');
 
     assert.equal(new Set(first).size, 3);
-    assert.match(first[0], /^TX_IMP_20261027_[0-9a-f]{8}$/);
+    assert.match(first[0], /^TX_IMP_20261027_[0-9a-f]{16}$/);
     assert.equal(first[1], `${first[0]}_2`);
     // Importing again, or a later statement that repeats a row, gives the same id.
     assert.deepEqual(ids('VCB'), first);
@@ -3384,4 +3384,391 @@ test('metaEditedSince: dấu thời gian trước, vân tay mạnh sau', () => {
 
     // A record of an older version has no usable fingerprint: only the stamp is compared.
     assert.equal(edited(load({ a: 2 }, T), { updatedAt: T, h: '037a0253.51' }), false);
+});
+
+test('buildImportItems: id mạnh (64 bit SHA-256), id cũ 32-bit vẫn được tính để nhận ra sổ cũ; hai dòng khác nhau mà hash 32-bit trùng không còn cùng id', () => {
+    // `|2026-11-22|expense|11814|cafe|` and `|2026-11-22|expense|47379|grab|` have the same FNV-1a value.
+    const rows = [
+        ['Ngày', 'Nội dung', 'Số tiền'],
+        ['22/11/2026', 'cafe', '-11.814'],
+        ['22/11/2026', 'grab', '-47.379'],
+        ['22/11/2026', 'cafe', '-11.814'], // an identical row: "_2", as it always was
+    ];
+    const layout = {
+        headerIndex: 0,
+        columns: {
+            date: 0,
+            description: 1,
+            amount: 2,
+            debit: -1,
+            credit: -1,
+            balance: -1,
+            reference: -1,
+        },
+    };
+    const built = plain(run(`buildImportItems(${JSON.stringify(rows)},${JSON.stringify(layout)})`));
+    const ids = built.items.map((item) => item.id);
+
+    assert.equal(run('hashText("|2026-11-22|expense|11814|cafe|")'), '1261bfd1');
+    assert.equal(run('hashText("|2026-11-22|expense|47379|grab|")'), '1261bfd1');
+
+    // The old ids (what ledgers made by older versions hold): the colliding rows share one.
+    assert.deepEqual(
+        built.items.map((item) => item.legacyId),
+        ['TX_IMP_20261122_1261bfd1', 'TX_IMP_20261122_1261bfd1', 'TX_IMP_20261122_1261bfd1_2'],
+    );
+    // The ids now: three different ones, 64 bits of SHA-256 of the row's JSON key, "_2" for the repeat.
+    assert.equal(new Set(ids).size, 3, ids.join(' '));
+    ids.forEach((id) => assert.match(id, /^TX_IMP_20261122_[0-9a-f]{16}(_2)?$/));
+    assert.equal(ids[2], `${ids[0]}_2`);
+    assert.equal(
+        ids[0],
+        `TX_IMP_20261122_${run('sha256Hex(JSON.stringify(["imp2","","2026-11-22","expense",11814,"cafe",""]))').slice(0, 16)}`,
+    );
+});
+
+test('review vòng 17: headerLayoutKey giữ nguyên khóa cũ khi tiêu đề không có "|" hay "\\", và hai tiêu đề khác nhau không bao giờ cùng khóa', () => {
+    const key = (row) => run(`headerLayoutKey(${JSON.stringify(row)})`);
+
+    // The key of every header without "|" or "\\" is what it always was: the old formula, so the
+    // columns remembered on a device stay valid (spaces around a cell stay around it).
+    const oldKey = (row) => run(`normalizeSearchText(${JSON.stringify(row.join('|'))})`);
+
+    assert.equal(key(['Ngày GD', ' Số   TIỀN ', 'Đối tác']), 'ngay gd| so tien |doi tac');
+    assert.equal(
+        key(['Ngày GD', ' Số   TIỀN ', 'Đối tác']),
+        oldKey(['Ngày GD', ' Số   TIỀN ', 'Đối tác']),
+    );
+    assert.equal(key(['Ngày GD', 'Số tiền']), oldKey(['Ngày GD', 'Số tiền']));
+    assert.equal(key(['Ngày giao dịch', 'Nội dung']), 'ngay giao dich|noi dung');
+
+    // `a|b` was the key of both ["a|b"] and ["a", "b"].
+    assert.notEqual(key(['a|b']), key(['a', 'b']));
+    assert.notEqual(key(['a\\', 'b']), key(['a\\|b']));
+
+    const alphabet = ['a', '|', '\\'];
+    const strings = [''];
+
+    for (let length = 1; length <= 2; length++) {
+        for (let n = 0; n < alphabet.length ** length; n++) {
+            let text = '';
+
+            for (let i = 0, rest = n; i < length; i++, rest = Math.floor(rest / 3)) {
+                text += alphabet[rest % 3];
+            }
+
+            strings.push(text);
+        }
+    }
+
+    const rows = [];
+
+    strings.forEach((a) => rows.push([a]));
+    strings.forEach((a) => strings.forEach((b) => rows.push([a, b])));
+    strings
+        .slice(0, 4)
+        .forEach((a) =>
+            strings
+                .slice(0, 4)
+                .forEach((b) => strings.slice(0, 4).forEach((c) => rows.push([a, b, c]))),
+        );
+
+    const owner = new Map();
+
+    for (const row of rows) {
+        const id = key(row);
+
+        if (owner.has(id)) assert.deepEqual(owner.get(id), row, `${id}`);
+
+        owner.set(id, row);
+    }
+
+    assert.equal(owner.size, rows.length);
+});
+
+// Review round 17: the key an id is made of must keep the boundary between its fields.
+const ID_LAYOUT = {
+    headerIndex: 0,
+    columns: {
+        date: 0,
+        description: 1,
+        amount: 2,
+        debit: -1,
+        credit: -1,
+        balance: -1,
+        reference: 3,
+    },
+};
+
+/** The id of the only row of a one-row statement (one file), the way the import dialog builds it. */
+const idOfRow = (note, reference, source = 'Tiền Mặt') => {
+    const rows = [
+        ['Ngày', 'Nội dung', 'Số tiền', 'Mã giao dịch'],
+        ['22/11/2026', note, '-11.814', reference],
+    ];
+
+    return plain(
+        run(
+            `buildImportItems(${JSON.stringify(rows)},${JSON.stringify(ID_LAYOUT)},${JSON.stringify({ source })})`,
+        ),
+    ).items[0];
+};
+
+test('review vòng 17: hai dòng khác nhau mà khóa ghép bằng "|" giống hệt nhau (dấu | nằm trong nội dung / mã tham chiếu) có id KHÁC nhau', () => {
+    // `Tiền Mặt|2026-11-22|expense|11814|cafe|pay|123` is what BOTH rows used to be hashed from.
+    const a = idOfRow('cafe|pay', '123');
+    const b = idOfRow('cafe', 'pay|123');
+
+    assert.notEqual(a.id, b.id);
+    // The 32-bit id of older versions cannot tell them apart; that is why it is only a hint
+    // (markImportDuplicates also needs the same note).
+    assert.equal(a.legacyId, b.legacyId);
+    assert.equal(
+        a.legacyId,
+        `TX_IMP_20261122_${run('hashText("Tiền Mặt|2026-11-22|expense|11814|cafe|pay|123")')}`,
+    );
+});
+
+test('review vòng 17: id = 64 bit SHA-256 của khóa JSON có phiên bản (nhà kiểm độc lập bằng crypto của Node)', () => {
+    const crypto = require('node:crypto');
+    const expected = (note, reference, source = 'Tiền Mặt') => {
+        const key = JSON.stringify([
+            'imp2',
+            source,
+            '2026-11-22',
+            'expense',
+            11814,
+            note,
+            reference,
+        ]);
+
+        return `TX_IMP_20261122_${crypto.createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 16)}`;
+    };
+
+    assert.equal(idOfRow('cafe|pay', '123').id, expected('cafe|pay', '123'));
+    assert.equal(idOfRow('cafe', 'pay|123').id, expected('cafe', 'pay|123'));
+    // The note is compared the way people read it (case, accents, spaces); the reference as it is.
+    assert.equal(idOfRow('  CAFÉ  Pay ', 'AbC').id, expected('cafe pay', 'AbC'));
+    // A `|` in the source name does not move a boundary either.
+    assert.equal(idOfRow('x', 'y', 'Ví|Momo').id, expected('x', 'y', 'Ví|Momo'));
+    assert.notEqual(idOfRow('x', 'y', 'Ví|Momo').id, idOfRow('x', 'y', 'Ví').id);
+});
+
+test('review vòng 17: với mọi cặp (ghi chú, mã tham chiếu) ghép từ "a" và "|", hai cặp khác nhau không bao giờ có cùng id', () => {
+    const alphabet = ['a', '|'];
+    const strings = [''];
+
+    for (let length = 1; length <= 3; length++) {
+        for (let n = 0; n < alphabet.length ** length; n++) {
+            let text = '';
+
+            for (let i = 0; i < length; i++) text += alphabet[(n >> i) & 1];
+
+            strings.push(text);
+        }
+    }
+
+    const owner = new Map();
+
+    for (const note of strings) {
+        for (const reference of strings) {
+            const item = idOfRow(note, reference);
+            // What the id is meant to depend on: the note as the app cleans and compares it, and
+            // the reference. (An empty note becomes the app's default text.)
+            const tuple = JSON.stringify([
+                run(`normalizeSearchText(${JSON.stringify(item.note)})`),
+                reference,
+            ]);
+
+            if (owner.has(item.id)) {
+                assert.equal(
+                    owner.get(item.id),
+                    tuple,
+                    `${item.id}: ${owner.get(item.id)} / ${tuple}`,
+                );
+            }
+
+            owner.set(item.id, tuple);
+        }
+    }
+
+    // Many different tuples, hence many ids (not everything collapsed into a few).
+    assert.ok(owner.size >= strings.length * strings.length - 20, String(owner.size));
+});
+
+test('markImportDuplicates: id mạnh trùng là đã nhập; id cũ 32-bit trùng chỉ là đã nhập khi cùng tác động lên nguồn, không thì để người dùng quyết (không bỏ âm thầm)', () => {
+    const mark = (items, existing, source = 'VCB') =>
+        plain(
+            run(
+                `markImportDuplicates(${JSON.stringify(items)},${JSON.stringify(existing)},${JSON.stringify(source)})`,
+            ),
+        );
+    const item = (id, legacyId, amount, extra = {}) => ({
+        id,
+        legacyId,
+        date: '2026-11-22',
+        type: 'expense',
+        amount,
+        note: '',
+        ...extra,
+    });
+    const book = (id, amount, extra = {}) => ({
+        id,
+        date: '2026-11-22',
+        type: 'expense',
+        source: 'VCB',
+        amount,
+        ...extra,
+    });
+    const LEGACY = 'TX_IMP_20261122_1261bfd1';
+    const first = (marked) => [marked[0].status, marked[0].include, marked[0].match];
+
+    // The strong id is there: imported before.
+    assert.deepEqual(
+        first(
+            mark(
+                [item('TX_IMP_20261122_aaaaaaaaaaaaaaaa', LEGACY, 11814)],
+                [book('TX_IMP_20261122_aaaaaaaaaaaaaaaa', 11814)],
+            ),
+        ),
+        ['imported', false, ''],
+    );
+
+    // A ledger from an older version: the transaction has the old id and the same effect: the same
+    // row, imported before (re-importing an old statement does not double it).
+    assert.deepEqual(
+        first(
+            mark([item('TX_IMP_20261122_bbbbbbbbbbbbbbbb', LEGACY, 11814)], [book(LEGACY, 11814)]),
+        ),
+        ['imported', false, ''],
+    );
+
+    // The old id belongs to a DIFFERENT row (another amount): not skipped, not ticked: a person decides.
+    assert.deepEqual(
+        first(
+            mark([item('TX_IMP_20261122_cccccccccccccccc', LEGACY, 47379)], [book(LEGACY, 11814)]),
+        ),
+        ['duplicate', false, LEGACY],
+    );
+
+    // The other direction of the same amount is a different effect too.
+    assert.equal(
+        mark(
+            [item('TX_IMP_20261122_dddddddddddddddd', LEGACY, 11814, { type: 'income' })],
+            [book(LEGACY, 11814)],
+        )[0].status,
+        'duplicate',
+    );
+
+    // Nothing in the book: new and ticked.
+    assert.deepEqual(first(mark([item('TX_IMP_20261122_eeeeeeeeeeeeeeee', LEGACY, 11814)], [])), [
+        'new',
+        true,
+        '',
+    ]);
+
+    // The review's case across two files: file A was imported (its row is in the book under its
+    // strong id); file B has a different row with the same old id and its own strong id: new.
+    const rowsA = [
+        ['Ngày', 'Nội dung', 'Số tiền'],
+        ['22/11/2026', 'cafe', '-11.814'],
+    ];
+    const rowsB = [
+        ['Ngày', 'Nội dung', 'Số tiền'],
+        ['22/11/2026', 'grab', '-47.379'],
+    ];
+    const layout = {
+        headerIndex: 0,
+        columns: {
+            date: 0,
+            description: 1,
+            amount: 2,
+            debit: -1,
+            credit: -1,
+            balance: -1,
+            reference: -1,
+        },
+    };
+    const build = (rows) =>
+        plain(run(`buildImportItems(${JSON.stringify(rows)},${JSON.stringify(layout)})`)).items;
+    const [a] = build(rowsA);
+    const [b] = build(rowsB);
+
+    // Two files, one row each: the old ids collide (same key hash), the ids now do not, and the
+    // book that holds file A's row (under its id) does not make file B's row "imported before".
+    assert.equal(a.legacyId, b.legacyId);
+    assert.notEqual(a.id, b.id);
+    assert.deepEqual(first(mark([b], [book(a.id, 11814)])), ['new', true, '']);
+    // The review's own pair, from a book whose A row has the OLD id: B is shown, unticked.
+    assert.deepEqual(first(mark([b], [book(a.legacyId, 11814)])), ['duplicate', false, a.legacyId]);
+});
+
+test('markImportDuplicates: id cũ 32-bit + cùng tác động chưa đủ: phải cùng ghi chú (chuẩn hóa, bỏ thẻ), không thì để người dùng quyết định', () => {
+    const mark = (items, existing, source = 'Tiền Mặt') =>
+        plain(
+            run(
+                `markImportDuplicates(${JSON.stringify(items)},${JSON.stringify(existing)},${JSON.stringify(source)})`,
+            ),
+        );
+    // Two rows with the same date, source, direction and amount whose old 32-bit ids are the same
+    // (c9f627a7): only the note tells them apart.
+    const LEGACY = 'TX_IMP_20261122_c9f627a7';
+    const item = (note) => ({
+        id: `TX_IMP_20261122_${note === 'muc 0009rnw' ? 'b926371f16410984' : '7e4e3fe9cdd6982e'}`,
+        legacyId: LEGACY,
+        date: '2026-11-22',
+        type: 'expense',
+        amount: 11814,
+        note,
+    });
+    const book = (note) => ({
+        id: LEGACY,
+        date: '2026-11-22',
+        type: 'expense',
+        source: 'Tiền Mặt',
+        amount: 11814,
+        note,
+    });
+    const first = (marked) => [marked[0].status, marked[0].include, marked[0].match];
+
+    assert.equal(run('hashText("Tiền Mặt|2026-11-22|expense|11814|muc 0009rnw|")'), 'c9f627a7');
+    assert.equal(run('hashText("Tiền Mặt|2026-11-22|expense|11814|muc 000apba|")'), 'c9f627a7');
+
+    // The same row (same note): imported before.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('muc 0009rnw')])), [
+        'imported',
+        false,
+        '',
+    ]);
+    // The same row, the note changed in case / spacing / diacritics, or a tag added later.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('MUC   0009rnw')])), [
+        'imported',
+        false,
+        '',
+    ]);
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('muc 0009rnw #khachA #vip')])), [
+        'imported',
+        false,
+        '',
+    ]);
+    assert.deepEqual(first(mark([item('Cà phê')], [book('ca phe')])), ['imported', false, '']);
+
+    // Another row with the same amount and the same old id: NOT the same, a person decides.
+    assert.deepEqual(first(mark([item('muc 000apba')], [book('muc 0009rnw')])), [
+        'duplicate',
+        false,
+        LEGACY,
+    ]);
+    // A note that was rewritten completely cannot be proven to be the same row either.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('mua do an sang')])), [
+        'duplicate',
+        false,
+        LEGACY,
+    ]);
+    // A book entry with no note at all.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [{ ...book(''), note: undefined }])), [
+        'duplicate',
+        false,
+        LEGACY,
+    ]);
 });

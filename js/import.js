@@ -166,7 +166,7 @@ function showImportStep(step) {
 // --- LAYOUTS REMEMBERED ON THIS DEVICE ---
 // A statement from the same bank has the same header row every month, so the columns the person
 // confirmed once are used again and the next import is "choose the file, check, save".
-const importLayoutKey = (headerRow) => normalizeSearchText(headerRow.join('|'));
+const importLayoutKey = headerLayoutKey;
 
 function readSavedImportLayouts() {
     const saved = readStoredJson(IMPORT_LAYOUTS_KEY, {});
