@@ -114,10 +114,10 @@ test.describe('yêu cầu cũ (tương thích với client và script ban đầu
         assert.equal(ids(gas).length, 2);
     });
 
-    test('POST {transactions: []} xóa các dòng dữ liệu nhưng giữ header', () => {
+    test('POST {transactions: [], confirmWipe: true} xóa các dòng dữ liệu nhưng giữ header', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
 
-        gas.post({ transactions: [] });
+        gas.post({ transactions: [], confirmWipe: true });
 
         assert.deepEqual(gas.get(), []);
         assert.equal(gas.sheet('Transactions').grid[0].length, 9);
@@ -260,6 +260,60 @@ test.describe('giao thức v2', () => {
         const gas = createGas();
 
         assert.equal(sync(gas, { replace: true, upserts: [] }).version, 2);
+    });
+
+    test('PR #33 review: Sheet đầy hàng thì thêm hàng trước khi ghi, không mất dòng cũ', () => {
+        // Header + 2 rows in a sheet that has exactly 3 rows: a 3rd transaction needs a 4th row.
+        const gas = createGas({
+            sheets: { Transactions: existingSheet() },
+            sizes: { Transactions: { maxRows: 3 } },
+        });
+        const before = ids(gas);
+
+        const state = sync(gas, { upserts: [row({ id: 'TX_NEW' })] });
+
+        assert.equal(state.error, undefined);
+        assert.deepEqual(ids(gas), [...before, 'TX_NEW']);
+        assert.ok(gas.sheet('Transactions').getMaxRows() >= before.length + 2);
+    });
+
+    test('PR #33 review: ghi lỗi giữa chừng thì khôi phục các dòng cũ', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = gas.get();
+        const sheet = gas.sheet('Transactions');
+        const getRange = sheet.getRange;
+        let failed = false;
+
+        // The first bulk write of data rows fails, as a quota or timeout error would on Google.
+        sheet.getRange = (...args) => {
+            const range = getRange(...args);
+            const setValues = range.setValues;
+
+            range.setValues = (values) => {
+                if (!failed && args[0] === 2 && values.length > 1) {
+                    failed = true;
+                    throw new Error('Service error: Spreadsheets');
+                }
+
+                return setValues(values);
+            };
+
+            return range;
+        };
+
+        assert.match(sync(gas, { upserts: [row({ id: 'TX_NEW' })] }).error, /Service error/);
+        sheet.getRange = getRange;
+        assert.ok(failed);
+        assert.deepEqual(gas.get(), before);
+    });
+
+    test('PR #33 review: POST {transactions: []} kiểu cũ cũng cần confirmWipe để làm trống Sheet', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = ids(gas);
+
+        assert.match(gas.post({ transactions: [] }).error, /confirmWipe/);
+        assert.match(gas.get({ action: 'save', data: '[]' }).error, /confirmWipe/);
+        assert.deepEqual(ids(gas), before);
     });
 
     test('SEC-005: ô quá 50.000 ký tự bị từ chối trước khi xóa, Sheet giữ nguyên', () => {

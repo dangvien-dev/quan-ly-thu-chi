@@ -33,12 +33,15 @@
  *    GET  ?action=sync&payload=<json>     -> same as the POST (fallback when a POST is blocked).
  *  Legacy (the original script's requests, so older clients keep working)
  *    GET                                  -> JSON array of transactions
- *    POST {"transactions": [...]}         -> replaces every row
- *    GET  ?action=save&data=<json array>  -> replaces every row
+ *    POST {"transactions": [...]}         -> replaces every row (an empty list on a sheet that
+ *                                            has rows needs "confirmWipe": true)
+ *    GET  ?action=save&data=<json array>  -> replaces every row (empty list: &confirmWipe=true)
  *
  * Nothing is ever cleared before the request has been validated: a malformed body is rejected
  * and the sheet is left untouched; every cell is checked against the 50,000-character limit of
- * Sheets before the old rows are cleared. Errors are returned as {"error": "..."}.
+ * Sheets and the sheet is grown to the rows and columns it needs before the old rows are
+ * cleared, and a write that still fails puts the old rows back. Emptying the sheet (v2 replace
+ * or legacy save with an empty list) needs confirmWipe. Errors are returned as {"error": "..."}.
  */
 
 const TRANSACTIONS_SHEET = 'Transactions';
@@ -74,7 +77,11 @@ function doGet(e) {
         if (!isAuthorized_(params.token)) return jsonResponse_({ error: 'unauthorized' });
 
         if (params.action === 'save') {
-            return jsonResponse_(withLock_(() => replaceAllTransactions_(JSON.parse(params.data))));
+            return jsonResponse_(
+                withLock_(() =>
+                    replaceAllTransactions_(JSON.parse(params.data), params.confirmWipe === 'true'),
+                ),
+            );
         }
 
         return jsonResponse_(params.v === '2' ? readState_() : readTransactions_());
@@ -94,7 +101,11 @@ function doPost(e) {
         if (!isAuthorized_(body && body.token)) return jsonResponse_({ error: 'unauthorized' });
 
         if (body && Array.isArray(body.transactions)) {
-            return jsonResponse_(withLock_(() => replaceAllTransactions_(body.transactions)));
+            return jsonResponse_(
+                withLock_(() =>
+                    replaceAllTransactions_(body.transactions, body.confirmWipe === true),
+                ),
+            );
         }
 
         throw new Error('Yêu cầu không hợp lệ');
@@ -150,6 +161,48 @@ function getTimeZone_() {
     return SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
 }
 
+/**
+ * Grows the sheet to at least `rows` x `columns`. A range outside the sheet throws on Google
+ * ("The coordinates of the range are outside the dimensions of the sheet"), so this must run
+ * before anything is cleared.
+ */
+function ensureSize_(sheet, rows, columns) {
+    const maxRows = sheet.getMaxRows();
+    const maxColumns = sheet.getMaxColumns();
+
+    if (rows > maxRows) sheet.insertRowsAfter(maxRows, rows - maxRows);
+    if (columns > maxColumns) sheet.insertColumnsAfter(maxColumns, columns - maxColumns);
+}
+
+/**
+ * Clears rows 2.. and writes `rows` there (after `beforeWrite`, e.g. number formats). If the write
+ * fails, the previous rows are put back before the error is rethrown: Apps Script does not roll
+ * back what it already did, and a cleared sheet would read as "no data" on every device.
+ */
+function replaceDataRows_(sheet, width, rows, beforeWrite) {
+    ensureSize_(sheet, rows.length + 1, width);
+
+    const lastRow = sheet.getLastRow();
+    const previous = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, width).getValues() : [];
+
+    try {
+        if (previous.length) sheet.getRange(2, 1, previous.length, width).clearContent();
+        if (!rows.length) return;
+        if (beforeWrite) beforeWrite();
+
+        sheet.getRange(2, 1, rows.length, width).setValues(rows);
+    } catch (error) {
+        try {
+            if (rows.length) sheet.getRange(2, 1, rows.length, width).clearContent();
+            if (previous.length) sheet.getRange(2, 1, previous.length, width).setValues(previous);
+        } catch (restoreError) {
+            // Nothing more can be done here; the original error is the one worth reporting.
+        }
+
+        throw error;
+    }
+}
+
 /** Returns the header row, appending any column from `columns` the sheet does not have yet. */
 function ensureHeader_(sheet, columns) {
     const width = sheet.getLastColumn();
@@ -159,6 +212,7 @@ function ensureHeader_(sheet, columns) {
     });
 
     if (missing.length) {
+        ensureSize_(sheet, 1, header.length + missing.length);
         sheet.getRange(1, header.length + 1, 1, missing.length).setValues([missing]);
         header.push.apply(header, missing);
     }
@@ -237,25 +291,18 @@ function writeTransactions_(list) {
             return name === 'date' ? toDateCell_(value, timeZone) : value;
         });
     });
-    const lastRow = sheet.getLastRow();
 
-    if (lastRow > 1) {
-        sheet.getRange(2, 1, lastRow - 1, header.length).clearContent();
-    }
+    replaceDataRows_(sheet, header.length, rows, function () {
+        header.forEach(function (name, index) {
+            const column = sheet.getRange(2, index + 1, rows.length, 1);
 
-    if (!rows.length) return;
-
-    header.forEach(function (name, index) {
-        const column = sheet.getRange(2, index + 1, rows.length, 1);
-
-        if (TEXT_COLUMNS.indexOf(name) !== -1) {
-            column.setNumberFormat('@');
-        } else if (name === 'date') {
-            column.setNumberFormat('dd/mm/yyyy');
-        }
+            if (TEXT_COLUMNS.indexOf(name) !== -1) {
+                column.setNumberFormat('@');
+            } else if (name === 'date') {
+                column.setNumberFormat('dd/mm/yyyy');
+            }
+        });
     });
-
-    sheet.getRange(2, 1, rows.length, header.length).setValues(rows);
 }
 
 /** A valid transaction row with only the known columns, or null for anything else. */
@@ -281,8 +328,12 @@ function cleanTransaction_(item) {
 }
 
 /** Legacy full replace: validated first, so an invalid request never clears the sheet. */
-function replaceAllTransactions_(list) {
+function replaceAllTransactions_(list, confirmWipe) {
     if (!Array.isArray(list)) throw new Error('Yêu cầu không hợp lệ');
+
+    if (!list.length && confirmWipe !== true && readTransactions_().length > 0) {
+        throw new Error('Từ chối xóa toàn bộ giao dịch: yêu cầu không có confirmWipe');
+    }
 
     const rows = list.map(cleanTransaction_);
 
@@ -332,7 +383,6 @@ function readMetaRows_() {
 function writeMetaRows_(rows) {
     const sheet = getSheet_(META_SHEET);
     const header = ensureHeader_(sheet, META_COLUMNS);
-    const lastRow = sheet.getLastRow();
     const keys = Object.keys(rows);
 
     keys.forEach(function (key) {
@@ -341,20 +391,15 @@ function writeMetaRows_(rows) {
         assertCellFits_(rows[key].updatedAt, 'Dữ liệu "' + key + '" (updatedAt)');
     });
 
-    if (lastRow > 1) {
-        sheet.getRange(2, 1, lastRow - 1, header.length).clearContent();
-    }
+    const values = keys.map(function (key) {
+        return header.map(function (name) {
+            return name === 'key' ? key : rows[key][name];
+        });
+    });
 
-    if (!keys.length) return;
-
-    sheet.getRange(2, 1, keys.length, header.length).setNumberFormat('@');
-    sheet.getRange(2, 1, keys.length, header.length).setValues(
-        keys.map(function (key) {
-            return header.map(function (name) {
-                return name === 'key' ? key : rows[key][name];
-            });
-        }),
-    );
+    replaceDataRows_(sheet, header.length, values, function () {
+        sheet.getRange(2, 1, values.length, header.length).setNumberFormat('@');
+    });
 }
 
 function readMeta_() {

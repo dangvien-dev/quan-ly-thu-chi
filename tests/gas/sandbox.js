@@ -12,14 +12,35 @@ const USER_SCRIPT_FILE = path.join(__dirname, 'fixtures', 'user-script.gs');
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 const OFFSET_HOURS = 7; // Asia/Ho_Chi_Minh has no daylight saving
 
-function createSheet(grid = []) {
+// A new Google sheet has 1000 rows and 26 columns; a range outside them throws, like on Google.
+const DEFAULT_MAX_ROWS = 1000;
+const DEFAULT_MAX_COLUMNS = 26;
+
+function createSheet(grid = [], { maxRows, maxColumns } = {}) {
+    const size = {
+        rows: Math.max(maxRows ?? DEFAULT_MAX_ROWS, grid.length),
+        columns: Math.max(maxColumns ?? DEFAULT_MAX_COLUMNS, ...grid.map((row) => row.length)),
+    };
     const sheet = {
         grid,
         formats: {},
         getLastColumn: () => Math.max(0, ...grid.map((row) => row.length)),
         getLastRow: () => grid.length,
-        getMaxColumns: () => Math.max(26, sheet.getLastColumn()),
+        getMaxRows: () => size.rows,
+        getMaxColumns: () => size.columns,
+        insertRowsAfter(after, count) {
+            size.rows += count;
+        },
+        insertColumnsAfter(after, count) {
+            size.columns += count;
+        },
         getRange(row, column, rows = 1, columns = 1) {
+            if (row + rows - 1 > size.rows || column + columns - 1 > size.columns) {
+                throw new Error(
+                    'The coordinates of the range are outside the dimensions of the sheet.',
+                );
+            }
+
             return {
                 getValues: () =>
                     Array.from({ length: rows }, (_, i) =>
@@ -51,6 +72,7 @@ function createSheet(grid = []) {
         },
         /** Like Sheets, a "yyyy-mm-dd" string typed into a cell becomes a real date. */
         appendRow(row) {
+            if (grid.length + 1 > size.rows) size.rows = grid.length + 1;
             grid.push(
                 row.map((value) =>
                     typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -81,8 +103,16 @@ function createSheet(grid = []) {
  */
 const OPEN_SERVER = Object.freeze({ FM_ALLOW_OPEN: 'true' });
 
-function createGas({ sheets = {}, properties = OPEN_SERVER, codeFile = CODE_FILE } = {}) {
-    const book = new Map(Object.entries(sheets).map(([name, grid]) => [name, createSheet(grid)]));
+function createGas({
+    sheets = {},
+    properties = OPEN_SERVER,
+    codeFile = CODE_FILE,
+    sizes = {},
+} = {}) {
+    // sizes: { [sheet name]: { maxRows, maxColumns } } for sheets smaller than Google's default.
+    const book = new Map(
+        Object.entries(sheets).map(([name, grid]) => [name, createSheet(grid, sizes[name])]),
+    );
     const sandbox = {
         SpreadsheetApp: {
             getActiveSpreadsheet: () => ({
