@@ -41,17 +41,19 @@ const syncedSeed = (rows, extra = {}) => ({
 /**
  * An Apps Script server on an in-memory spreadsheet. backend: 'legacy' (the owner's script) or
  * 'v2' (apps-script/Code.gs). rows seed the Transactions sheet; properties are Script Properties
- * (FM_TOKEN switches the token on, and server.token then holds it for reading the rows back).
+ * (FM_TOKEN switches the token on, and server.token then holds it for reading the rows back;
+ * without properties the server runs open through FM_ALLOW_OPEN).
  */
-function newServer(backend = 'legacy', { rows = [], properties = {}, sheets = {} } = {}) {
+function newServer(backend = 'legacy', { rows = [], properties, sheets = {} } = {}) {
     const server = createGas({
         codeFile: backend === 'v2' ? CODE_FILE : USER_SCRIPT_FILE,
-        properties,
+        // Without properties Code.gs runs in its explicitly open mode (FM_ALLOW_OPEN).
+        properties: properties || { FM_ALLOW_OPEN: 'true' },
         sheets: { Transactions: gridFromRows(rows), ...sheets },
     });
 
     server.backend = backend;
-    server.token = properties.FM_TOKEN || '';
+    server.token = (properties && properties.FM_TOKEN) || '';
 
     return server;
 }

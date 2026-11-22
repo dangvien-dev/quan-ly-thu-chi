@@ -75,9 +75,13 @@ function createSheet(grid = []) {
 /**
  * @param {object} options
  * @param {Record<string, any[][]>} [options.sheets] initial sheets by name (arrays of rows)
- * @param {Record<string, string>} [options.properties] Script Properties, e.g. { FM_TOKEN: 'x' }
+ * @param {Record<string, string>} [options.properties] Script Properties, e.g. { FM_TOKEN: 'x' };
+ *     by default the explicitly open setup (FM_ALLOW_OPEN), since Code.gs refuses everything
+ *     without a token
  */
-function createGas({ sheets = {}, properties = {}, codeFile = CODE_FILE } = {}) {
+const OPEN_SERVER = Object.freeze({ FM_ALLOW_OPEN: 'true' });
+
+function createGas({ sheets = {}, properties = OPEN_SERVER, codeFile = CODE_FILE } = {}) {
     const book = new Map(Object.entries(sheets).map(([name, grid]) => [name, createSheet(grid)]));
     const sandbox = {
         SpreadsheetApp: {

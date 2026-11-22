@@ -6,9 +6,13 @@
  *  2. Deploy > New deployment (or Manage deployments > Edit > New version) > type "Web app" >
  *     Execute as: Me > Who has access: Anyone. Copy the /exec URL into FinManager
  *     (Cài đặt & Dữ liệu > Web App URL).
- *  3. Recommended: Project Settings > Script properties > add FM_TOKEN with a long random secret,
- *     then enter the same value in FinManager ("Mã bảo vệ"). Without a token anyone who learns
- *     the URL can read and overwrite the data.
+ *  3. Required: Project Settings > Script properties > add FM_TOKEN with a long random secret
+ *     (32+ characters), then enter the same value in FinManager ("Mã bảo vệ") on every device.
+ *     Without FM_TOKEN every request is refused ("unauthorized"). Only if the data really may be
+ *     public, add FM_ALLOW_OPEN = true instead: then anyone who learns the URL can read and
+ *     overwrite it.
+ *     FinManager never puts the token in a URL: it reads with GET ?v=2 (answered "unauthorized")
+ *     and then with a POST that carries the token in its body.
  *
  * Sheets (created on first use)
  *  - "Transactions": id, date, type, source, category, amount, note, targetSource, updatedAt.
@@ -119,10 +123,18 @@ function withLock_(action) {
     }
 }
 
+/**
+ * Fail closed: without FM_TOKEN every request is refused, so a URL that leaks (a commit, a backup
+ * file, a screenshot) never opens the data by accident. A deployment that really wants to stay
+ * open must say so with the Script Property FM_ALLOW_OPEN = true.
+ */
 function isAuthorized_(token) {
-    const expected = PropertiesService.getScriptProperties().getProperty('FM_TOKEN');
+    const properties = PropertiesService.getScriptProperties();
+    const expected = properties.getProperty('FM_TOKEN');
 
-    return !expected || String(token || '') === expected;
+    if (!expected) return properties.getProperty('FM_ALLOW_OPEN') === 'true';
+
+    return String(token || '') === expected;
 }
 
 function getSheet_(name) {

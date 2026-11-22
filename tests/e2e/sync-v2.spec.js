@@ -549,6 +549,58 @@ test.describe('Giao thức v2: mã bảo vệ (token)', () => {
         expect(serverRows(server).map((item) => item.id)).toEqual(['TX_1']);
     });
 
+    test('token không bao giờ nằm trong URL: đọc bằng GET không token rồi POST có token', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: 'bi-mat' } });
+        const { page, state } = await app({ server, seed: { fm_script_token: 'bi-mat' } });
+
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu');
+        expect(await page.evaluate(() => transactions.map((t) => t.id))).toEqual(['TX_1']);
+
+        await addExpense(page, 5000, 'moi');
+        await wait(600);
+
+        expect(state.getUrls.length).toBeGreaterThan(0);
+        state.getUrls.forEach((url) => expect(url).not.toContain('bi-mat'));
+        expect(state.posts.length).toBeGreaterThan(0);
+        state.posts.forEach((post) => expect(post.body.token).toBe('bi-mat'));
+        // The read POST is empty: it changes nothing on the server.
+        expect(state.posts[0].body).toMatchObject({ upserts: [], deletes: [], meta: {} });
+        expect(serverRows(server)).toHaveLength(2);
+    });
+
+    test('server v2 chưa có mã bảo vệ: ghi chú trong Cài đặt cảnh báo, có token thì hết', async ({
+        app,
+    }) => {
+        const open = await app({ backend: 'v2', remote: rows });
+
+        await goTab(open.page, 'settings');
+        await expect(open.page.locator('#sync-protocol-note')).toContainText('chưa có mã bảo vệ');
+
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: 'bi-mat' } });
+        const locked = await app({ server, seed: { fm_script_token: 'bi-mat' } });
+
+        await goTab(locked.page, 'settings');
+        await expect(locked.page.locator('#sync-protocol-note')).toContainText('Apps Script v2');
+        await expect(locked.page.locator('#sync-protocol-note')).not.toContainText(
+            'chưa có mã bảo vệ',
+        );
+    });
+
+    test('Code.gs chưa đặt FM_TOKEN (không FM_ALLOW_OPEN): từ chối, không đọc không ghi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows, properties: {} });
+        const { page, state } = await app({ server, seed: { fm_script_token: 'gi-cung-duoc' } });
+
+        await expect(page.locator('#sync-status')).toContainText('Sai mã bảo vệ');
+        expect(await page.evaluate(() => transactions.length)).toBe(0);
+        // One empty read POST was refused; nothing was written.
+        expect(state.posts).toHaveLength(1);
+        expect(server.get({ v: '2' }).error).toBe('unauthorized');
+    });
+
     test('token không nằm trong file sao lưu', async ({ app }) => {
         const server = newServer('v2', { rows, properties: { FM_TOKEN: 'bi-mat' } });
         const { page } = await app({ server, seed: { fm_script_token: 'bi-mat' } });

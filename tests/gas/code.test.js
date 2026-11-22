@@ -320,11 +320,49 @@ test.describe('mã bảo vệ (FM_TOKEN)', () => {
             properties: { FM_TOKEN: 'bi-mat' },
         });
 
-    test('không đặt token thì mọi yêu cầu đều mở', () => {
-        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+    test('không đặt FM_TOKEN thì mọi yêu cầu bị từ chối và không ghi gì (fail closed)', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() }, properties: {} });
+        const before = JSON.stringify(gas.sheet('Transactions').grid);
+
+        assert.equal(gas.get({ v: '2' }).error, 'unauthorized');
+        assert.equal(gas.get().error, 'unauthorized', 'GET kiểu cũ cũng bị chặn');
+        assert.equal(sync(gas, { upserts: [row({ id: 'A' })] }).error, 'unauthorized');
+        assert.equal(gas.post({ transactions: [] }).error, 'unauthorized');
+        assert.equal(gas.get({ action: 'save', data: '[]' }).error, 'unauthorized');
+        assert.equal(JSON.stringify(gas.sheet('Transactions').grid), before, 'sheet không đổi');
+    });
+
+    test('FM_ALLOW_OPEN = true (không có token) thì mở như trước', () => {
+        const gas = createGas({
+            sheets: { Transactions: existingSheet() },
+            properties: { FM_ALLOW_OPEN: 'true' },
+        });
 
         assert.equal(gas.get({ v: '2' }).version, 2);
         assert.equal(sync(gas, { upserts: [row({ id: 'A' })] }).version, 2);
+    });
+
+    test('FM_ALLOW_OPEN chỉ nhận đúng chữ "true" và không mở được khi đã có FM_TOKEN', () => {
+        ['1', 'TRUE', 'yes', ''].forEach((value) => {
+            const gas = createGas({ properties: { FM_ALLOW_OPEN: value } });
+
+            assert.equal(gas.get({ v: '2' }).error, 'unauthorized', value);
+        });
+
+        const gas = createGas({ properties: { FM_TOKEN: 'bi-mat', FM_ALLOW_OPEN: 'true' } });
+
+        assert.equal(gas.get({ v: '2' }).error, 'unauthorized');
+        assert.equal(gas.get({ v: '2', token: 'bi-mat' }).version, 2);
+    });
+
+    test('POST sync rỗng có token đọc được trạng thái mà không ghi gì (cách app đọc khi có token)', () => {
+        const gas = secured();
+        const before = JSON.stringify(gas.sheet('Transactions').grid);
+        const state = sync(gas, { token: 'bi-mat', upserts: [], deletes: [], meta: {} });
+
+        assert.equal(state.version, 2);
+        assert.equal(state.transactions.length, 2);
+        assert.equal(JSON.stringify(gas.sheet('Transactions').grid), before);
     });
 
     test('đặt token: thiếu hoặc sai token bị từ chối ở mọi đường vào và không ghi gì', () => {
