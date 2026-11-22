@@ -80,13 +80,14 @@ CI (`.github/workflows/test.yml`) chạy cả ba lệnh trên cho mỗi PR. Test
 | Đồng bộ        | Giao dịch (7 cột), ghi lại cả danh sách | Từng giao dịch (theo `updatedAt`) và danh mục, nguồn tiền, số dư, ngân sách, định kỳ, vay nợ |
 | Chuyển tiền    | Nguồn nhận lưu trong cột danh mục       | Cột `targetSource`                                                                           |
 | Nhiều thiết bị | Bản ghi cuối cùng thắng cả danh sách    | Bản có `updatedAt` mới hơn thắng từng dòng; xóa ở máy khác được áp dụng                      |
-| Bảo vệ         | Ai có URL đều đọc / ghi được            | Mã bảo vệ (token) tùy chọn                                                                   |
+| Bảo vệ         | Ai có URL đều đọc / ghi được            | Bắt buộc mã bảo vệ (`FM_TOKEN`); thiếu thì từ chối mọi yêu cầu                               |
 
 ### Nâng cấp lên v2
 
 1. Mở Google Sheet > Extensions > Apps Script, thay toàn bộ mã bằng nội dung `apps-script/Code.gs`.
 2. Deploy > Manage deployments > Edit > Version: New version > Deploy (URL `/exec` giữ nguyên). Nếu tạo **New deployment** thì URL đổi: bắt buộc chọn **Execute as: Me** và **Who has access: Anyone** (mặc định là "Chỉ mình tôi" / "Người dùng truy cập vào ứng dụng web" làm app báo `Failed to fetch` và "Dùng bản offline"), rồi dán URL mới vào **mọi** thiết bị, điện thoại trước.
-3. Khuyến nghị: Project Settings > Script properties > thêm `FM_TOKEN` với một chuỗi bí mật dài, rồi nhập cùng giá trị vào **Cài đặt & Dữ liệu > Mã bảo vệ** trên mọi thiết bị và bấm Lưu.
+3. **Bắt buộc**: Project Settings > Script properties > thêm `FM_TOKEN` với một chuỗi bí mật dài (32 ký tự trở lên), rồi nhập cùng giá trị vào **Cài đặt & Dữ liệu > Mã bảo vệ** trên mọi thiết bị và bấm Lưu. Chưa có `FM_TOKEN` thì script từ chối mọi yêu cầu (app báo "Sai mã bảo vệ"). Chỉ khi dữ liệu thật sự được phép công khai mới thêm `FM_ALLOW_OPEN` = `true` thay cho token. App không bao giờ đưa mã bảo vệ vào URL: đọc bằng `GET ?v=2` (không token) rồi `POST` có token trong body.
+4. Sau khi đổi URL (New deployment), vào **Manage deployments** và **Archive** các deployment cũ: URL cũ vẫn chạy cho tới khi bị archive.
 
 Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sheet `Meta` được tạo khi cần. Dữ liệu cũ được giữ; các dòng chuyển tiền do bản cũ ghi sẽ tự chuyển sang dạng mới.
 
@@ -96,7 +97,7 @@ Sheet `Transactions` được bổ sung cột `targetSource` và `updatedAt`, sh
 - Quay lại cửa sổ hoặc tab (sau ít nhất 30 giây) thì ứng dụng đọc lại Sheet để nhận thay đổi từ máy khác, không cần tải lại trang.
 - Thay đổi chưa được Sheet xác nhận (mất mạng, lỗi) được giữ lại và gộp với Sheet ở lần mở sau; giao dịch đã xóa trên máy này không bị "sống lại".
 - Sheet trống không bao giờ xóa dữ liệu trên máy.
-- Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet. Khôi phục **giữ nguyên URL Web App đang dùng của máy** (chỉ máy chưa có URL mới lấy URL trong file), nên một file sao lưu cũ không kéo máy về deployment cũ.
+- Khôi phục sao lưu hoặc "Xóa toàn bộ dữ liệu" thay thế hẳn nội dung Sheet. Khôi phục **giữ nguyên URL Web App đang dùng của máy**; máy chưa có URL chỉ lấy URL trong file khi đó là URL `https://script.google.com/.../exec` và người dùng đồng ý (hộp hỏi ghi rõ URL), nên một file sao lưu lạ không đẩy được dữ liệu đi nơi khác.
 - Với v2, nếu sửa một giao dịch trên máy này trong khi máy khác xóa nó thì bản sửa được giữ lại.
 
-Lưu ý: nếu chưa đặt `FM_TOKEN`, ai có URL Web App đều đọc / ghi được dữ liệu; hãy coi URL như mật khẩu (file sao lưu cũng chứa URL này, nhưng không chứa mã bảo vệ).
+Lưu ý: script cũ (legacy) và Code.gs bật `FM_ALLOW_OPEN` thì ai có URL Web App đều đọc / ghi được dữ liệu (Cài đặt hiện cảnh báo khi server v2 đang mở); hãy coi URL như mật khẩu và đừng commit nó vào repo (file sao lưu cũng chứa URL này, nhưng không chứa mã bảo vệ).

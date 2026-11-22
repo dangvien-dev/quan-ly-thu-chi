@@ -24,6 +24,30 @@ function exportBackup() {
     );
 }
 
+// A backup file can come from anywhere. Its URL decides where every transaction on this device is
+// uploaded, so it is only taken if it is a Google Apps Script Web App and the user agrees to it.
+const BACKUP_SCRIPT_URL =
+    /^https:\/\/script\.google\.com\/(?:a\/macros\/[^/?#]+|macros)\/s\/[A-Za-z0-9_-]+\/exec$/;
+
+function backupScriptUrl(url) {
+    const value = String(url || '').trim();
+
+    if (!value) return '';
+
+    if (!BACKUP_SCRIPT_URL.test(value)) {
+        alert(
+            'URL đồng bộ trong file sao lưu không phải URL Google Apps Script nên bị bỏ qua. Dữ liệu chỉ được khôi phục trên máy này.',
+        );
+        return '';
+    }
+
+    return confirm(
+        `File sao lưu chứa URL đồng bộ:\n${value}\n\nDùng URL này thì toàn bộ dữ liệu trên máy sẽ được gửi lên đó. Chỉ đồng ý nếu đây là Apps Script của bạn. Dùng URL này?`,
+    )
+        ? value
+        : '';
+}
+
 async function importBackup(file) {
     if (!file) {
         alert('Vui lòng chọn file sao lưu JSON.');
@@ -64,7 +88,7 @@ async function importBackup(file) {
     // Which Sheet this device talks to is its own setup, not data: a file made on another device, or
     // before the Web App was redeployed, must not point it back at an older deployment. Only a
     // device without a URL takes the one in the file.
-    const targetUrl = webAppUrl || backup.data.scriptUrl;
+    const targetUrl = webAppUrl || backupScriptUrl(backup.data.scriptUrl);
     const restoredTransactions = normalizeTransactions(backup.data.transactions);
     const skippedCount = backup.data.transactions.length - restoredTransactions.length;
 

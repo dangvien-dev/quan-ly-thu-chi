@@ -12,7 +12,10 @@
 //
 //  - v2: apps-script/Code.gs. Rows are sent one by one (upserts/deletes with updatedAt, the
 //    newest wins) together with the "meta" values (categories, sources, budgets, salary, ...), and every
-//    reply is the full server state, which is merged back. An optional token protects the URL.
+//    reply is the full server state, which is merged back. A token protects the URL; it only ever
+//    travels in a POST body, never in a URL (URLs end up in logs and proxies). The first read is a
+//    tokenless GET ?v=2: only Code.gs answers "unauthorized", which identifies it, and the state is
+//    then read with an empty sync POST that carries the token.
 //
 // To keep data safe in both:
 //  - The Sheet is only written after it has been read successfully in this session.
@@ -38,6 +41,8 @@ const REFRESH_MIN_INTERVAL_MS = 30000;
 let lastPullAt = 0;
 let pushQueued = false;
 let localChangeCount = 0;
+// True when the last tokenless read was answered with data: anyone who has the URL can read it.
+let serverIsOpen = false;
 
 const SYNC_BADGES = {
     idle: '<i class="fa-solid fa-hard-drive"></i> Chỉ lưu trên máy',
@@ -194,7 +199,14 @@ function updateSyncNote() {
         v2: 'Đã kết nối Apps Script v2: đồng bộ từng giao dịch cùng danh mục, nguồn tiền, ngân sách, định kỳ và vay nợ.',
     };
 
-    note.textContent = webAppUrl ? notes[syncProtocol] || '' : '';
+    const openWarning =
+        syncProtocol === 'v2' && serverIsOpen
+            ? ' Cảnh báo: Apps Script này chưa có mã bảo vệ, ai biết URL cũng đọc và ghi được dữ liệu. Thêm FM_TOKEN trong Script properties và nhập cùng giá trị vào ô Mã bảo vệ.'
+            : '';
+
+    note.textContent = webAppUrl
+        ? (notes[syncProtocol] || '') + (notes[syncProtocol] ? openWarning : '')
+        : '';
     note.hidden = !note.textContent;
 }
 
@@ -644,6 +656,41 @@ function pushToGoogleSheet() {
         });
 }
 
+/** An empty v2 sync: changes nothing on the server and returns its full state. */
+function readStateV2() {
+    return postSyncV2({
+        action: 'sync',
+        token: webAppToken,
+        replace: false,
+        upserts: [],
+        deletes: [],
+        meta: {},
+    });
+}
+
+/**
+ * Read the server without ever putting the token in a URL. The tokenless GET ?v=2 answers with
+ * the data (legacy script, or a v2 script left open) or with "unauthorized", which only Code.gs
+ * says; only then is a POST safe (the legacy script clears the sheet on any unknown POST body).
+ */
+async function readSheet() {
+    const response = await fetch(sheetUrl({ v: 2 }));
+
+    try {
+        const result = await parseSheetResponse(response);
+
+        serverIsOpen = Boolean(result && result.version === 2);
+
+        return result;
+    } catch (error) {
+        if (!error || error.message !== 'unauthorized' || !webAppToken) throw error;
+
+        serverIsOpen = false;
+
+        return readStateV2();
+    }
+}
+
 function syncFromGoogleSheet({ quiet = false } = {}) {
     if (!webAppUrl) {
         setSyncBadge('idle');
@@ -658,8 +705,7 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
     // A refresh in the background does not flash "Đang tải..." over a badge that is already fine.
     if (!quiet) setSyncBadge('loading');
 
-    return fetch(sheetUrl(webAppToken ? { v: 2, token: webAppToken } : { v: 2 }))
-        .then(parseSheetResponse)
+    return readSheet()
         .then((result) => {
             if (requestedUrl !== webAppUrl) return;
 

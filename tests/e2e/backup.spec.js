@@ -140,4 +140,61 @@ test.describe('Sao lưu và khôi phục', () => {
 
         expect(await page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
     });
+    test.describe('URL trong file sao lưu (máy chưa có URL)', () => {
+        const restoreWithUrl = async (page, scriptUrl) => {
+            await goTab(page, 'settings');
+            await page.setInputFiles(
+                'input[type=file]',
+                backupFile({
+                    transactions: [tx({ id: 'TX_9' })],
+                    categories: [],
+                    initialBalances: {},
+                    scriptUrl,
+                }),
+            );
+            await wait(700);
+        };
+
+        test('URL không phải Google Apps Script bị bỏ qua: không gửi dữ liệu đi đâu cả', async ({
+            app,
+        }) => {
+            const { page, state } = await app();
+
+            await restoreWithUrl(page, 'https://evil.example.com/collect');
+
+            expect(await page.evaluate(() => webAppUrl)).toBe('');
+            expect(await page.evaluate(() => transactions.map((t) => t.id))).toEqual(['TX_9']);
+            expect(state.alerts.some((text) => text.includes('bị bỏ qua'))).toBe(true);
+            expect(state.posts).toHaveLength(0);
+            expect(state.external).toEqual([]);
+        });
+
+        test('URL Apps Script của người khác: hỏi trước, không đồng ý thì chỉ khôi phục trên máy', async ({
+            app,
+        }) => {
+            const { page, state } = await app();
+
+            await page.evaluate(() => {
+                const original = window.confirm;
+
+                window.confirm = (text) => (text.includes('URL đồng bộ') ? false : original(text));
+            });
+            await restoreWithUrl(page, SCRIPT_URL);
+
+            expect(await page.evaluate(() => webAppUrl)).toBe('');
+            expect(await page.evaluate(() => transactions.map((t) => t.id))).toEqual(['TX_9']);
+            expect(state.gets).toBe(0);
+            expect(state.posts).toHaveLength(0);
+        });
+
+        test('đồng ý thì câu hỏi có ghi rõ URL và dữ liệu lên đúng URL đó', async ({ app }) => {
+            const { page, state } = await app();
+
+            await restoreWithUrl(page, SCRIPT_URL);
+
+            expect(state.confirms.some((text) => text.includes(SCRIPT_URL))).toBe(true);
+            expect(await page.evaluate(() => webAppUrl)).toBe(SCRIPT_URL);
+            expect(state.remote.map((row) => row.id)).toEqual(['TX_9']);
+        });
+    });
 });
