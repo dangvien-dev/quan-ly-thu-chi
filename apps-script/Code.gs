@@ -86,7 +86,10 @@ function doGet(e) {
             );
         }
 
-        return jsonResponse_(params.v === '2' ? readState_() : readTransactions_());
+        // Reads take the lock too, so they never see a sheet half-way through a write.
+        return jsonResponse_(
+            withLock_(() => (params.v === '2' ? readState_() : readTransactions_())),
+        );
     } catch (error) {
         return errorResponse_(error);
     }
@@ -135,7 +138,13 @@ function withLock_(action) {
     try {
         return action();
     } finally {
-        lock.releaseLock();
+        // Apply pending spreadsheet changes while the lock is still held, so the next request
+        // (or reader) starts from what this one wrote.
+        try {
+            SpreadsheetApp.flush();
+        } finally {
+            lock.releaseLock();
+        }
     }
 }
 
@@ -181,7 +190,7 @@ function ensureSize_(sheet, rows, columns) {
  * fails, the previous rows are put back before the error is rethrown: Apps Script does not roll
  * back what it already did, and a cleared sheet would read as "no data" on every device.
  */
-function replaceDataRows_(sheet, width, rows, beforeWrite) {
+function replaceDataRows_(sheet, width, rows, beforeWrite, label) {
     ensureSize_(sheet, rows.length + 1, width);
 
     const lastRow = sheet.getLastRow();
@@ -198,11 +207,46 @@ function replaceDataRows_(sheet, width, rows, beforeWrite) {
             if (rows.length) sheet.getRange(2, 1, rows.length, width).clearContent();
             if (previous.length) sheet.getRange(2, 1, previous.length, width).setValues(previous);
         } catch (restoreError) {
-            // Nothing more can be done here; the original error is the one worth reporting.
+            throw restoreFailure_(error, label, restoreError);
         }
 
         throw error;
     }
+}
+
+/**
+ * The error for a write that failed and whose rollback failed too: the sheet may now hold neither
+ * the old nor the new data, so the message names every sheet that could not be put back and where
+ * to recover it from. Nested failures are merged into one message (the first cause, all sheets).
+ */
+function restoreFailure_(error, label, restoreError) {
+    const cause =
+        (error && error.rootMessage) || String(error && error.message ? error.message : error);
+    const sheets = [];
+
+    [error, restoreError].forEach(function (failure) {
+        ((failure && failure.failedSheets) || []).forEach(function (name) {
+            if (sheets.indexOf(name) === -1) sheets.push(name);
+        });
+    });
+
+    if (sheets.indexOf(label) === -1) sheets.push(label);
+
+    const failure = new Error(
+        cause +
+            ' — KHÔNG khôi phục được dữ liệu cũ của sheet ' +
+            sheets
+                .map(function (name) {
+                    return '"' + name + '"';
+                })
+                .join(', ') +
+            '. Đừng đồng bộ tiếp; mở Google Sheet > Tệp > Nhật ký phiên bản để khôi phục, hoặc khôi phục từ file sao lưu.',
+    );
+
+    failure.rootMessage = cause;
+    failure.failedSheets = sheets;
+
+    return failure;
 }
 
 /** Returns the header row, appending any column from `columns` the sheet does not have yet. */
@@ -294,17 +338,23 @@ function writeTransactions_(list) {
         });
     });
 
-    replaceDataRows_(sheet, header.length, rows, function () {
-        header.forEach(function (name, index) {
-            const column = sheet.getRange(2, index + 1, rows.length, 1);
+    replaceDataRows_(
+        sheet,
+        header.length,
+        rows,
+        function () {
+            header.forEach(function (name, index) {
+                const column = sheet.getRange(2, index + 1, rows.length, 1);
 
-            if (TEXT_COLUMNS.indexOf(name) !== -1) {
-                column.setNumberFormat('@');
-            } else if (name === 'date') {
-                column.setNumberFormat('dd/mm/yyyy');
-            }
-        });
-    });
+                if (TEXT_COLUMNS.indexOf(name) !== -1) {
+                    column.setNumberFormat('@');
+                } else if (name === 'date') {
+                    column.setNumberFormat('dd/mm/yyyy');
+                }
+            });
+        },
+        TRANSACTIONS_SHEET,
+    );
 }
 
 /** A valid transaction row with only the known columns, or null for anything else. */
@@ -399,9 +449,15 @@ function writeMetaRows_(rows) {
         });
     });
 
-    replaceDataRows_(sheet, header.length, values, function () {
-        sheet.getRange(2, 1, values.length, header.length).setNumberFormat('@');
-    });
+    replaceDataRows_(
+        sheet,
+        header.length,
+        values,
+        function () {
+            sheet.getRange(2, 1, values.length, header.length).setNumberFormat('@');
+        },
+        META_SHEET,
+    );
 }
 
 function readMeta_() {
@@ -427,6 +483,48 @@ function readState_() {
         meta: readMeta_(),
         serverTime: new Date().toISOString(),
     };
+}
+
+/**
+ * Rejects a sync body whose shape is wrong instead of reading it as "nothing to do": every field
+ * that is present must have its type, and every upsert must be a valid transaction (a replace
+ * that silently dropped one bad row would answer "ok" with data missing).
+ */
+function validateSyncBody_(body) {
+    const fail = function (what) {
+        throw new Error('Yêu cầu đồng bộ không hợp lệ: ' + what);
+    };
+    const optional = function (value, check) {
+        return value === undefined || value === null || check(value);
+    };
+
+    if (!optional(body.replace, isBoolean_)) fail('replace phải là true / false');
+    if (!optional(body.confirmWipe, isBoolean_)) fail('confirmWipe phải là true / false');
+    if (!optional(body.upserts, Array.isArray)) fail('upserts phải là một danh sách');
+    if (!optional(body.deletes, Array.isArray)) fail('deletes phải là một danh sách');
+    if (!optional(body.meta, isPlainObject_)) fail('meta phải là một đối tượng');
+
+    (body.deletes || []).forEach(function (id, index) {
+        if (typeof id !== 'string' && typeof id !== 'number') fail('deletes[' + index + ']');
+    });
+
+    (body.upserts || []).forEach(function (item, index) {
+        if (cleanTransaction_(item) === null) {
+            fail('giao dịch thứ ' + (index + 1) + ' trong upserts không hợp lệ');
+        }
+    });
+
+    Object.keys(body.meta || {}).forEach(function (key) {
+        if (!key || !isPlainObject_(body.meta[key])) fail('meta "' + key + '"');
+    });
+}
+
+function isBoolean_(value) {
+    return value === true || value === false;
+}
+
+function isPlainObject_(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** Throws when one field of a transaction row cannot be stored in a Sheets cell. */
@@ -547,29 +645,37 @@ function snapshotDataRows_(name, columns) {
     const lastRow = sheet.getLastRow();
 
     return {
+        name: name,
         sheet: sheet,
         width: width,
         rows: lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, width).getValues() : [],
     };
 }
 
+/** Puts a snapshot back; returns the error if that failed (null when it worked). */
 function restoreDataRows_(snapshot) {
     try {
-        replaceDataRows_(snapshot.sheet, snapshot.width, snapshot.rows);
+        replaceDataRows_(snapshot.sheet, snapshot.width, snapshot.rows, null, snapshot.name);
+        return null;
     } catch (error) {
-        // Best effort: the error that made us restore is the one reported.
+        return error;
     }
 }
 
 /**
- * One sync request is all or nothing: the whole payload (transactions and meta) is checked before
- * anything is written, and if the Meta write fails after Transactions was rewritten, Transactions
- * is put back (each write already restores its own sheet when it fails).
+ * A sync request is checked as a whole before anything is written (planTransactionChanges_,
+ * planMetaChanges_). Apps Script has no transactions, so the writes themselves are best effort:
+ * a failed write puts its sheet back, a Meta write that fails after Transactions was rewritten
+ * puts Transactions back, and when a rollback itself fails the error says so explicitly.
+ * Replaying the same request gives the same state (upserts by id and updatedAt, deletes by id,
+ * replace), so a client that lost the reply can simply send it again.
  */
 function handleSync_(body) {
     if (!body || typeof body !== 'object' || !isAuthorized_(body.token)) {
         throw new Error('unauthorized');
     }
+
+    validateSyncBody_(body);
 
     const transactions = planTransactionChanges_(body);
     const meta = planMetaChanges_(body.meta, body.replace === true);
@@ -583,13 +689,24 @@ function handleSync_(body) {
             try {
                 writeMetaRows_(meta);
             } catch (error) {
-                restoreDataRows_(before);
-                throw error;
+                const restoreError = restoreDataRows_(before);
+
+                throw restoreError
+                    ? restoreFailure_(error, TRANSACTIONS_SHEET, restoreError)
+                    : error;
             }
         }
     } else if (meta) {
         writeMetaRows_(meta);
     }
 
-    return readState_();
+    try {
+        return readState_();
+    } catch (error) {
+        throw new Error(
+            'Đã ghi xong nhưng không đọc lại được trạng thái (' +
+                String(error && error.message ? error.message : error) +
+                '); app sẽ gửi lại, việc này an toàn.',
+        );
+    }
 }

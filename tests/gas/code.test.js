@@ -248,10 +248,10 @@ test.describe('giao thức v2', () => {
         const before = ids(gas);
 
         assert.match(sync(gas, { replace: true, upserts: [] }).error, /confirmWipe/);
-        // Only invalid rows count as an empty list too.
+        // Invalid rows are refused outright (review round 3), so they cannot empty it either.
         assert.match(
             sync(gas, { replace: true, upserts: [{ id: 'X', type: 'nope' }] }).error,
-            /confirmWipe/,
+            /không hợp lệ/,
         );
         assert.deepEqual(ids(gas), before);
     });
@@ -398,6 +398,83 @@ test.describe('giao thức v2', () => {
         assert.deepEqual(ids(gas), []);
     });
 
+    test('review vòng 3: ghi Meta lỗi và khôi phục Transactions cũng lỗi thì báo rõ', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        sync(gas, {
+            meta: { budgets: { value: { a: 1 }, updatedAt: '2026-10-28T00:00:00.000Z' } },
+        });
+
+        const failWrites = (name, from) => {
+            const sheet = gas.sheet(name);
+            const getRange = sheet.getRange;
+            let writes = 0;
+
+            sheet.getRange = (...args) => {
+                const range = getRange(...args);
+                const setValues = range.setValues;
+
+                range.setValues = (values) => {
+                    writes++;
+                    if (args[0] === 2 && writes >= from) throw new Error(`quota ${name}`);
+                    return setValues(values);
+                };
+
+                return range;
+            };
+        };
+
+        failWrites('Meta', 1); // every data write to Meta fails
+        failWrites('Transactions', 2); // the first write passes, the rollback fails
+
+        const reply = sync(gas, {
+            replace: true,
+            upserts: [row({ id: 'TX_RESTORED' })],
+            meta: { budgets: { value: { b: 2 }, updatedAt: '2026-10-29T00:00:00.000Z' } },
+        });
+
+        assert.match(reply.error, /^quota Meta — KHÔNG khôi phục được/);
+        assert.match(reply.error, /"Meta", "Transactions"/);
+        assert.equal(reply.error.match(/KHÔNG khôi phục/g).length, 1);
+    });
+
+    test('review vòng 3: gửi lại cùng một yêu cầu cho cùng kết quả (an toàn khi phản hồi bị mất)', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const body = {
+            upserts: [row({ id: 'TX_A' }), row({ id: 'TX_1793107199811', amount: 5 })],
+            deletes: ['TX_1793107122617'],
+            meta: { budgets: { value: { a: 1 }, updatedAt: '2026-10-29T00:00:00.000Z' } },
+        };
+
+        const first = sync(gas, body);
+        const second = sync(gas, body);
+
+        delete first.serverTime;
+        delete second.serverTime;
+        assert.deepEqual(second, first);
+
+        const replace = { replace: true, upserts: [row({ id: 'TX_R' })], meta: body.meta };
+        const third = sync(gas, replace);
+        const fourth = sync(gas, replace);
+
+        delete third.serverTime;
+        delete fourth.serverTime;
+        assert.deepEqual(fourth, third);
+    });
+
+    test('review vòng 3: đọc cũng giữ khóa, và flush trước khi nhả khóa', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        gas.get({ v: '2' });
+        gas.get();
+        assert.equal(gas.stats.locks, 2);
+
+        sync(gas, { upserts: [row({ id: 'TX_NEW' })] });
+        assert.equal(gas.stats.locks, 3);
+        assert.ok(gas.stats.flushes >= 3);
+        assert.equal(gas.stats.flushesOutsideLock, 0);
+    });
+
     test('SEC-005: ô quá 50.000 ký tự bị từ chối trước khi xóa, Sheet giữ nguyên', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
         const before = gas.get();
@@ -408,19 +485,49 @@ test.describe('giao thức v2', () => {
         assert.deepEqual(gas.get(), before);
     });
 
-    test('dòng không hợp lệ trong upserts bị bỏ qua, các dòng hợp lệ vẫn được ghi', () => {
-        const gas = createGas();
+    test('review vòng 3: một upsert không hợp lệ làm cả yêu cầu bị từ chối, không ghi gì', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = ids(gas);
 
-        sync(gas, {
-            upserts: [
-                row({ id: 'A' }),
-                { junk: true },
-                row({ id: '', amount: 1 }),
-                row({ id: 'B', type: 'x' }),
-            ],
-        });
+        for (const bad of [
+            { junk: true },
+            row({ id: '', amount: 1 }),
+            row({ id: 'B', type: 'x' }),
+        ]) {
+            const reply = sync(gas, { upserts: [row({ id: 'A' }), bad] });
 
-        assert.deepEqual(ids(gas), ['A']);
+            assert.match(reply.error, /không hợp lệ/);
+            assert.deepEqual(ids(gas), before);
+        }
+    });
+
+    test('review vòng 3: replace 99 dòng hợp lệ + 1 dòng lỗi bị từ chối, Sheet giữ nguyên', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = gas.get();
+        const upserts = Array.from({ length: 99 }, (_, i) => row({ id: `TX_${i}` }));
+
+        upserts.splice(50, 0, row({ id: 'TX_BAD', amount: 'abc' }));
+
+        assert.match(sync(gas, { replace: true, upserts }).error, /không hợp lệ/);
+        assert.deepEqual(gas.get(), before);
+    });
+
+    test('review vòng 3: upserts / deletes / meta sai kiểu bị từ chối thay vì coi như rỗng', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = ids(gas);
+
+        for (const body of [
+            { replace: true, confirmWipe: true, upserts: 'x' },
+            { replace: true, confirmWipe: true, upserts: { 0: row() } },
+            { deletes: 'TX_1793107199811' },
+            { deletes: [{ id: 1 }] },
+            { meta: [] },
+            { meta: { budgets: 'x' } },
+            { replace: 'true', upserts: [] },
+        ]) {
+            assert.match(sync(gas, body).error, /không hợp lệ/, JSON.stringify(body));
+            assert.deepEqual(ids(gas), before);
+        }
     });
 
     test('meta: giữ bản có updatedAt mới hơn, trả về giá trị đã parse', () => {
