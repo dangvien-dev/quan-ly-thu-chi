@@ -32,6 +32,9 @@
 //    both sides is merged instead and nothing is destroyed (see abandonDestructiveWrite).
 //  - A replace or a deletion that is still unconfirmed when the Web App URL changes is never sent
 //    to the new Sheet (secureUnconfirmedWrites); the user is told and the notice stays visible.
+//    A reply that arrives after the URL changed is dropped (syncGeneration), and deletions queued
+//    before the first contact with a Sheet have no authority over what it holds
+//    (giveUpDeletesAtFirstContact).
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
@@ -58,6 +61,10 @@ const TRANSFER_CATEGORY_PREFIX = `${TRANSFER_CATEGORY} → `;
 
 let remoteReady = false;
 let syncProtocol = ''; // set by the first successful read: 'legacy' | 'v2'
+// Bumped whenever the Web App URL changes. A request that was made before that belongs to a Sheet
+// that is no longer the connected one: when its reply arrives it must not touch the baseline, the
+// pending lists or the local data (see postSyncV2, pushV2, pushToGoogleSheet).
+let syncGeneration = 0;
 let pushInFlight = false;
 // Another device may change the data while this one stays open, so the Sheet is read again when
 // the user comes back, but never more often than this.
@@ -203,6 +210,13 @@ function setScriptUrl(url, { keepPending = false } = {}) {
             ? secureUnconfirmedWrites(webAppUrl ? 'url' : 'connect')
             : '';
 
+    if (url !== webAppUrl) {
+        // Whatever is still on its way to the old Sheet is answered into a connection that is gone.
+        syncGeneration++;
+        pushInFlight = false;
+        pushQueued = false;
+    }
+
     webAppUrl = url;
     localStorage.setItem('fm_script_url', url);
     remoteReady = false;
@@ -261,10 +275,19 @@ function updateSyncNote() {
 }
 
 // --- RESPONSES AND URLS ---
-function sheetUrl(params = {}) {
+function sheetUrl(params = {}, base = webAppUrl) {
     const query = new URLSearchParams(params).toString();
 
-    return query ? `${webAppUrl}${webAppUrl.includes('?') ? '&' : '?'}${query}` : webAppUrl;
+    return query ? `${base}${base.includes('?') ? '&' : '?'}${query}` : base;
+}
+
+/** What a request that outlived its connection (the Web App URL changed) fails with. */
+function staleConnection() {
+    const error = new Error('Kết nối Google Sheet đã đổi trong lúc đang gửi.');
+
+    error.stale = true;
+
+    return error;
 }
 
 /** The Apps Script answers HTTP 200 even for errors: look inside the JSON body. */
@@ -308,17 +331,18 @@ function decodeLegacyRow(row) {
  */
 async function writeLegacySheet(list) {
     const rows = list.map(encodeLegacyRow);
+    const target = webAppUrl;
     let response;
 
     try {
-        response = await fetch(webAppUrl, {
+        response = await fetch(target, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({ transactions: rows }),
         });
     } catch (error) {
         const payload = JSON.stringify(rows);
-        const url = sheetUrl({ action: 'save', data: payload });
+        const url = sheetUrl({ action: 'save', data: payload }, target);
 
         // The script decodes the parameter a second time, so "%" in the data would break it.
         if (url.length > GET_FALLBACK_MAX_URL || payload.includes('%')) {
@@ -390,8 +414,12 @@ function reconcileWithSheet(rows) {
 
 async function pushLegacy() {
     const changeCountAtStart = localChangeCount;
+    const generation = syncGeneration;
 
     await writeLegacySheet(transactions);
+
+    if (generation !== syncGeneration) throw staleConnection();
+
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
 
     if (changeCountAtStart === localChangeCount) {
@@ -407,10 +435,12 @@ async function pushLegacy() {
 // --- PROTOCOL V2 ---
 /** Send a sync request; if the POST cannot be made at all, retry as a GET when it is small. */
 async function postSyncV2(payload) {
+    const target = webAppUrl;
+    const generation = syncGeneration;
     let response;
 
     try {
-        response = await fetch(webAppUrl, {
+        response = await fetch(target, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify(payload),
@@ -418,9 +448,9 @@ async function postSyncV2(payload) {
     } catch (error) {
         // The fallback puts the whole payload in the URL, and URLs end up in logs and proxies: never
         // with a token. The change stays queued and is sent again later.
-        if (payload.token) throw error;
+        if (payload.token || generation !== syncGeneration) throw error;
 
-        const url = sheetUrl({ action: 'sync', payload: JSON.stringify(payload) });
+        const url = sheetUrl({ action: 'sync', payload: JSON.stringify(payload) }, target);
 
         if (url.length > GET_FALLBACK_MAX_URL) {
             throw new Error(
@@ -432,6 +462,9 @@ async function postSyncV2(payload) {
     }
 
     const state = await parseSheetResponse(response);
+
+    // The reply of a request made to the Sheet that was connected before is not about this one.
+    if (generation !== syncGeneration) throw staleConnection();
 
     if (!state || state.version !== 2) {
         throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
@@ -843,6 +876,31 @@ function abandonDestructiveWrite(intent, why) {
 }
 
 /**
+ * First contact with a Sheet (nothing was ever synced with this URL): deletions queued before have
+ * no authority over what it holds. Sending them would delete rows that were there before this
+ * device connected (and, with nothing else on the device, empty the Sheet). They are given up; rows
+ * of the Sheet that they named come back here, and the user is told when there were such rows.
+ */
+function giveUpDeletesAtFirstContact(state) {
+    const deleted = readDeletedIds();
+
+    if (!deleted.length) return;
+    if (localStorage.getItem(SYNC_BASELINE_KEY) === webAppUrl) return;
+    if (getSyncDirty() === 'replace') return;
+
+    const onSheet = new Set((state.transactions || []).map((row) => String(row.id)));
+    const named = deleted.filter((id) => onSheet.has(id));
+
+    writeList(SYNC_DELETED_KEY, []);
+
+    if (named.length) {
+        announceUnsentWrites(
+            `Google Sheet vừa kết nối đã có ${named.length} giao dịch mà trước đó bạn xóa trên máy này (lúc chưa kết nối). App không xóa chúng trên Sheet mà giữ lại; hãy xóa lại nếu muốn.`,
+        );
+    }
+}
+
+/**
  * The Web App URL is about to change (or the server of an in-flight write is not the current one):
  * what is still unconfirmed - an in-flight request, a pending replace, pending deletions - was made
  * against the old Sheet and is not sent to the new one. Returns the notice ('' when nothing was
@@ -973,7 +1031,11 @@ async function settleInflightV2() {
 }
 
 async function pushV2() {
+    const generation = syncGeneration;
+
     await settleInflightV2();
+
+    if (generation !== syncGeneration) throw staleConnection();
 
     if (!hasPendingChanges()) {
         setSyncBadge('synced');
@@ -1024,14 +1086,22 @@ function pushToGoogleSheet() {
     // Never write before a read has told us which protocol the script speaks.
     if (!syncProtocol || !hasPendingChanges()) return Promise.resolve();
 
+    const generation = syncGeneration;
+
     pushInFlight = true;
     setSyncBadge('syncing');
 
     return (syncProtocol === 'v2' ? pushV2() : pushLegacy())
         .catch((error) => {
+            // A push of the previous connection says nothing about this one.
+            if (generation !== syncGeneration || (error && error.stale)) return;
+
             setSyncBadge(failureBadge(error, 'error'), failureDetail(error));
         })
         .finally(() => {
+            // setScriptUrl reset the flags for the new connection; this push is not part of it.
+            if (generation !== syncGeneration) return;
+
             pushInFlight = false;
 
             if (pushQueued) {
@@ -1101,6 +1171,7 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
             } else if (result && result.version === 2) {
                 syncProtocol = 'v2';
                 updateSyncNote();
+                giveUpDeletesAtFirstContact(result);
                 reconcileV2(result);
                 remoteReady = true;
 
@@ -1115,6 +1186,8 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
             }
         })
         .catch((error) => {
+            if (requestedUrl !== webAppUrl || (error && error.stale)) return;
+
             setSyncBadge(failureBadge(error, 'offline'), failureDetail(error));
         });
 }

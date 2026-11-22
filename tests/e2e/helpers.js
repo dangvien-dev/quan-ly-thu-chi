@@ -96,6 +96,10 @@ async function openApp(browser, opts = {}) {
         external: [],
         loseReplies: 0,
         dropRequests: 0,
+        holdWrites: 0,
+        held: [],
+        // Lets the index-th held write (in the order they were held) reach its server.
+        releaseHeld: (index = 0) => state.held[index] && state.held[index](),
     };
 
     // Registered first = lowest priority: block everything that is not local or the mock Sheet.
@@ -166,6 +170,7 @@ async function openApp(browser, opts = {}) {
         // deletes; not the empty read) but their replies never arrive.
         const body = state.posts.at(-1).body || {};
         const writes =
+            Array.isArray(body.transactions) || // the legacy script's write
             body.replace === true ||
             (Array.isArray(body.upserts) && body.upserts.length > 0) ||
             (Array.isArray(body.deletes) && body.deletes.length > 0);
@@ -174,6 +179,20 @@ async function openApp(browser, opts = {}) {
         if (state.dropRequests > 0 && writes) {
             state.dropRequests--;
             return route.abort();
+        }
+
+        // state.holdWrites: the next N write POSTs are still on their way (a slow network): they reach
+        // the server, and are answered, only when the test calls state.releaseHeld(index).
+        if (state.holdWrites > 0 && writes) {
+            state.holdWrites--;
+            await new Promise((resolve) => state.held.push(resolve));
+
+            return route.fulfill({
+                status: 200,
+                headers: CORS,
+                contentType: 'application/json',
+                body: target.postText(raw),
+            });
         }
 
         if (state.loseReplies > 0 && writes) {
