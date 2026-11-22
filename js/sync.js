@@ -25,7 +25,8 @@
 //  - Transactions deleted locally are remembered (fm_deleted_ids) so a merge does not bring them
 //    back from the Sheet.
 //  - A v2 server that suddenly lacks many rows this device already synced (an emptied or damaged
-//    Sheet) does not delete them here without asking: by default they are kept and uploaded again.
+//    Sheet, see isMassRemoteLoss) does not delete them here without asking (decideRemoteLoss):
+//    only an explicit OK on the "Xóa" question deletes; closing a dialog keeps them.
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
@@ -33,9 +34,9 @@ const SYNC_DELETED_KEY = 'fm_deleted_ids'; // ids deleted here, not yet deleted 
 const SYNC_UPSERTS_KEY = 'fm_pending_upserts'; // ids created or edited here (v2)
 const SYNC_META_KEY = 'fm_pending_meta'; // meta kinds changed here (v2)
 const GET_FALLBACK_MAX_URL = 6000;
-// A server state that drops this many synced rows at once, and more than half of them, is
-// confirmed by the user before it deletes anything here. An empty Sheet always is.
-const MASS_LOSS_MIN_ROWS = 10;
+// Rows the user chose to "decide later" for (see decideRemoteLoss): kept here, not uploaded, and
+// not asked about again until the app is opened again.
+const deferredLossIds = new Set();
 const TRANSFER_CATEGORY_PREFIX = `${TRANSFER_CATEGORY} → `;
 
 let remoteReady = false;
@@ -537,26 +538,41 @@ function reconcileMeta(remoteMeta, hasBaseline, replace) {
 }
 
 /**
- * Rows this device had already synced that the server no longer has. Many of them at once (or all
- * of them) means the Sheet was emptied or damaged rather than edited on another device, so the
- * user decides; keeping them (the default) queues them so the Sheet gets them back.
+ * Rows this device had already synced that the server no longer has. When that looks like an
+ * emptied or damaged Sheet (isMassRemoteLoss) the user decides, and only an explicit "OK" on the
+ * question that says "Xóa" deletes anything here; closing or cancelling a dialog never does:
+ *  - 'restore': keep the rows and queue them so the Sheet gets them back;
+ *  - 'delete':  follow the Sheet and delete them here;
+ *  - 'defer':   keep them here without uploading, and ask again next time the app opens;
+ *  - 'none':    an ordinary deletion elsewhere, applied without asking.
  */
-function confirmRemoteLoss(lostIds, localSyncedCount, remoteCount) {
-    if (!lostIds.length) return false;
+function decideRemoteLoss(lostIds, syncedCount, remoteCount) {
+    if (!isMassRemoteLoss(lostIds.length, syncedCount, remoteCount)) return 'none';
+    if (lostIds.every((id) => deferredLossIds.has(id))) return 'defer';
 
-    const massive =
-        remoteCount === 0 ||
-        (lostIds.length >= MASS_LOSS_MIN_ROWS && lostIds.length * 2 > localSyncedCount);
-
-    if (!massive) return false;
-
-    return confirm(
-        `Google Sheet vừa thiếu ${lostIds.length} giao dịch mà máy này vẫn còn` +
+    const count = lostIds.length;
+    const restore = confirm(
+        `Google Sheet vừa thiếu ${count} giao dịch mà máy này vẫn còn` +
             (remoteCount === 0 ? ' (Sheet không còn giao dịch nào).' : '.') +
             '\n\nNếu bạn không chủ động xóa chúng ở máy khác, có thể Sheet đã bị xóa nhầm hoặc ghi lỗi.' +
-            '\n\nOK: giữ trên máy này và đưa lại lên Sheet (khuyên dùng).' +
-            '\nHủy: xóa chúng trên máy này cho giống Sheet.',
+            '\n\nOK: Khôi phục — giữ trên máy này và đưa lại lên Sheet (khuyên dùng).' +
+            '\nHủy: chọn cách khác (xóa trên máy hoặc để sau).',
     );
+
+    if (restore) return 'restore';
+
+    const remove = confirm(
+        `Xóa ${count} giao dịch này khỏi máy này cho giống Google Sheet?` +
+            '\n\nKhông hoàn tác được, trừ khi bạn có file sao lưu.' +
+            '\n\nOK: Xóa trên máy này.' +
+            '\nHủy: Để sau — giữ trên máy, chưa gửi lên Sheet, hỏi lại khi mở app lần sau.',
+    );
+
+    if (remove) return 'delete';
+
+    lostIds.forEach((id) => deferredLossIds.add(id));
+
+    return 'defer';
 }
 
 /**
@@ -590,6 +606,9 @@ function reconcileV2(state) {
     if (!replace) migratedIds.forEach((id) => pendingUpserts.add(id));
     const deleted = new Set(readDeletedIds());
 
+    // Rows kept here for now without being uploaded ("Để sau").
+    const keptIds = new Set();
+
     if (!replace && hasBaseline) {
         const remoteIdSet = new Set(remote.map((row) => row.id));
         const synced = transactions.filter(
@@ -599,9 +618,13 @@ function reconcileV2(state) {
             .filter((transaction) => !remoteIdSet.has(transaction.id))
             .map((transaction) => transaction.id);
 
-        if (confirmRemoteLoss(lostIds, synced.length, remote.length)) {
+        const decision = decideRemoteLoss(lostIds, synced.length, remote.length);
+
+        if (decision === 'restore') {
             lostIds.forEach((id) => pendingUpserts.add(id));
             addToList(SYNC_UPSERTS_KEY, lostIds);
+        } else if (decision === 'defer') {
+            lostIds.forEach((id) => keptIds.add(id));
         }
     }
 
@@ -626,7 +649,9 @@ function reconcileV2(state) {
         });
 
         transactions.forEach((transaction) => {
-            if (pendingUpserts.has(transaction.id) && !remoteIds.has(transaction.id)) {
+            const keep = pendingUpserts.has(transaction.id) || keptIds.has(transaction.id);
+
+            if (keep && !remoteIds.has(transaction.id)) {
                 merged.push(transaction);
             }
         });

@@ -118,6 +118,21 @@ function normalizeTransactions(list) {
     return result;
 }
 
+// A server state that drops this many synced rows at once is always confirmed (sync v2).
+const MASS_LOSS_MIN_ROWS = 20;
+
+/**
+ * Does a server that lacks `lost` of the `synced` rows this device already had look like an
+ * emptied or damaged Sheet rather than ordinary deletions on another device? Yes when the Sheet
+ * has no transaction left, when more than half of the synced rows are gone (6 -> 1 counts), or
+ * when at least MASS_LOSS_MIN_ROWS rows are gone at once.
+ */
+function isMassRemoteLoss(lost, synced, remoteCount) {
+    if (!(lost > 0)) return false;
+
+    return remoteCount === 0 || lost * 2 > synced || lost >= MASS_LOSS_MIN_ROWS;
+}
+
 /** Ids look like TX_<epoch ms>; use the timestamp to order transactions on the same day. */
 function transactionTimestamp(transaction) {
     return Number(String(transaction.id).replace(/\D/g, '').slice(0, 13)) || 0;

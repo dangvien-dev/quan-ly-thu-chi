@@ -469,19 +469,74 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         ).toEqual(['TX_1', 'TX_2', 'TX_3']);
     });
 
-    test('SEC-001: chọn Hủy thì máy xóa theo Sheet', async ({ app }) => {
+    test('SEC-001: chỉ xóa trên máy khi bấm OK ở câu hỏi "Xóa"', async ({ app }) => {
         const rows = [row('TX_1'), row('TX_2')];
         const server = newServer('v2', { rows });
-        const { page } = await app({ server, seed: syncedSeed(rows) });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+        const answers = [false, true]; // Hủy "Khôi phục", rồi OK "Xóa trên máy này"
 
         server.post({ action: 'sync', replace: true, upserts: [], confirmWipe: true });
         page.removeAllListeners('dialog');
-        page.on('dialog', (dialog) => dialog.dismiss());
+        page.on('dialog', (dialog) => {
+            state.confirms.push(dialog.message());
+            return answers.shift() ? dialog.accept() : dialog.dismiss();
+        });
         await page.reload();
         await wait(600);
 
+        expect(state.confirms.at(-1)).toContain('Xóa 2 giao dịch này khỏi máy này');
         expect(await page.evaluate(() => transactions.length)).toBe(0);
         expect(serverRows(server)).toEqual([]);
+    });
+
+    test('SEC-001: đóng / hủy cả hai hộp thoại thì "Để sau": giữ trên máy, không gửi, không hỏi lại trong phiên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', replace: true, upserts: [], confirmWipe: true });
+        page.removeAllListeners('dialog');
+        page.on('dialog', (dialog) => {
+            state.confirms.push(dialog.message());
+            return dialog.dismiss(); // Esc / Hủy
+        });
+        await page.reload();
+        await wait(600);
+
+        const asked = state.confirms.length;
+
+        expect(asked).toBe(2);
+        expect(await page.evaluate(() => transactions.length)).toBe(3);
+        expect(serverRows(server)).toEqual([]);
+
+        // A later sync in the same session (a new transaction) neither asks again nor uploads them.
+        await addExpense(page, 5000, 'moi');
+        await wait(600);
+
+        expect(state.confirms.length).toBe(asked);
+        expect(serverRows(server).map((item) => item.note)).toEqual(['moi']);
+        expect(await page.evaluate(() => transactions.length)).toBe(4);
+
+        // Opening the app again asks again.
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms.length).toBeGreaterThan(asked);
+    });
+
+    test('SEC-001: tập nhỏ mất quá nửa (6 → 1) cũng hỏi', async ({ app }) => {
+        const rows = Array.from({ length: 6 }, (_, i) => row(`TX_${i + 1}`));
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', deletes: ['TX_2', 'TX_3', 'TX_4', 'TX_5', 'TX_6'] });
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms.some((text) => text.includes('thiếu 5 giao dịch'))).toBe(true);
+        expect(await page.evaluate(() => transactions.length)).toBe(6);
     });
 
     test('SEC-001: máy khác xóa vài giao dịch thì vẫn nhận việc xóa mà không hỏi', async ({

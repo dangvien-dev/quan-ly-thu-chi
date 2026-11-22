@@ -3159,3 +3159,15 @@ test('formatMoneyDigits: số 0 đứng đầu bị bỏ khi gõ ở cuối, đ�
     assert.equal(run('parseMoneyText("0.000")'), 0);
     assert.equal(run('parseMoneyText("050.000")'), 50000);
 });
+
+test('isMassRemoteLoss: Sheet trống, mất quá nửa hoặc từ 20 dòng thì hỏi; xóa lẻ thì không', () => {
+    const mass = (lost, synced, remote) => run(`isMassRemoteLoss(${lost}, ${synced}, ${remote})`);
+
+    assert.equal(mass(0, 10, 0), false);
+    assert.equal(mass(1, 1, 0), true); // Sheet không còn dòng nào
+    assert.equal(mass(5, 6, 1), true); // 6 -> 1 (review PR #33)
+    assert.equal(mass(1, 2, 1), false); // đúng một nửa: xóa bình thường
+    assert.equal(mass(3, 12, 9), false);
+    assert.equal(mass(20, 1000, 980), true);
+    assert.equal(mass(19, 1000, 981), false);
+});
