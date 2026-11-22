@@ -1362,7 +1362,7 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
     });
 
-    test('review vòng 8: đọc chậm (snapshot cũ) về sau khi một lần đẩy đã được xác nhận: giao dịch và meta vừa đồng bộ không bị lùi, không bị coi là đã xóa', async ({
+    test('review vòng 10: một lần đọc đang chờ trả lời thì giao dịch và meta mới chờ sau nó rồi mới được gửi: không có snapshot cũ nào chen vào', async ({
         app,
     }) => {
         const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
@@ -1388,7 +1388,8 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         await wait(150);
         expect(a.state.heldReads).toHaveLength(1);
 
-        // Meanwhile D is added and a budget is changed, and the Sheet confirms both.
+        // Meanwhile D is added and a budget is changed. They wait for the read: no write goes to
+        // the Sheet beside it, so no reply can come back out of order.
         await addExpense(a.page, 7000, 'tx-D');
         await a.page.evaluate(() => {
             META_ACCESSORS.budgets.set({ 'Ăn uống': 123456 });
@@ -1396,24 +1397,26 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
             syncToGoogleSheet();
         });
         await wait(600);
+        expect(a.state.posts).toHaveLength(0);
+        expect(notesOf(serverRows(server))).not.toContain('tx-D');
+
+        // The read is answered; only then are the changes sent.
+        a.state.releaseRead(0);
+        await wait(900);
+
+        const after = await view();
+
+        expect(after.notes).toContain('tx-D');
+        expect(after.budget).toBe(123456);
+        expect(after.dirty).toBeNull();
+        expect(after.upserts).toBeNull();
+        expect(after.metaPending).toBeNull();
         expect(notesOf(serverRows(server))).toContain('tx-D');
         expect(server.get({ v: '2' }).meta.budgets.value).toEqual({ 'Ăn uống': 123456 });
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
-
-        const before = await view();
-
-        // The old snapshot arrives now. It must not be applied.
-        a.state.releaseRead(0);
-        await wait(600);
-
-        expect(await view()).toEqual(before);
-        expect(before.notes).toContain('tx-D');
-        expect(before.budget).toBe(123456);
-        expect(notesOf(serverRows(server))).toContain('tx-D');
-        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
     });
 
-    test('review vòng 8: hai lần đọc trả ngược thứ tự: lần cũ về sau không xóa dòng mà lần mới đã đem về', async ({
+    test('review vòng 10: hai lần đọc gần nhau: lần sau chỉ được gửi khi lần trước đã trả lời, nên thấy cả dòng của máy khác', async ({
         app,
     }) => {
         const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
@@ -1421,29 +1424,31 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         const a = await app({ server, seed: syncedSeed(rows) });
         const notes = () => a.page.evaluate(() => transactions.map((item) => item.note).sort());
 
-        a.state.holdReads = 2;
+        a.state.holdReads = 1;
         await a.page.evaluate(() => {
             syncFromGoogleSheet({ quiet: true }); // snapshot 1: A, B, C
         });
         await wait(150);
+        expect(a.state.heldReads).toHaveLength(1);
+
+        const getsWhileWaiting = a.state.gets;
+
         server.post({ action: 'sync', upserts: [row('TX_E', { note: 'tu-may-khac' })] });
         await a.page.evaluate(() => {
-            syncFromGoogleSheet({ quiet: true }); // snapshot 2: A, B, C, E
+            syncFromGoogleSheet({ quiet: true }); // must wait for the first one
         });
-        await wait(150);
-        expect(a.state.heldReads).toHaveLength(2);
-
-        a.state.releaseRead(1); // the newer one first
         await wait(400);
-        expect(await notes()).toContain('tu-may-khac');
+        expect(a.state.gets).toBe(getsWhileWaiting); // not sent yet
 
-        a.state.releaseRead(0); // the older one last
-        await wait(400);
+        a.state.releaseRead(0);
+        await wait(700);
+
+        expect(a.state.gets).toBe(getsWhileWaiting + 1); // sent after the first was answered
         expect(await notes()).toContain('tu-may-khac');
         expect(await notes()).toHaveLength(4);
     });
 
-    test('review vòng 8: phản hồi chậm của một lần đẩy bị một lần đọc mới hơn vượt mặt: nó xóa hàng chờ nhưng không lùi dữ liệu', async ({
+    test('review vòng 10: phản hồi của một lần đẩy còn chưa về thì lần đọc chờ sau nó: phản hồi xác nhận giao dịch, rồi lần đọc mới đem dòng của máy khác về', async ({
         app,
     }) => {
         const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
@@ -1463,17 +1468,20 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(notesOf(serverRows(server))).toContain('tx-D');
         expect(a.state.heldReplies).toHaveLength(1);
 
-        // Another device adds E; a read, sent after the push, brings it here before the reply does.
+        // Another device adds E and a read is asked for: it waits for the push to be answered.
         server.post({ action: 'sync', upserts: [row('TX_E', { note: 'tu-may-khac' })] });
+
+        const getsWhileWaiting = a.state.gets;
+
         await a.page.evaluate(() => {
             syncFromGoogleSheet({ quiet: true });
         });
         await wait(400);
-        expect((await view()).notes).toContain('tu-may-khac');
+        expect(a.state.gets).toBe(getsWhileWaiting);
+        expect((await view()).notes).not.toContain('tu-may-khac');
 
-        // The slow reply (a snapshot without E) arrives: it confirms D, it does not roll back.
         a.state.releaseReply(0);
-        await wait(500);
+        await wait(800);
 
         const after = await view();
 
@@ -1777,7 +1785,7 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         await expect(a.page.locator('#sync-review')).toBeHidden();
     });
 
-    test('review vòng 9: phản hồi cũ bị snapshot mới hơn vượt mặt không kéo fm_sync_revision (revision và epoch) về sổ cũ của server', async ({
+    test('review vòng 10: revision và epoch nhớ theo đúng thứ tự các snapshot được áp dụng: sau phản hồi của lần đẩy là sổ mới của server', async ({
         app,
     }) => {
         const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
@@ -1792,25 +1800,26 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         await addExpense(a.page, 7000, 'tx-D');
         await wait(300);
 
-        // The Sheet's request log is lost: from now on another epoch. A newer read brings it here.
+        // The Sheet's request log is lost: from now on another epoch. A read is asked for; it
+        // waits behind the push.
         delete server.properties.FM_REQUEST_LOG;
         await a.page.evaluate(() => {
             syncFromGoogleSheet({ quiet: true });
         });
-        await wait(400);
+        await wait(300);
+        expect(await stored()).toEqual(first); // nothing was applied yet
+
+        a.state.releaseReply(0); // the push reply (the old log) first, then the read (the new log)
+        await wait(900);
 
         const fresh = await stored();
 
         expect(fresh.epoch).not.toBe(first.epoch);
-
-        // The old reply (the old log) arrives: not accepted, and neither are its numbers.
-        a.state.releaseReply(0);
-        await wait(500);
-        expect(await stored()).toEqual(fresh);
+        expect(fresh.epoch).toBe(server.get({ v: '2' }).epoch);
     });
 
     for (const backend of ['v2', 'legacy']) {
-        test(`review vòng 8: ${backend}: ack của lần ghi cũ về TRƯỚC khi lần đọc của chính thao tác khôi phục trả lời: ý định replace vẫn còn, bản sao lưu không bị snapshot cũ ghi đè`, async ({
+        test(`review vòng 10: ${backend}: khôi phục sao lưu khi một lần ghi cũ còn đang chạy: lần đọc của thao tác khôi phục chờ lần ghi cũ, ack của lần cũ không xóa ý định replace, bản sao lưu không bị ghi đè`, async ({
             app,
         }) => {
             const server = newServer(backend, { rows: [row('TX_OLD')] });
@@ -1821,15 +1830,17 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
 
             a.state.holdReads = 1; // the read that restoring a backup starts is slow too
             await restoreBackup(a.page, [row('TX_BACKUP')]);
-            expect(a.state.heldReads).toHaveLength(1);
+            // It waits for the old write: nothing else is on its way to the Sheet beside it.
+            expect(a.state.heldReads).toHaveLength(0);
 
             a.state.releaseHeld(0); // the old write is answered first
             await wait(500);
             expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe(
                 'replace',
             );
+            expect(a.state.heldReads).toHaveLength(1); // now the read goes out
 
-            a.state.releaseRead(0); // then the read, whose snapshot is from before the backup
+            a.state.releaseRead(0); // its snapshot is from before the backup: it does not win
             await wait(1000);
 
             expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
@@ -1856,7 +1867,7 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
     });
 
-    test('review vòng 8: script cũ (legacy): đọc chậm về sau một lần ghi đã được xác nhận không làm mất giao dịch vừa ghi', async ({
+    test('review vòng 10: script cũ (legacy): một lần đọc đang chờ trả lời thì lần ghi chờ sau nó rồi mới đi, giao dịch vừa thêm không bị mất', async ({
         app,
     }) => {
         const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
@@ -1868,16 +1879,192 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
             syncFromGoogleSheet({ quiet: true });
         });
         await wait(150);
+        expect(a.state.heldReads).toHaveLength(1);
+
         await addExpense(a.page, 7000, 'tx-D');
         await wait(500);
-        expect(notesOf(serverRows(server))).toContain('tx-D');
+        expect(a.state.posts).toHaveLength(0); // the save waits for the read
+        expect(notesOf(serverRows(server))).not.toContain('tx-D');
 
         a.state.releaseRead(0);
-        await wait(500);
+        await wait(900);
 
+        expect(notesOf(serverRows(server))).toContain('tx-D');
         expect(await a.page.evaluate(() => transactions.map((item) => item.note))).toContain(
             'tx-D',
         );
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    for (const backend of ['v2', 'legacy']) {
+        test(`review vòng 10: ${backend}: server xử lý hai lần đọc đảo thứ tự (lần đọc đầu bị chậm TRƯỚC khi server làm việc): lần đọc sau không được gửi chồng lên, dòng mới của máy khác không bị xóa khỏi máy`, async ({
+            app,
+        }) => {
+            const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+            const server = newServer(backend, { rows });
+            const a = await app({ server, seed: syncedSeed(rows) });
+            const notes = () => a.page.evaluate(() => transactions.map((item) => item.note).sort());
+            const readAgain = () =>
+                a.page.evaluate(() => {
+                    syncFromGoogleSheet({ quiet: true });
+                });
+            // Another device adds D.
+            const otherDeviceAddsD = () =>
+                backend === 'v2'
+                    ? server.post({ action: 'sync', upserts: [row('TX_D', { note: 'tx-D' })] })
+                    : server.post({ transactions: [...rows, row('TX_D', { note: 'tx-D' })] });
+
+            // Read A has not reached the Sheet's script yet (the lock wait, the network).
+            a.state.deferReads = 1;
+            await readAgain();
+            await wait(150);
+            expect(a.state.deferred).toHaveLength(1);
+
+            // Whichever read the script works on next answers slowly.
+            a.state.holdReads = 1;
+
+            const getsWithA = a.state.gets;
+
+            // Read B is asked for: it must not be sent beside A (the script could work on it first
+            // and answer with a snapshot older than A's).
+            await readAgain();
+            await wait(300);
+            expect(a.state.gets).toBe(getsWithA);
+
+            otherDeviceAddsD();
+            a.state.releaseDeferred(0); // the script now works on A: its snapshot has D
+            await wait(400);
+            a.state.releaseRead(0); // the slow answer arrives
+            await wait(800);
+
+            expect(await notes()).toContain('tx-D');
+            expect(await notes()).toHaveLength(4);
+            expect(a.state.gets).toBe(getsWithA + 1); // B went out after A was answered
+            await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+        });
+
+        test(`review vòng 10: ${backend}: lần đọc chưa được server xử lý thì lần ghi (thêm giao dịch) chờ sau nó, không đi trước`, async ({
+            app,
+        }) => {
+            const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+            const server = newServer(backend, { rows });
+            const a = await app({ server, seed: syncedSeed(rows) });
+
+            a.state.deferReads = 1;
+            await a.page.evaluate(() => {
+                syncFromGoogleSheet({ quiet: true });
+            });
+            await wait(150);
+            expect(a.state.deferred).toHaveLength(1);
+
+            await addExpense(a.page, 7000, 'tx-D');
+            await wait(500);
+            expect(a.state.posts).toHaveLength(0);
+            expect(notesOf(serverRows(server))).not.toContain('tx-D');
+
+            a.state.releaseDeferred(0);
+            await wait(1000);
+
+            expect(notesOf(serverRows(server))).toContain('tx-D');
+            expect(await a.page.evaluate(() => transactions.length)).toBe(4);
+            await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+        });
+    }
+
+    test('review vòng 10: lần đọc của Sheet cũ không bao giờ trả lời không giữ chân kết nối mới: đổi URL thì Sheet mới đọc và ghi bình thường, câu trả lời muộn của Sheet cũ bị bỏ', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const serverA = newServer('v2', { rows });
+        const serverB = newServer('v2', { rows: [row('TX_B1', { note: 'rieng-cua-B' })] });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows),
+        });
+        const view = () =>
+            a.page.evaluate(() => ({
+                ids: transactions.map((item) => item.id).sort(),
+                baseline: localStorage.getItem('fm_sync_baseline'),
+            }));
+
+        // A read of the first Sheet is stuck.
+        a.state.deferReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        expect(a.state.deferred).toHaveLength(1);
+
+        // The user switches to the second Sheet: it is not queued behind the stuck read.
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+        expect((await view()).baseline).toBe(URL_B);
+
+        await addExpense(a.page, 7000, 'sang-B');
+        await wait(600);
+        expect(notesOf(serverRows(serverB))).toEqual(
+            expect.arrayContaining(['rieng-cua-B', 'sang-B']),
+        );
+
+        // The first Sheet finally answers: what it says is not about the connected Sheet any more.
+        serverA.post({ action: 'sync', upserts: [row('TX_ONLYA', { note: 'chi-co-o-A' })] });
+
+        const before = await view();
+
+        a.state.releaseDeferred(0);
+        await wait(600);
+
+        expect(await view()).toEqual(before);
+        expect(before.ids).not.toContain('TX_ONLYA');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 10: lần đẩy xếp hàng sau một lần đọc của Sheet cũ không chạy sau khi đã đổi sang Sheet mới (không chồng lên các request của kết nối mới)', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const serverA = newServer('v2', { rows });
+        const serverB = newServer('v2', { rows: [row('TX_B1', { note: 'rieng-cua-B' })] });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows),
+        });
+        const postsToB = () => a.state.posts.filter((post) => post.url.startsWith(URL_B)).length;
+
+        // A read of the first Sheet is stuck, and a new expense queues its push behind it.
+        a.state.deferReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        await addExpense(a.page, 7000, 'dang-cho');
+        await wait(300);
+        expect(a.state.deferred).toHaveLength(1);
+        expect(a.state.posts).toHaveLength(0);
+
+        // The user switches to the second Sheet; its first push is slow, so it is still on its way.
+        a.state.holdWrites = 1;
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+        expect(a.state.held).toHaveLength(1);
+        expect(postsToB()).toBe(1);
+
+        // The stuck read of the first Sheet is answered at last, so the push queued behind it comes
+        // up. It belongs to a connection that is gone: it must not send anything beside the push
+        // that is on its way to the second Sheet.
+        a.state.releaseDeferred(0);
+        await wait(700);
+        expect(postsToB()).toBe(1);
+
+        a.state.releaseHeld(0);
+        await wait(900);
+        expect(notesOf(serverRows(serverB))).toEqual(
+            expect.arrayContaining(['rieng-cua-B', 'dang-cho']),
+        );
+        expect(notesOf(serverRows(serverA))).not.toContain('dang-cho');
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
     });
 

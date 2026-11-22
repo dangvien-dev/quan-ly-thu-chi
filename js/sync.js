@@ -35,16 +35,18 @@
 //    A reply that arrives after the URL changed is dropped (syncGeneration), and deletions queued
 //    before the first contact with a Sheet have no authority over what it holds
 //    (giveUpDeletesAtFirstContact).
-//  - On one URL, replies can still come back in another order than their requests were sent. A
-//    snapshot (a read, a push reply, a settle check) is only applied when no request sent after it
-//    has been applied already (claimSnapshot); an older one would roll the local data back. And a
-//    reply only settles the replace that was pending when its request was built, never one made
-//    while it was on its way (fm_sync_replace_seq, clearSentPending).
+//  - Only ONE request that answers with a snapshot of the Sheet is on its way at a time (a read, a
+//    push, a settle check; inSyncLane). The order in which a server works through requests that
+//    overlap is not the order they were sent in (network delay, the lock wait, Apps Script
+//    scheduling), so a snapshot that arrived second may be the OLDER one and would roll the local
+//    data back (rows the newer snapshot had would be read as deleted on the Sheet). With one request
+//    at a time the reply of the previous one has been applied before the next is sent, whatever the
+//    server does. And a reply only settles the replace that was pending when its request was
+//    built, never one made while it was on its way (fm_sync_replace_seq, clearSentPending).
 //  - The record of a request that was sent (fm_sync_inflight) is the only way to ask the server
 //    what became of it, so it is the LAST thing to go: the pending lists and flags are settled first,
 //    in steps that can be repeated, and a crash in between leaves a record that is simply asked
-//    about again. The revision / epoch the record leans on are only taken from snapshots that were
-//    accepted (claimSnapshot), never from a reply that a newer one overtook.
+//    about again.
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
@@ -78,11 +80,10 @@ let syncProtocol = ''; // set by the first successful read: 'legacy' | 'v2'
 // that is no longer the connected one: when its reply arrives it must not touch the baseline, the
 // pending lists or the local data (see postSyncV2, pushV2, pushToGoogleSheet).
 let syncGeneration = 0;
-// The order in which requests whose reply is a snapshot of the Sheet were sent: reads, push replies
-// and settle checks take a number when they are sent. A snapshot may only be applied when no request
-// sent after it has been applied already (claimSnapshot): an older one would roll local data back.
-let stateSeq = 0;
-let lastAppliedSeq = 0;
+// The tail of the queue of operations that talk to the connected Sheet (inSyncLane). Replaced when
+// the Web App URL changes, so a request that never gets an answer from the old Sheet cannot hold the
+// new connection back.
+let syncLane = Promise.resolve();
 let pushInFlight = false;
 // Another device may change the data while this one stays open, so the Sheet is read again when
 // the user comes back, but never more often than this.
@@ -264,6 +265,7 @@ function setScriptUrl(url, { keepPending = false } = {}) {
         syncGeneration++;
         pushInFlight = false;
         pushQueued = false;
+        syncLane = Promise.resolve();
     }
 
     webAppUrl = url;
@@ -301,9 +303,30 @@ function saveScriptUrl() {
     );
 }
 
+/** The host the app is served from (a function, so a test can pretend to be on another one). */
+function currentHostname() {
+    return window.location.hostname;
+}
+
+/** Warns in Settings when this address is shared with other sites (see isSharedPagesOrigin). */
+function updateOriginNote() {
+    const note = document.getElementById('origin-note');
+
+    if (!note) return;
+
+    const host = currentHostname();
+
+    note.textContent = isSharedPagesOrigin(host)
+        ? `Lưu ý cách ly dữ liệu: ứng dụng đang chạy ở ${host}. Trình duyệt dùng chung bộ nhớ (localStorage) cho mọi trang cùng tên miền này, kể cả các trang GitHub Pages khác của cùng tài khoản, nên một trang khác bị lỗi bảo mật có thể đọc dữ liệu thu chi và mã bảo vệ lưu trên máy. Hãy dùng một tên miền riêng cho ứng dụng này (xem README, mục "Triển khai và cách ly dữ liệu").`
+        : '';
+    note.hidden = !note.textContent;
+}
+
 /** Explain which kind of Apps Script is connected (shown under the settings form). */
 function updateSyncNote() {
     const note = document.getElementById('sync-protocol-note');
+
+    updateOriginNote();
 
     if (!note) return;
 
@@ -330,25 +353,30 @@ function sheetUrl(params = {}, base = webAppUrl) {
     return query ? `${base}${base.includes('?') ? '&' : '?'}${query}` : base;
 }
 
-/** Takes the place of a request in the order of snapshots; call it when the request is sent. */
-function nextStateSeq() {
-    stateSeq++;
-
-    return stateSeq;
-}
-
 /**
- * Whether the snapshot of the request with this number may still be applied: nothing sent after it
- * has been applied. Marks it applied. A snapshot that is older than one already applied (a read that
- * was slow, the reply of a push that a newer read overtook) must not be applied: it lacks rows the
- * newer one had, and they would be read as deleted on the Sheet.
+ * Runs an operation that sends requests answered with a snapshot of the Sheet (a read, a push with
+ * its settle check) after every earlier one has finished, whether it succeeded or failed. Nothing
+ * that is built from the local data or that applies a reply may run beside another: the reply of one
+ * must be merged before the next request is made, so the Sheet always answers in the order the data
+ * here was prepared. Every call site of fetch that returns a state must be inside this. A request
+ * that never gets an answer holds the later ones back until the browser gives up on it (what was
+ * asked for stays queued, nothing is lost); changing the Web App URL frees the lane.
+ * An operation that was queued for a connection that has been replaced is not run at all.
  */
-function claimSnapshot(seq) {
-    if (seq <= lastAppliedSeq) return false;
+function inSyncLane(operation) {
+    const generation = syncGeneration;
+    const run = syncLane.then(() => {
+        if (generation !== syncGeneration) throw staleConnection();
 
-    lastAppliedSeq = seq;
+        return operation();
+    });
 
-    return true;
+    syncLane = run.then(
+        () => {},
+        () => {},
+    );
+
+    return run;
 }
 
 /** What a request that outlived its connection (the Web App URL changed) fails with. */
@@ -486,16 +514,12 @@ async function pushLegacy() {
     const changeCountAtStart = localChangeCount;
     const replaceSeqAtStart = readReplaceSeq();
     const generation = syncGeneration;
-    const seq = nextStateSeq();
 
     await writeLegacySheet(transactions);
 
     if (generation !== syncGeneration) throw staleConnection();
 
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
-    // What was written is the newest state of the Sheet this device knows: an older read that comes
-    // back later must not replace it.
-    lastAppliedSeq = Math.max(lastAppliedSeq, seq);
 
     // A restored backup does not go through syncToGoogleSheet, so it is not in localChangeCount.
     if (changeCountAtStart === localChangeCount && replaceSeqAtStart === readReplaceSeq()) {
@@ -551,9 +575,8 @@ async function postSyncV2(payload) {
 
 /**
  * Keeps the revision and epoch of the server's request log (absent from an older Code.gs). Call it
- * for a snapshot that has been ACCEPTED (claimSnapshot), not for every reply: the reply of an older
- * request that a newer snapshot overtook would take the numbers back. Within one epoch the revision
- * only grows; a smaller number could only weaken what appliedAfter proves.
+ * for every snapshot that is applied. Within one epoch the revision only grows; a smaller number
+ * could only weaken what appliedAfter proves.
  */
 function rememberRevision(state) {
     if (!(Number.isInteger(state.revision) && state.revision >= 0)) {
@@ -1094,7 +1117,6 @@ async function settleInflightV2() {
         return;
     }
 
-    const seq = nextStateSeq();
     const state = await postSyncV2({
         action: 'sync',
         token: webAppToken,
@@ -1126,11 +1148,8 @@ async function settleInflightV2() {
     }
 
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
-
-    if (claimSnapshot(seq)) {
-        rememberRevision(state);
-        reconcileV2(state);
-    }
+    rememberRevision(state);
+    reconcileV2(state);
 
     if (notice) announceUnsentWrites(notice);
 }
@@ -1149,7 +1168,6 @@ async function pushV2() {
 
     const payload = { ...buildV2Payload(), requestId: newRequestId() };
     const record = inflightRecord(payload);
-    const seq = nextStateSeq();
 
     localStorage.setItem(SYNC_INFLIGHT_KEY, JSON.stringify(record));
 
@@ -1164,13 +1182,8 @@ async function pushV2() {
     // The reply confirms what was sent; only that.
     clearSentPending({ ...payload, replaceSeq: record.replaceSeq });
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
-
-    // As a snapshot it may be older than a read that was applied while it was on its way: then it
-    // is not merged (its rows are in that read) and its revision is not taken either.
-    if (claimSnapshot(seq)) {
-        rememberRevision(state);
-        reconcileV2(state);
-    }
+    rememberRevision(state);
+    reconcileV2(state);
 
     if (hasPendingChanges()) {
         pushQueued = true;
@@ -1208,7 +1221,18 @@ function pushToGoogleSheet() {
     pushInFlight = true;
     setSyncBadge('syncing');
 
-    return (syncProtocol === 'v2' ? pushV2() : pushLegacy())
+    return inSyncLane(() => {
+        // A request ahead of this one in the lane (a read) may have changed what there is to send,
+        // or failed before the protocol was known.
+        if (!syncProtocol) return undefined;
+
+        if (!hasUnsettledWork()) {
+            setSyncBadge('synced');
+            return undefined;
+        }
+
+        return syncProtocol === 'v2' ? pushV2() : pushLegacy();
+    })
         .catch((error) => {
             // A push of the previous connection says nothing about this one.
             if (generation !== syncGeneration || (error && error.stale)) return;
@@ -1271,49 +1295,46 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
     }
 
     const requestedUrl = webAppUrl;
-    const seq = nextStateSeq();
 
     lastPullAt = Date.now();
 
-    // A refresh in the background does not flash "Đang tải..." over a badge that is already fine.
-    if (!quiet) setSyncBadge('loading');
+    return inSyncLane(async () => {
+        if (requestedUrl !== webAppUrl) return;
 
-    return readSheet()
-        .then((result) => {
-            if (requestedUrl !== webAppUrl) return;
+        // A refresh in the background does not flash "Đang tải..." over a badge that is already fine.
+        if (!quiet) setSyncBadge('loading');
 
-            // Older than a snapshot applied meanwhile (a push that was confirmed, a newer read): it
-            // lacks rows the newer one has, and they would be read as deleted on the Sheet.
-            if (!claimSnapshot(seq)) return;
+        const result = await readSheet();
 
-            if (Array.isArray(result)) {
-                syncProtocol = 'legacy';
-                updateSyncNote();
-                reconcileWithSheet(result);
-            } else if (result && result.version === 2) {
-                syncProtocol = 'v2';
-                updateSyncNote();
-                // Also from the tokenless GET of an open server, which never goes through postSyncV2.
-                rememberRevision(result);
-                giveUpDeletesAtFirstContact(result);
-                reconcileV2(result);
-                remoteReady = true;
+        if (requestedUrl !== webAppUrl) return;
 
-                if (hasUnsettledWork()) {
-                    syncToGoogleSheet();
-                } else {
-                    localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
-                    setSyncBadge('synced');
-                }
+        if (Array.isArray(result)) {
+            syncProtocol = 'legacy';
+            updateSyncNote();
+            reconcileWithSheet(result);
+        } else if (result && result.version === 2) {
+            syncProtocol = 'v2';
+            updateSyncNote();
+            // Also from the tokenless GET of an open server, which never goes through postSyncV2.
+            rememberRevision(result);
+            giveUpDeletesAtFirstContact(result);
+            reconcileV2(result);
+            remoteReady = true;
+
+            if (hasUnsettledWork()) {
+                syncToGoogleSheet();
             } else {
-                throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
+                localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+                setSyncBadge('synced');
             }
-        })
-        .catch((error) => {
-            if (requestedUrl !== webAppUrl || (error && error.stale)) return;
+        } else {
+            throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
+        }
+    }).catch((error) => {
+        if (requestedUrl !== webAppUrl || (error && error.stale)) return;
 
-            setSyncBadge(failureBadge(error, 'offline'), failureDetail(error));
-        });
+        setSyncBadge(failureBadge(error, 'offline'), failureDetail(error));
+    });
 }
 
 /** Read the Sheet again when the user returns to this window or tab (see REFRESH_MIN_INTERVAL_MS). */

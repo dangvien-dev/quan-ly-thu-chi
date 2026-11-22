@@ -104,6 +104,11 @@ async function openApp(browser, opts = {}) {
         external: [],
         loseReplies: 0,
         dropRequests: 0,
+        // deferReads / deferred / releaseDeferred: a read that has NOT reached the server yet (it is
+        // processed, from the spreadsheet as it is then, only when the test releases it).
+        deferReads: 0,
+        deferred: [],
+        releaseDeferred: (index = 0) => state.deferred[index] && state.deferred[index](),
         holdReads: 0,
         heldReads: [],
         // Lets the index-th held read (in the order they were held) be answered.
@@ -181,6 +186,14 @@ async function openApp(browser, opts = {}) {
 
             // opts.getFails: reading the default server fails (the others, opts.servers, still work).
             if (opts.getFails && target === gas) return route.abort();
+
+            // state.deferReads: the next N reads are still on their way (a slow network, a wait for
+            // the script lock): the server only works on them, and so takes its snapshot, when the
+            // test calls state.releaseDeferred(index). Unlike holdReads, the snapshot is NOT taken yet.
+            if (state.deferReads > 0) {
+                state.deferReads--;
+                await new Promise((resolve) => state.deferred.push(resolve));
+            }
 
             const body = target.getText(Object.fromEntries(new URL(request.url()).searchParams));
 
