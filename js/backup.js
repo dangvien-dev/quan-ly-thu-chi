@@ -123,7 +123,8 @@ async function importBackup(file) {
             setSyncDirty('replace');
         }
 
-        setScriptUrl(targetUrl);
+        // The replace above is meant for exactly this URL: do not set it aside as a URL change.
+        setScriptUrl(targetUrl, { keepPending: true });
 
         alert(
             'Đã khôi phục dữ liệu từ bản sao lưu.' +

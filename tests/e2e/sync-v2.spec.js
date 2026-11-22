@@ -19,6 +19,149 @@ const T0 = '2026-10-28T01:00:00.000Z';
 const row = (id, overrides = {}) => tx({ id, updatedAt: T0, note: `ghi chu ${id}`, ...overrides });
 const meta = (value, updatedAt = T0) => ({ value, updatedAt });
 const lastBody = (state) => state.posts.at(-1).body;
+const TOKEN = 'bi-mat';
+const inflight = (page) => page.evaluate(() => localStorage.getItem('fm_sync_inflight'));
+const replaces = (state) => state.posts.filter((post) => post.body.replace === true).length;
+const notesOf = (rows) => rows.map((item) => item.note).sort();
+
+const URL_B = 'https://script.google.com/macros/s/OTHER/exec';
+const idsOf = (rows) => rows.map((item) => item.id).sort();
+
+/** The warning is on the page now, and still there after a reload (it is not just a toast). */
+async function expectReviewKept(page, text) {
+    await expect(page.locator('#sync-review')).toBeVisible();
+    await expect(page.locator('#sync-review-list')).toContainText(text);
+    await page.reload();
+    await expect(page.locator('#sync-review')).toBeVisible();
+    await expect(page.locator('#sync-review-list')).toContainText(text);
+}
+
+/** Restores a backup holding `rows` on a device: the app sends a replace of everything. */
+async function restoreBackup(page, rows) {
+    await goTab(page, 'settings');
+    await page.setInputFiles('input[type=file]', {
+        name: 'b.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(
+            JSON.stringify({
+                format: 'finmanager-backup',
+                version: 1,
+                exportedAt: 'x',
+                data: {
+                    transactions: rows,
+                    categories: [{ id: 1, name: 'Ăn uống', type: 'expense', icon: 'fa-utensils' }],
+                    initialBalances: {},
+                    scriptUrl: SCRIPT_URL,
+                },
+            }),
+        ),
+    });
+    await wait(600);
+}
+
+/**
+ * The next `method` ('setItem' | 'removeItem') of this key on localStorage throws, once: a crash or a
+ * full disk at that very step. A reload then plays "the app was opened again".
+ */
+function failStorageOnce(page, method, key) {
+    return page.evaluate(
+        ([which, name]) => {
+            const original = Storage.prototype[which];
+            let thrown = false;
+
+            Storage.prototype[which] = function (entry, ...rest) {
+                if (!thrown && entry === name) {
+                    thrown = true;
+                    throw new Error('QuotaExceededError (test)');
+                }
+
+                return original.call(this, entry, ...rest);
+            };
+        },
+        [method, key],
+    );
+}
+
+/** Behaves like a Code.gs that predates request ids: replies carry neither applied nor revision. */
+/**
+ * The fingerprint the app used in review round 12: FNV-1a (32 bits) of the canonical JSON, and its
+ * length. Kept here to build inputs that COLLIDE under it: two different rows with the same value.
+ */
+function legacyFingerprint(value) {
+    const canonical = (item) =>
+        Array.isArray(item)
+            ? `[${item.map((entry) => canonical(entry === undefined ? null : entry)).join(',')}]`
+            : item && typeof item === 'object'
+              ? `{${Object.keys(item)
+                    .filter((key) => item[key] !== undefined)
+                    .sort()
+                    .map((key) => `${JSON.stringify(key)}:${canonical(item[key])}`)
+                    .join(',')}}`
+              : (JSON.stringify(item) ?? 'null');
+    const text = canonical(value);
+    let hash = 0x811c9dc5;
+
+    for (let index = 0; index < text.length; index++) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+
+    return `${hash.toString(16).padStart(8, '0')}.${text.length.toString(36)}`;
+}
+
+/**
+ * Two different notes whose rows (`base` with the note and an updatedAt) have the same legacy
+ * fingerprint, the first with stamp `stampA` and the second with `stampB` (the same stamp for a
+ * collision at one instant). A birthday search: some tens of thousands of tries.
+ */
+function collidingNotes(base, stampA, stampB) {
+    const noteOf = (i) => `n${i.toString(36).padStart(6, '0')}`;
+    const fingerprint = (note, stamp) => legacyFingerprint({ ...base, note, updatedAt: stamp });
+    const seen = new Map();
+
+    for (let i = 0; i < 600000; i++) {
+        const first = noteOf(i);
+
+        seen.set(fingerprint(first, stampA), first);
+
+        const second = noteOf(i + 600000);
+        const match = seen.get(fingerprint(second, stampB));
+
+        if (match && match !== second) return [match, second];
+    }
+
+    throw new Error('no collision found');
+}
+
+/** A Code.gs of before the fence: it neither cancels the request nor says fenced. */
+function withoutFence(server) {
+    const postText = server.postText;
+
+    server.postText = (raw, ...rest) => {
+        const body = JSON.parse(raw);
+
+        delete body.fence;
+
+        const reply = JSON.parse(postText(JSON.stringify(body), ...rest));
+
+        delete reply.fenced;
+
+        return JSON.stringify(reply);
+    };
+}
+
+function withoutRequestIds(server) {
+    const postText = server.postText;
+
+    server.postText = (...args) => {
+        const reply = JSON.parse(postText(...args));
+
+        delete reply.applied;
+        delete reply.revision;
+
+        return JSON.stringify(reply);
+    };
+}
 const pending = (page) =>
     page.evaluate(() => ({
         upserts: JSON.parse(localStorage.getItem('fm_pending_upserts') || '[]'),
@@ -445,6 +588,2324 @@ test.describe('Giao thức v2: lần đầu kết nối', () => {
 });
 
 test.describe('Giao thức v2: thay thế toàn bộ', () => {
+    test('SEC-001: Sheet bị làm trống thì máy đã đồng bộ hỏi, mặc định giữ dữ liệu và đưa lại lên Sheet', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', replace: true, upserts: [], meta: {}, confirmWipe: true });
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms.some((text) => text.includes('thiếu 3 giao dịch'))).toBe(true);
+        expect(await page.evaluate(() => transactions.map((t) => t.id).sort())).toEqual([
+            'TX_1',
+            'TX_2',
+            'TX_3',
+        ]);
+        expect(
+            serverRows(server)
+                .map((item) => item.id)
+                .sort(),
+        ).toEqual(['TX_1', 'TX_2', 'TX_3']);
+    });
+
+    test('SEC-001: chỉ xóa trên máy khi bấm OK ở câu hỏi "Xóa"', async ({ app }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+        const answers = [false, true]; // Hủy "Khôi phục", rồi OK "Xóa trên máy này"
+
+        server.post({ action: 'sync', replace: true, upserts: [], meta: {}, confirmWipe: true });
+        page.removeAllListeners('dialog');
+        page.on('dialog', (dialog) => {
+            state.confirms.push(dialog.message());
+            return answers.shift() ? dialog.accept() : dialog.dismiss();
+        });
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms.at(-1)).toContain('Xóa 2 giao dịch này khỏi máy này');
+        expect(await page.evaluate(() => transactions.length)).toBe(0);
+        expect(serverRows(server)).toEqual([]);
+    });
+
+    test('SEC-001: đóng / hủy cả hai hộp thoại thì "Để sau": giữ trên máy, không gửi, không hỏi lại trong phiên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', replace: true, upserts: [], meta: {}, confirmWipe: true });
+        page.removeAllListeners('dialog');
+        page.on('dialog', (dialog) => {
+            state.confirms.push(dialog.message());
+            return dialog.dismiss(); // Esc / Hủy
+        });
+        await page.reload();
+        await wait(600);
+
+        const asked = state.confirms.length;
+
+        expect(asked).toBe(2);
+        expect(await page.evaluate(() => transactions.length)).toBe(3);
+        expect(serverRows(server)).toEqual([]);
+        // Review round 2: not "Đã lưu" while rows exist only on this device.
+        await expect(page.locator('#sync-status')).toContainText('Chờ xử lý (3)');
+        await expect(page.locator('#sync-status')).not.toContainText('Đã lưu');
+
+        // A later sync in the same session (a new transaction) neither asks again nor uploads them.
+        await addExpense(page, 5000, 'moi');
+        await wait(600);
+
+        expect(state.confirms.length).toBe(asked);
+        expect(serverRows(server).map((item) => item.note)).toEqual(['moi']);
+        expect(await page.evaluate(() => transactions.length)).toBe(4);
+        await expect(page.locator('#sync-status')).toContainText('Chờ xử lý (3)');
+
+        // Opening the app again asks again.
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms.length).toBeGreaterThan(asked);
+    });
+
+    test('review vòng 2: xóa giao dịch cuối cùng vẫn lên Sheet (gửi kèm confirmWipe)', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        await goTransactions(page);
+        await page.click('#transaction-table-body [data-action=delete]');
+        await wait(500);
+
+        expect(serverRows(server)).toEqual([]);
+        expect(lastBody(state).confirmWipe).toBe(true);
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 2: xóa một trong nhiều giao dịch không gửi confirmWipe', async ({ app }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        await goTransactions(page);
+        await page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_2']);
+        expect(lastBody(state).confirmWipe).toBe(false);
+    });
+
+    test('review vòng 4: replace đã áp dụng nhưng mất phản hồi, máy khác ghi xen giữa: gửi lại không xóa dòng của máy kia', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const properties = { FM_TOKEN: 'bi-mat' };
+        const server = newServer('v2', { rows, properties });
+        const seed = syncedSeed(rows, { fm_script_token: 'bi-mat' });
+        const a = await app({ server, seed });
+        const b = await app({ server, seed });
+
+        // Device A restores a backup: the server applies the replace, the reply is lost.
+        a.state.loseReplies = 1;
+        await goTab(a.page, 'settings');
+        await a.page.setInputFiles('input[type=file]', {
+            name: 'b.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(
+                JSON.stringify({
+                    format: 'finmanager-backup',
+                    version: 1,
+                    exportedAt: 'x',
+                    data: {
+                        transactions: [row('TX_9')],
+                        categories: [
+                            { id: 1, name: 'Ăn uống', type: 'expense', icon: 'fa-utensils' },
+                        ],
+                        initialBalances: {},
+                        scriptUrl: SCRIPT_URL,
+                    },
+                }),
+            ),
+        });
+        await wait(600);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeTruthy();
+
+        // Device B adds a transaction in between. It notices the restore as "the Sheet lost
+        // TX_1 and TX_2" and, since the restore was on purpose, the user picks "Xóa trên máy".
+        const answers = [false, true];
+
+        b.page.removeAllListeners('dialog');
+        b.page.on('dialog', (dialog) => (answers.shift() ? dialog.accept() : dialog.dismiss()));
+        await b.page.reload();
+        await wait(400);
+        await addExpense(b.page, 7000, 'tu-may-B');
+        await wait(400);
+
+        // Device A opens again: it asks first, sees its replace went through, and keeps B's row.
+        const replacesBefore = a.state.posts.filter((post) => post.body.replace === true).length;
+
+        await a.page.reload();
+        await wait(800);
+
+        const notes = serverRows(server)
+            .map((item) => item.note)
+            .sort();
+
+        expect(notes).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        expect(a.state.posts.filter((post) => post.body.replace === true).length).toBe(
+            replacesBefore,
+        );
+        expect(a.state.posts.some((post) => post.body.appliedCheck)).toBe(true);
+        expect((await a.page.evaluate(() => transactions.map((t) => t.note))).sort()).toEqual([
+            'ghi chu TX_9',
+            'tu-may-B',
+        ]);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeNull();
+    });
+
+    test('review vòng 4: mất phản hồi của một lần xóa: không gửi lại lệnh xóa đã áp dụng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: 'bi-mat' } });
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: 'bi-mat' }),
+        });
+
+        state.loseReplies = 1;
+        await goTransactions(page);
+        await page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+
+        // Another device re-creates the row with a newer edit.
+        server.post({
+            action: 'sync',
+            token: 'bi-mat',
+            upserts: [row('TX_1', { updatedAt: '2026-11-22T09:00:00.000Z', note: 'tao lai' })],
+        });
+
+        await page.evaluate(() => resumeSync());
+        await wait(600);
+
+        expect(serverRows(server).map((item) => item.id)).toContain('TX_1');
+        expect(
+            state.posts.filter((post) => (post.body.deletes || []).includes('TX_1')).length,
+        ).toBe(1);
+    });
+
+    test('review vòng 5: server đã quên request (100+ lần ghi sau đó): replace không bị gửi lại, dòng máy khác còn nguyên, có thông báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // Device A restores a backup: the server applies the replace, the reply is lost.
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_9')]);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        // Device B adds a row, then more writes follow than the server's request log keeps.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        for (let i = 0; i < 110; i++) {
+            server.post({
+                action: 'sync',
+                token: TOKEN,
+                // Newer than what A wrote, so every one of them really changes the sheet.
+                meta: { budgets: meta({ lan: i }, '2099-01-01T00:00:00.000Z') },
+                requestId: `pad-${i}`,
+            });
+        }
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        // The server cannot say what became of A's request, so it is not sent again.
+        const check = a.state.posts.find((post) => post.body.appliedCheck);
+
+        expect(check.body.appliedAfter).toEqual(expect.any(Number));
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        expect(notesOf(await a.page.evaluate(() => transactions))).toEqual([
+            'ghi chu TX_9',
+            'tu-may-B',
+        ]);
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#toast-container')).toContainText(
+            'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp',
+        );
+        await expectReviewKept(a.page, 'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 5: server ghi xong nhưng flush lỗi (báo lỗi dù dữ liệu đã vào Sheet): máy khác ghi xen giữa, replace không bị gửi lại', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // The flush right after the replace was written throws (arm it when the replace arrives:
+        // restoring a backup reads the Sheet first).
+        const postText = server.postText;
+
+        server.postText = (raw, ...rest) => {
+            if (JSON.parse(raw).replace === true) server.faults.flush = 1;
+
+            return postText(raw, ...rest);
+        };
+        await restoreBackup(a.page, [row('TX_9')]);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']); // it did arrive
+        expect(await inflight(a.page)).toBeTruthy();
+        await expect(a.page.locator('#sync-status')).not.toContainText('Đã lưu');
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.evaluate(() => resumeSync());
+        await wait(800);
+
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        await expect(a.page.locator('#toast-container')).toContainText(
+            'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp',
+        );
+        await expectReviewKept(a.page, 'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp');
+    });
+
+    test('review vòng 5: request chưa từng tới server (mất kết nối) được chứng minh là false nên replace vẫn được gửi, không thông báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        a.state.dropRequests = 1;
+        await restoreBackup(a.page, [row('TX_9')]);
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_1', 'TX_2']);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.evaluate(() => resumeSync());
+        await wait(800);
+
+        // The restore the user asked for completes: it replaces the server's content, as always.
+        expect(a.state.posts.find((post) => post.body.appliedCheck)).toBeTruthy();
+        expect(replaces(a.state)).toBe(replacesBefore + 1);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9']);
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#toast-container .toast')).toHaveCount(0);
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 5: Code.gs cũ không trả applied: lệnh xóa mất phản hồi không được gửi lại, dòng máy khác tạo lại còn nguyên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+
+        withoutRequestIds(server);
+
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+
+        state.loseReplies = 1;
+        await goTransactions(page);
+        await page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+
+        // Another device re-creates the row with a newer edit.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_1', { updatedAt: '2026-11-22T09:00:00.000Z', note: 'tao lai' })],
+        });
+
+        await page.evaluate(() => resumeSync());
+        await wait(800);
+
+        const deletesOfTx1 = state.posts.filter((post) =>
+            (post.body.deletes || []).includes('TX_1'),
+        );
+
+        expect(deletesOfTx1).toHaveLength(1);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_2', 'ghi chu TX_3', 'tao lai']);
+        expect(notesOf(await page.evaluate(() => transactions))).toEqual([
+            'ghi chu TX_2',
+            'ghi chu TX_3',
+            'tao lai',
+        ]);
+        await expect(page.locator('#toast-container')).toContainText(
+            'Lệnh xóa 1 giao dịch không được gửi lại',
+        );
+        await expectReviewKept(page, 'Lệnh xóa 1 giao dịch không được gửi lại');
+        expect(await inflight(page)).toBeNull();
+    });
+
+    test('review vòng 5: Code.gs cũ: một lần thêm giao dịch mất phản hồi vẫn được gửi lại (upsert an toàn khi lặp), không thông báo', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_1')], properties: { FM_TOKEN: TOKEN } });
+
+        withoutRequestIds(server);
+
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed([row('TX_1')], { fm_script_token: TOKEN }),
+        });
+
+        state.loseReplies = 1;
+        await addExpense(page, 7000, 'them-moi');
+        await wait(500);
+        await page.evaluate(() => resumeSync());
+        await wait(800);
+
+        expect(notesOf(serverRows(server)).filter((note) => note === 'them-moi')).toHaveLength(1);
+        await expect(page.locator('#toast-container .toast')).toHaveCount(0);
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 6: sổ yêu cầu của server bị xóa (epoch mới): replace không bị gửi lại dù appliedAfter = 0, dòng máy khác còn nguyên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_9')]); // applied, reply lost (A had seen revision 0)
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        // The script's properties are reset: the log starts again at revision 0.
+        delete server.properties.FM_REQUEST_LOG;
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        const check = a.state.posts.find((post) => post.body.appliedCheck);
+
+        expect(check.body.appliedAfter).toBe(0);
+        expect(check.body.appliedEpoch).toEqual(expect.any(String));
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        expect(await inflight(a.page)).toBeNull();
+        await expectReviewKept(a.page, 'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp');
+    });
+
+    test('review vòng 6: đổi URL khi replace chưa được xác nhận: replace không bao giờ tới Sheet mới, dữ liệu Sheet mới còn nguyên; chuyển về Sheet cũ cũng không gửi replace', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+        const replacesTo = (url) =>
+            a.state.posts.filter((post) => post.url.startsWith(url) && post.body.replace === true)
+                .length;
+
+        // A restores a backup: the replace reaches the first Sheet, the reply is lost.
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_9')]);
+        expect(idsOf(serverRows(serverA))).toEqual(['TX_9']);
+        expect(await inflight(a.page)).toBeTruthy();
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe('replace');
+
+        // The user points the app at another Sheet that has data of its own.
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        expect(replacesTo(URL_B)).toBe(0);
+        expect(notesOf(serverRows(serverB))).toContain('rieng-cua-B');
+        expect(await inflight(a.page)).toBeNull();
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).not.toBe(
+            'replace',
+        );
+        await expectReviewKept(a.page, 'Bạn vừa đổi Google Sheet');
+
+        // And back to the first one: still no replace is sent anywhere.
+        const replacesToA = replacesTo(SCRIPT_URL);
+
+        await a.page.evaluate((url) => setScriptUrl(url), SCRIPT_URL);
+        await wait(900);
+
+        expect(replacesTo(SCRIPT_URL)).toBe(replacesToA);
+        expect(replacesTo(URL_B)).toBe(0);
+        expect(notesOf(serverRows(serverA))).toContain('ghi chu TX_9');
+        expect(notesOf(serverRows(serverB))).toContain('rieng-cua-B');
+    });
+
+    test('review vòng 6: đổi URL khi lệnh xóa chưa được xác nhận: lệnh xóa không tới Sheet mới, giao dịch quay về máy, có cảnh báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+
+        a.state.loseReplies = 1;
+        await goTransactions(a.page);
+        await a.page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+        expect(idsOf(serverRows(serverA))).toEqual(['TX_2', 'TX_3']);
+
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        const deletesToB = a.state.posts.filter(
+            (post) => post.url.startsWith(URL_B) && (post.body.deletes || []).length > 0,
+        );
+
+        expect(deletesToB).toHaveLength(0);
+        expect(idsOf(serverRows(serverB))).toEqual(['TX_1', 'TX_2', 'TX_3']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_1', 'TX_2', 'TX_3']);
+        await expectReviewKept(a.page, 'Lệnh xóa 1 giao dịch không được gửi lại');
+    });
+
+    test('review vòng 6: replace và lệnh xóa đang chờ (Sheet cũ không với tới, chưa có request nào) không bị gửi sang Sheet mới khi đổi URL', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            getFails: true, // the first Sheet cannot be read, so nothing was ever sent to it
+            seed: syncedSeed(rows, {
+                fm_script_token: TOKEN,
+                fm_sync_dirty: 'replace',
+                fm_deleted_ids: JSON.stringify(['TX_1']),
+            }),
+        });
+
+        expect(a.state.posts).toHaveLength(0);
+        expect(await inflight(a.page)).toBeNull();
+
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        const toB = a.state.posts.filter((post) => post.url.startsWith(URL_B));
+
+        expect(toB.length).toBeGreaterThan(0);
+        expect(toB.some((post) => post.body.replace === true)).toBe(false);
+        expect(toB.some((post) => (post.body.deletes || []).length > 0)).toBe(false);
+        expect(notesOf(serverRows(serverB))).toContain('rieng-cua-B');
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).not.toBe(
+            'replace',
+        );
+        await expectReviewKept(a.page, 'Bạn vừa đổi Google Sheet');
+    });
+
+    test('review vòng 6: bật Sheet lần đầu khi còn replace chưa gửi (đã xóa hết dữ liệu lúc chưa có Sheet): replace và lệnh xóa đều không tới Sheet', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_1', { note: 'co-san-tren-Sheet' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const { page, state } = await app({
+            server,
+            seed: {
+                fm_script_url: '', // no Sheet yet
+                fm_script_token: TOKEN,
+                fm_transactions: JSON.stringify([row('TX_2')]),
+                fm_sync_dirty: 'replace', // "Xóa toàn bộ dữ liệu" was used while no Sheet was set
+                fm_deleted_ids: JSON.stringify(['TX_X']),
+            },
+        });
+
+        expect(state.posts).toHaveLength(0);
+
+        await page.evaluate((url) => setScriptUrl(url), SCRIPT_URL);
+        await wait(900);
+
+        expect(state.posts.some((post) => post.body.replace === true)).toBe(false);
+        // Deletions made while no Sheet was set have no authority over the Sheet that is connected.
+        expect(state.posts.some((post) => (post.body.deletes || []).length > 0)).toBe(false);
+        expect(await page.evaluate(() => localStorage.getItem('fm_deleted_ids'))).toBeNull();
+        expect(notesOf(serverRows(server))).toContain('co-san-tren-Sheet');
+        await expectReviewKept(page, 'Bạn vừa bật Google Sheet');
+    });
+
+    test('review vòng 7: kết nối Sheet lần đầu khi máy còn lệnh xóa từ lúc chưa có Sheet: Sheet không bị xóa, không có POST deletes / confirmWipe, có cảnh báo', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_1', { note: 'co-san-tren-Sheet' })], // the only row of the Sheet
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const { page, state } = await app({
+            server,
+            seed: {
+                fm_script_url: '', // no Sheet yet
+                fm_script_token: TOKEN,
+                fm_transactions: '[]', // TX_1 was deleted here
+                fm_deleted_ids: JSON.stringify(['TX_1']),
+            },
+        });
+
+        await page.evaluate((url) => setScriptUrl(url), SCRIPT_URL);
+        await wait(900);
+
+        expect(state.posts.some((post) => (post.body.deletes || []).length > 0)).toBe(false);
+        expect(state.posts.some((post) => post.body.confirmWipe === true)).toBe(false);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']);
+        // The row is back on this device, and the user is told why it was not deleted.
+        expect(idsOf(await page.evaluate(() => transactions))).toEqual(['TX_1']);
+        expect(await page.evaluate(() => localStorage.getItem('fm_deleted_ids'))).toBeNull();
+        await expectReviewKept(page, 'Google Sheet vừa kết nối đã có 1 giao dịch');
+        await expect(page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 7: phản hồi muộn của Sheet cũ (đổi URL lúc POST replace còn đang chạy) không đụng baseline, hàng chờ hay dữ liệu của Sheet mới', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+        const view = () =>
+            a.page.evaluate(() => ({
+                ids: transactions.map((item) => item.id).sort(),
+                baseline: localStorage.getItem('fm_sync_baseline'),
+                revision: JSON.parse(localStorage.getItem('fm_sync_revision') || 'null'),
+                dirty: localStorage.getItem('fm_sync_dirty'),
+                upserts: localStorage.getItem('fm_pending_upserts'),
+                inflight: localStorage.getItem('fm_sync_inflight'),
+                badge: document.getElementById('sync-status').textContent.trim(),
+            }));
+
+        // The replace of a restored backup is slow: it is still on its way to the first Sheet.
+        a.state.holdWrites = 1;
+        await restoreBackup(a.page, [row('TX_9')]);
+        expect(idsOf(serverRows(serverA))).toEqual(['TX_1', 'TX_2']);
+
+        // The user switches to the second Sheet, which reads and syncs normally.
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        const before = await view();
+        const serverBBefore = idsOf(serverRows(serverB));
+
+        expect(before.baseline).toBe(URL_B);
+        expect(before.revision.url).toBe(URL_B);
+        expect(before.badge).toContain('Đã lưu');
+
+        // Now the old request reaches the first Sheet and its reply arrives.
+        a.state.releaseHeld();
+        await wait(700);
+
+        expect(idsOf(serverRows(serverA))).toEqual(['TX_9']); // it was sent before the switch
+        expect(await view()).toEqual(before);
+        expect(idsOf(serverRows(serverB))).toEqual(serverBBefore);
+        expect(
+            a.state.posts.filter(
+                (post) => post.url.startsWith(URL_B) && post.body.replace === true,
+            ),
+        ).toHaveLength(0);
+        expect(await a.page.evaluate(() => transactions.map((t) => t.note))).toContain(
+            'rieng-cua-B',
+        );
+    });
+
+    test('review vòng 7: phản hồi muộn của Sheet cũ cho một lần thêm giao dịch không kéo dòng của Sheet cũ vào máy đã nối Sheet mới', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'them-moi'); // its upsert is still on its way to Sheet A
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+
+        // Another device adds a row to Sheet A; the late reply of the old request carries it.
+        serverA.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_ONLYA', { note: 'chi-co-o-A' })],
+        });
+
+        const before = await a.page.evaluate(() => ({
+            ids: transactions.map((item) => item.id).sort(),
+            baseline: localStorage.getItem('fm_sync_baseline'),
+            dirty: localStorage.getItem('fm_sync_dirty'),
+        }));
+
+        // The request that is still on its way must not hold the new connection back: Sheet B has
+        // the new expense already, before the old reply is released.
+        expect(notesOf(serverRows(serverB))).toContain('them-moi');
+
+        a.state.releaseHeld();
+        await wait(700);
+
+        const after = await a.page.evaluate(() => ({
+            ids: transactions.map((item) => item.id).sort(),
+            baseline: localStorage.getItem('fm_sync_baseline'),
+            dirty: localStorage.getItem('fm_sync_dirty'),
+        }));
+
+        expect(after).toEqual(before);
+        expect(after.ids).not.toContain('TX_ONLYA');
+        expect(after.baseline).toBe(URL_B);
+        expect(notesOf(serverRows(serverB))).toEqual(
+            expect.arrayContaining(['rieng-cua-B', 'them-moi']),
+        );
+        expect(notesOf(serverRows(serverB))).not.toContain('chi-co-o-A');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 7: push cũ quay về không đặt lại cờ của push đang chạy ở Sheet mới (không có hai push đồng thời)', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const serverA = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+        const writesToB = () =>
+            a.state.posts.filter(
+                (post) =>
+                    post.url.startsWith(URL_B) &&
+                    ((post.body.upserts || []).length > 0 || (post.body.deletes || []).length > 0),
+            ).length;
+
+        // Two writes are slow: the first to Sheet A, then the first one to Sheet B.
+        a.state.holdWrites = 2;
+        await addExpense(a.page, 7000, 'a-1');
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+        expect(a.state.held).toHaveLength(2);
+        expect(writesToB()).toBe(1);
+
+        // The old request is answered while the push to B is still on its way.
+        a.state.releaseHeld(0);
+        await wait(500);
+
+        // A new change must wait for that push (queued), not start a second one beside it.
+        await addExpense(a.page, 8000, 'b-2');
+        await wait(500);
+        expect(writesToB()).toBe(1);
+
+        a.state.releaseHeld(1);
+        await wait(900);
+
+        expect(writesToB()).toBe(2); // the queued change went out afterwards
+        expect(notesOf(serverRows(serverB))).toEqual(
+            expect.arrayContaining(['rieng-cua-B', 'a-1', 'b-2']),
+        );
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 7: Sheet cũ dùng script cũ (legacy): phản hồi muộn của nó không đánh dấu Sheet mới là đã đồng bộ', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const legacy = newServer('legacy', { rows });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: legacy,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+        });
+        const stored = () =>
+            a.page.evaluate(() => ({
+                baseline: localStorage.getItem('fm_sync_baseline'),
+                dirty: localStorage.getItem('fm_sync_dirty'),
+            }));
+
+        // The save to the legacy Sheet and then the first push to Sheet B are both slow.
+        a.state.holdWrites = 2;
+        await addExpense(a.page, 7000, 'them-moi');
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+        expect(a.state.held).toHaveLength(2);
+
+        // The legacy save is answered first: Sheet B has confirmed nothing yet.
+        a.state.releaseHeld(0);
+        await wait(600);
+        expect(await stored()).toEqual({ baseline: SCRIPT_URL, dirty: 'merge' });
+        expect(notesOf(serverRows(serverB))).not.toContain('them-moi'); // still on its way
+
+        a.state.releaseHeld(1);
+        await wait(900);
+        expect(await stored()).toEqual({ baseline: URL_B, dirty: null });
+        expect(notesOf(serverRows(serverB))).toEqual(
+            expect.arrayContaining(['rieng-cua-B', 'them-moi']),
+        );
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 10: một lần đọc đang chờ trả lời thì giao dịch và meta mới chờ sau nó rồi mới được gửi: không có snapshot cũ nào chen vào', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+
+        server.post({ action: 'sync', meta: { budgets: meta({ 'Ăn uống': 1 }) } });
+
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const view = () =>
+            a.page.evaluate(() => ({
+                notes: transactions.map((item) => item.note).sort(),
+                budget: budgets['Ăn uống'],
+                dirty: localStorage.getItem('fm_sync_dirty'),
+                upserts: localStorage.getItem('fm_pending_upserts'),
+                metaPending: localStorage.getItem('fm_pending_meta'),
+            }));
+
+        // A background read takes its snapshot now (A, B, C, budget 1); its answer is slow.
+        a.state.holdReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        expect(a.state.heldReads).toHaveLength(1);
+
+        // Meanwhile D is added and a budget is changed. They wait for the read: no write goes to
+        // the Sheet beside it, so no reply can come back out of order.
+        await addExpense(a.page, 7000, 'tx-D');
+        await a.page.evaluate(() => {
+            META_ACCESSORS.budgets.set({ 'Ăn uống': 123456 });
+            saveMeta('budgets');
+            syncToGoogleSheet();
+        });
+        await wait(600);
+        expect(a.state.posts).toHaveLength(0);
+        expect(notesOf(serverRows(server))).not.toContain('tx-D');
+
+        // The read is answered; only then are the changes sent.
+        a.state.releaseRead(0);
+        await wait(900);
+
+        const after = await view();
+
+        expect(after.notes).toContain('tx-D');
+        expect(after.budget).toBe(123456);
+        expect(after.dirty).toBeNull();
+        expect(after.upserts).toBeNull();
+        expect(after.metaPending).toBeNull();
+        expect(notesOf(serverRows(server))).toContain('tx-D');
+        expect(server.get({ v: '2' }).meta.budgets.value).toEqual({ 'Ăn uống': 123456 });
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 10: hai lần đọc gần nhau: lần sau chỉ được gửi khi lần trước đã trả lời, nên thấy cả dòng của máy khác', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const notes = () => a.page.evaluate(() => transactions.map((item) => item.note).sort());
+
+        a.state.holdReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true }); // snapshot 1: A, B, C
+        });
+        await wait(150);
+        expect(a.state.heldReads).toHaveLength(1);
+
+        const getsWhileWaiting = a.state.gets;
+
+        server.post({ action: 'sync', upserts: [row('TX_E', { note: 'tu-may-khac' })] });
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true }); // must wait for the first one
+        });
+        await wait(400);
+        expect(a.state.gets).toBe(getsWhileWaiting); // not sent yet
+
+        a.state.releaseRead(0);
+        await wait(700);
+
+        expect(a.state.gets).toBe(getsWhileWaiting + 1); // sent after the first was answered
+        expect(await notes()).toContain('tu-may-khac');
+        expect(await notes()).toHaveLength(4);
+    });
+
+    test('review vòng 10: phản hồi của một lần đẩy còn chưa về thì lần đọc chờ sau nó: phản hồi xác nhận giao dịch, rồi lần đọc mới đem dòng của máy khác về', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const view = () =>
+            a.page.evaluate(() => ({
+                notes: transactions.map((item) => item.note).sort(),
+                dirty: localStorage.getItem('fm_sync_dirty'),
+                upserts: localStorage.getItem('fm_pending_upserts'),
+            }));
+
+        // D is applied on the Sheet at once, but the reply of its push is slow.
+        a.state.holdReplies = 1;
+        await addExpense(a.page, 7000, 'tx-D');
+        await wait(300);
+        expect(notesOf(serverRows(server))).toContain('tx-D');
+        expect(a.state.heldReplies).toHaveLength(1);
+
+        // Another device adds E and a read is asked for: it waits for the push to be answered.
+        server.post({ action: 'sync', upserts: [row('TX_E', { note: 'tu-may-khac' })] });
+
+        const getsWhileWaiting = a.state.gets;
+
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(400);
+        expect(a.state.gets).toBe(getsWhileWaiting);
+        expect((await view()).notes).not.toContain('tu-may-khac');
+
+        a.state.releaseReply(0);
+        await wait(800);
+
+        const after = await view();
+
+        expect(after.notes).toEqual(expect.arrayContaining(['tx-D', 'tu-may-khac']));
+        expect(after.notes).toHaveLength(5);
+        expect(after.dirty).toBeNull();
+        expect(after.upserts).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 8: khôi phục sao lưu trên cùng URL khi một lần đẩy cũ còn đang chạy: ack của lần cũ không xóa ý định replace, Sheet cuối cùng chỉ có bản sao lưu', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_OLD')] });
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+        const dirty = () => a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'));
+
+        // An upsert is on its way to the Sheet when the backup is restored (same URL).
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'tx-NEW');
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(await dirty()).toBe('replace');
+
+        a.state.releaseHeld(0); // the old request reaches the Sheet and is answered
+        await wait(1000);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_BACKUP']);
+        expect(await dirty()).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 8: "Xóa toàn bộ dữ liệu" khi một lần đẩy cũ còn đang chạy: Sheet cuối cùng trống, replace có confirmWipe', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_OLD')] });
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'tx-NEW');
+        await a.page.evaluate(() => {
+            resetAllData();
+        });
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe('replace');
+
+        a.state.releaseHeld(0);
+        await wait(1000);
+
+        expect(serverRows(server)).toEqual([]);
+        expect(await a.page.evaluate(() => transactions.length)).toBe(0);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+        expect(
+            a.state.posts.some(
+                (post) => post.body.replace === true && post.body.confirmWipe === true,
+            ),
+        ).toBe(true);
+    });
+
+    test('review vòng 8: khôi phục sao lưu lần hai khi lần một đã áp dụng nhưng mất phản hồi: lần kiểm tra appliedCheck của lần một không xóa ý định replace của lần hai', async ({
+        app,
+    }) => {
+        // With a token a lost reply cannot be answered through the GET fallback.
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_1')]); // applied on the Sheet, the reply is lost
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeTruthy();
+
+        await restoreBackup(a.page, [row('TX_2')]); // another backup is restored on top of it
+        await wait(800);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_2']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_2']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+    });
+
+    test('review vòng 8: khôi phục sao lưu lần hai khi lần một không rõ kết quả: chỉ bỏ lần một, replace của lần hai vẫn được gửi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_1')]);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeTruthy();
+
+        // The Sheet forgets the request (more writes than its log keeps).
+        for (let i = 0; i < 110; i++) {
+            server.post({
+                action: 'sync',
+                token: TOKEN,
+                meta: { budgets: meta({ lan: i }, '2099-01-01T00:00:00.000Z') },
+                requestId: `pad-${i}`,
+            });
+        }
+
+        await restoreBackup(a.page, [row('TX_2')]);
+        await wait(800);
+
+        // The second backup is the user's current intent: it replaces the Sheet as asked.
+        expect(idsOf(serverRows(server))).toEqual(['TX_2']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_2']);
+    });
+
+    test('review vòng 9: replace đã áp dụng, rồi lỗi ghi localStorage ngay sau ACK (trước khi dọn hàng chờ): mở lại thì hỏi về requestId cũ, không gửi replace mới, dòng của máy khác còn nguyên', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+        const stored = (key) => a.page.evaluate((name) => localStorage.getItem(name), key);
+
+        await failStorageOnce(a.page, 'setItem', 'fm_sync_baseline'); // the first step after the ACK
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+
+        // The Sheet applied it; this device never finished noting that down.
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(await stored('fm_sync_inflight')).toBeTruthy(); // the way back to the request
+        expect(await stored('fm_sync_dirty')).toBe('replace');
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        expect(a.state.posts.some((post) => post.body.appliedCheck)).toBe(true);
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_BACKUP', 'tu-may-B']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_B', 'TX_BACKUP']);
+        expect(await stored('fm_sync_inflight')).toBeNull();
+        expect(await stored('fm_sync_dirty')).toBeNull();
+    });
+
+    test('review vòng 9: lỗi ghi localStorage khi xóa bản ghi inflight (sau khi đã dọn hàng chờ): mở lại thì hỏi lại và dọn lại được, không gửi lại gì', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+        const stored = (key) => a.page.evaluate((name) => localStorage.getItem(name), key);
+
+        await failStorageOnce(a.page, 'removeItem', 'fm_sync_inflight');
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+
+        expect(await stored('fm_sync_dirty')).toBeNull(); // settled already
+        expect(await stored('fm_sync_inflight')).toBeTruthy(); // but the record is still there
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'tu-may-B' })],
+            requestId: 'B-1',
+        });
+
+        const replacesBefore = replaces(a.state);
+
+        await a.page.reload();
+        await wait(1000);
+
+        // Settling again changes nothing that was settled, and brings B's row.
+        expect(replaces(a.state)).toBe(replacesBefore);
+        expect(notesOf(serverRows(server))).toEqual(['ghi chu TX_BACKUP', 'tu-may-B']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_B', 'TX_BACKUP']);
+        expect(await stored('fm_sync_inflight')).toBeNull();
+        expect(await stored('fm_sync_dirty')).toBeNull();
+    });
+
+    test('review vòng 9: lệnh xóa đã áp dụng, rồi lỗi ghi localStorage ngay sau ACK, máy khác tạo lại dòng đó: mở lại thì không xóa lại dòng vừa tạo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+        const deletesOfTx1 = () =>
+            a.state.posts.filter((post) => (post.body.deletes || []).includes('TX_1')).length;
+
+        await failStorageOnce(a.page, 'setItem', 'fm_sync_baseline');
+        await goTransactions(a.page);
+        await a.page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(600);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_2', 'TX_3']); // applied
+        expect(deletesOfTx1()).toBe(1);
+
+        // Another device creates the row again, newer.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_1', { updatedAt: '2026-11-22T09:00:00.000Z', note: 'tao lai' })],
+            requestId: 'B-1',
+        });
+
+        await a.page.reload();
+        await wait(1000);
+
+        expect(deletesOfTx1()).toBe(1); // the deletion is not sent a second time
+        expect(notesOf(serverRows(server))).toContain('tao lai');
+        expect(await a.page.evaluate(() => transactions.map((item) => item.note))).toContain(
+            'tao lai',
+        );
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_deleted_ids'))).toBeNull();
+    });
+
+    test('review vòng 9: đổi URL mà lỗi ghi localStorage khi xóa inflight: replace đang chờ đã được hạ về gộp trước đó, bản ghi inflight còn nguyên', async ({
+        app,
+    }) => {
+        const serverA = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const serverB = newServer('v2', {
+            rows: [row('TX_B1', { note: 'rieng-cua-B' })],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+        const stored = (key) => a.page.evaluate((name) => localStorage.getItem(name), key);
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(await stored('fm_sync_dirty')).toBe('replace');
+
+        await failStorageOnce(a.page, 'removeItem', 'fm_sync_inflight');
+        await a.page.evaluate((url) => {
+            try {
+                setScriptUrl(url);
+            } catch {
+                // the storage failure surfaces here
+            }
+        }, URL_B);
+
+        // The pending replace was given up BEFORE the record could not be removed.
+        expect(await stored('fm_sync_dirty')).not.toBe('replace');
+        expect(await stored('fm_sync_inflight')).toBeTruthy();
+        expect(a.state.posts.filter((post) => post.url.startsWith(URL_B))).toHaveLength(0);
+    });
+
+    test('review vòng 9: server mở (GET v2 không token): bản ghi inflight có baseRevision và baseEpoch, replace chưa từng tới server được chứng minh là false và vẫn được gửi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_OLD')] }); // open: no token
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+        // Neither the POST nor its GET fallback reaches the Sheet.
+        a.state.dropRequests = 2;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(idsOf(serverRows(server))).toEqual(['TX_OLD']);
+
+        const record = JSON.parse(
+            await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight')),
+        );
+
+        expect(record.baseRevision).toEqual(expect.any(Number));
+        expect(record.baseEpoch).toEqual(expect.any(String));
+
+        await a.page.evaluate(() => resumeSync());
+        await wait(1000);
+
+        const check = a.state.posts.find((post) => post.body.appliedCheck);
+
+        expect(check.body.appliedAfter).toEqual(expect.any(Number));
+        expect(check.body.appliedEpoch).toEqual(expect.any(String));
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']); // the restore the user asked for
+        await expect(a.page.locator('#sync-review')).toBeHidden();
+    });
+
+    test('review vòng 10: revision và epoch nhớ theo đúng thứ tự các snapshot được áp dụng: sau phản hồi của lần đẩy là sổ mới của server', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const stored = () =>
+            a.page.evaluate(() => JSON.parse(localStorage.getItem('fm_sync_revision')));
+        const first = await stored();
+
+        // D is applied on the Sheet (log 1, revision 1) but the reply is slow.
+        a.state.holdReplies = 1;
+        await addExpense(a.page, 7000, 'tx-D');
+        await wait(300);
+
+        // The Sheet's request log is lost: from now on another epoch. A read is asked for; it
+        // waits behind the push.
+        delete server.properties.FM_REQUEST_LOG;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(300);
+        expect(await stored()).toEqual(first); // nothing was applied yet
+
+        a.state.releaseReply(0); // the push reply (the old log) first, then the read (the new log)
+        await wait(900);
+
+        const fresh = await stored();
+
+        expect(fresh.epoch).not.toBe(first.epoch);
+        expect(fresh.epoch).toBe(server.get({ v: '2' }).epoch);
+    });
+
+    for (const backend of ['v2', 'legacy']) {
+        test(`review vòng 10: ${backend}: khôi phục sao lưu khi một lần ghi cũ còn đang chạy: lần đọc của thao tác khôi phục chờ lần ghi cũ, ack của lần cũ không xóa ý định replace, bản sao lưu không bị ghi đè`, async ({
+            app,
+        }) => {
+            const server = newServer(backend, { rows: [row('TX_OLD')] });
+            const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+            a.state.holdWrites = 1;
+            await addExpense(a.page, 7000, 'tx-NEW'); // the old write is on its way
+
+            a.state.holdReads = 1; // the read that restoring a backup starts is slow too
+            await restoreBackup(a.page, [row('TX_BACKUP')]);
+            // It waits for the old write: nothing else is on its way to the Sheet beside it.
+            expect(a.state.heldReads).toHaveLength(0);
+
+            a.state.releaseHeld(0); // the old write is answered first
+            await wait(500);
+            expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe(
+                'replace',
+            );
+            expect(a.state.heldReads).toHaveLength(1); // now the read goes out
+
+            a.state.releaseRead(0); // its snapshot is from before the backup: it does not win
+            await wait(1000);
+
+            expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+            expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_BACKUP']);
+            expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+        });
+    }
+
+    test('review vòng 8: script cũ (legacy): khôi phục sao lưu khi một lần ghi cũ còn đang chạy không bị ack của lần cũ xóa mất', async ({
+        app,
+    }) => {
+        const server = newServer('legacy', { rows: [row('TX_OLD')] });
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'tx-NEW');
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+
+        a.state.releaseHeld(0);
+        await wait(1000);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_BACKUP']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+    });
+
+    test('review vòng 10: script cũ (legacy): một lần đọc đang chờ trả lời thì lần ghi chờ sau nó rồi mới đi, giao dịch vừa thêm không bị mất', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('legacy', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        a.state.holdReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        expect(a.state.heldReads).toHaveLength(1);
+
+        await addExpense(a.page, 7000, 'tx-D');
+        await wait(500);
+        expect(a.state.posts).toHaveLength(0); // the save waits for the read
+        expect(notesOf(serverRows(server))).not.toContain('tx-D');
+
+        a.state.releaseRead(0);
+        await wait(900);
+
+        expect(notesOf(serverRows(server))).toContain('tx-D');
+        expect(await a.page.evaluate(() => transactions.map((item) => item.note))).toContain(
+            'tx-D',
+        );
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    for (const backend of ['v2', 'legacy']) {
+        test(`review vòng 10: ${backend}: server xử lý hai lần đọc đảo thứ tự (lần đọc đầu bị chậm TRƯỚC khi server làm việc): lần đọc sau không được gửi chồng lên, dòng mới của máy khác không bị xóa khỏi máy`, async ({
+            app,
+        }) => {
+            const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+            const server = newServer(backend, { rows });
+            const a = await app({ server, seed: syncedSeed(rows) });
+            const notes = () => a.page.evaluate(() => transactions.map((item) => item.note).sort());
+            const readAgain = () =>
+                a.page.evaluate(() => {
+                    syncFromGoogleSheet({ quiet: true });
+                });
+            // Another device adds D.
+            const otherDeviceAddsD = () =>
+                backend === 'v2'
+                    ? server.post({ action: 'sync', upserts: [row('TX_D', { note: 'tx-D' })] })
+                    : server.post({ transactions: [...rows, row('TX_D', { note: 'tx-D' })] });
+
+            // Read A has not reached the Sheet's script yet (the lock wait, the network).
+            a.state.deferReads = 1;
+            await readAgain();
+            await wait(150);
+            expect(a.state.deferred).toHaveLength(1);
+
+            // Whichever read the script works on next answers slowly.
+            a.state.holdReads = 1;
+
+            const getsWithA = a.state.gets;
+
+            // Read B is asked for: it must not be sent beside A (the script could work on it first
+            // and answer with a snapshot older than A's).
+            await readAgain();
+            await wait(300);
+            expect(a.state.gets).toBe(getsWithA);
+
+            otherDeviceAddsD();
+            a.state.releaseDeferred(0); // the script now works on A: its snapshot has D
+            await wait(400);
+            a.state.releaseRead(0); // the slow answer arrives
+            await wait(800);
+
+            expect(await notes()).toContain('tx-D');
+            expect(await notes()).toHaveLength(4);
+            expect(a.state.gets).toBe(getsWithA + 1); // B went out after A was answered
+            await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+        });
+
+        test(`review vòng 10: ${backend}: lần đọc chưa được server xử lý thì lần ghi (thêm giao dịch) chờ sau nó, không đi trước`, async ({
+            app,
+        }) => {
+            const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+            const server = newServer(backend, { rows });
+            const a = await app({ server, seed: syncedSeed(rows) });
+
+            a.state.deferReads = 1;
+            await a.page.evaluate(() => {
+                syncFromGoogleSheet({ quiet: true });
+            });
+            await wait(150);
+            expect(a.state.deferred).toHaveLength(1);
+
+            await addExpense(a.page, 7000, 'tx-D');
+            await wait(500);
+            expect(a.state.posts).toHaveLength(0);
+            expect(notesOf(serverRows(server))).not.toContain('tx-D');
+
+            a.state.releaseDeferred(0);
+            await wait(1000);
+
+            expect(notesOf(serverRows(server))).toContain('tx-D');
+            expect(await a.page.evaluate(() => transactions.length)).toBe(4);
+            await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+        });
+    }
+
+    test('review vòng 10: lần đọc của Sheet cũ không bao giờ trả lời không giữ chân kết nối mới: đổi URL thì Sheet mới đọc và ghi bình thường, câu trả lời muộn của Sheet cũ bị bỏ', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const serverA = newServer('v2', { rows });
+        const serverB = newServer('v2', { rows: [row('TX_B1', { note: 'rieng-cua-B' })] });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows),
+        });
+        const view = () =>
+            a.page.evaluate(() => ({
+                ids: transactions.map((item) => item.id).sort(),
+                baseline: localStorage.getItem('fm_sync_baseline'),
+            }));
+
+        // A read of the first Sheet is stuck.
+        a.state.deferReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        expect(a.state.deferred).toHaveLength(1);
+
+        // The user switches to the second Sheet: it is not queued behind the stuck read.
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+        expect((await view()).baseline).toBe(URL_B);
+
+        await addExpense(a.page, 7000, 'sang-B');
+        await wait(600);
+        expect(notesOf(serverRows(serverB))).toEqual(
+            expect.arrayContaining(['rieng-cua-B', 'sang-B']),
+        );
+
+        // The first Sheet finally answers: what it says is not about the connected Sheet any more.
+        serverA.post({ action: 'sync', upserts: [row('TX_ONLYA', { note: 'chi-co-o-A' })] });
+
+        const before = await view();
+
+        a.state.releaseDeferred(0);
+        await wait(600);
+
+        expect(await view()).toEqual(before);
+        expect(before.ids).not.toContain('TX_ONLYA');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 10: lần đẩy xếp hàng sau một lần đọc của Sheet cũ không chạy sau khi đã đổi sang Sheet mới (không chồng lên các request của kết nối mới)', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const serverA = newServer('v2', { rows });
+        const serverB = newServer('v2', { rows: [row('TX_B1', { note: 'rieng-cua-B' })] });
+        const a = await app({
+            server: serverA,
+            servers: { [URL_B]: serverB },
+            seed: syncedSeed(rows),
+        });
+        const postsToB = () => a.state.posts.filter((post) => post.url.startsWith(URL_B)).length;
+
+        // A read of the first Sheet is stuck, and a new expense queues its push behind it.
+        a.state.deferReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        await addExpense(a.page, 7000, 'dang-cho');
+        await wait(300);
+        expect(a.state.deferred).toHaveLength(1);
+        expect(a.state.posts).toHaveLength(0);
+
+        // The user switches to the second Sheet; its first push is slow, so it is still on its way.
+        a.state.holdWrites = 1;
+        await a.page.evaluate((url) => setScriptUrl(url), URL_B);
+        await wait(900);
+        expect(a.state.held).toHaveLength(1);
+        expect(postsToB()).toBe(1);
+
+        // The stuck read of the first Sheet is answered at last, so the push queued behind it comes
+        // up. It belongs to a connection that is gone: it must not send anything beside the push
+        // that is on its way to the second Sheet.
+        a.state.releaseDeferred(0);
+        await wait(700);
+        expect(postsToB()).toBe(1);
+
+        a.state.releaseHeld(0);
+        await wait(900);
+        expect(notesOf(serverRows(serverB))).toEqual(
+            expect.arrayContaining(['rieng-cua-B', 'dang-cho']),
+        );
+        expect(notesOf(serverRows(serverA))).not.toContain('dang-cho');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 11: replace R1 báo lỗi ở client nhưng tới server MUỘN, sau khi appliedCheck đã trả false và R2 đã áp dụng, rồi máy khác ghi TX_B: R1 bị từ chối, TX_B còn nguyên', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        // R1: the replace of a restored backup. The client is told it failed; it is still on its way.
+        a.state.lateWrites = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(a.state.late).toHaveLength(1);
+        expect(await inflight(a.page)).toBeTruthy();
+        expect(idsOf(serverRows(server))).toEqual(['TX_OLD']); // R1 has not reached the Sheet
+
+        // Later the client asks and is told R1 was not applied, and sends the replace again (R2).
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(800);
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+
+        // Another device adds TX_B.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'cua-may-khac', updatedAt: '2026-11-22T10:00:00.000Z' })],
+        });
+        expect(idsOf(serverRows(server))).toEqual(['TX_B', 'TX_BACKUP']);
+
+        // R1 finally reaches the Sheet. It must not replace the Sheet a second time.
+        a.state.arriveLate(0);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_B', 'TX_BACKUP']);
+    });
+
+    test('review vòng 11: lệnh xóa R1 báo lỗi ở client nhưng tới server MUỘN, sau khi R2 đã xóa và máy khác tạo lại dòng đó: R1 bị từ chối, dòng còn nguyên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2', { note: 'se-bi-xoa' })];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // R1: deleting TX_2 here. The client is told it failed; it is still on its way.
+        a.state.lateWrites = 1;
+        await a.page.evaluate(() => {
+            deleteTransaction('TX_2');
+        });
+        await wait(600);
+        expect(a.state.late).toHaveLength(1);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1', 'TX_2']);
+
+        // The client asks, is told R1 was not applied, and sends the deletion again (R2).
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(800);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']);
+
+        // Another device creates TX_2 again (newer).
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_2', { note: 'tao-lai', updatedAt: '2026-11-22T10:00:00.000Z' })],
+        });
+        expect(idsOf(serverRows(server))).toEqual(['TX_1', 'TX_2']);
+
+        // R1 finally reaches the Sheet. It must not delete the row that was created again.
+        a.state.arriveLate(0);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_1', 'TX_2']);
+        expect(notesOf(serverRows(server))).toContain('tao-lai');
+    });
+
+    test('review vòng 11: Code.gs chưa có fence (applied false nhưng không fenced): replace báo lỗi ở client không bị gửi lại, dữ liệu được gộp và có khung cảnh báo', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+
+        withoutFence(server);
+
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        a.state.lateWrites = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(replaces(a.state)).toBe(1);
+
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(1000);
+
+        // "Not applied so far" is no promise: the replace is not sent again, the data is merged.
+        expect(replaces(a.state)).toBe(1);
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP', 'TX_OLD']);
+        await expect(a.page.locator('#sync-review')).toBeVisible();
+        await expect(a.page.locator('#sync-review-list')).toContainText('Không rõ lần ghi trước');
+    });
+
+    test('review vòng 11: máy có view quá cũ so với sổ của server: "Xóa toàn bộ dữ liệu" bị server từ chối, không xóa Sheet, gộp lại và có khung cảnh báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // Other devices write a lot: the log drops the entries this device's view was based on.
+        for (let i = 0; i < 110; i++) {
+            server.post({
+                action: 'sync',
+                token: TOKEN,
+                meta: { budgets: meta({ lan: i }, '2099-01-01T00:00:00.000Z') },
+                requestId: `pad-${i}`,
+            });
+        }
+
+        await a.page.evaluate(() => {
+            resetAllData();
+        });
+        await wait(1200);
+
+        expect(replaces(a.state)).toBe(1);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']); // not wiped
+        expect(await a.page.evaluate(() => transactions.map((item) => item.id))).toEqual(['TX_1']);
+        expect(await inflight(a.page)).toBeNull();
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+        await expect(a.page.locator('#sync-review')).toBeVisible();
+        await expect(a.page.locator('#sync-review-list')).toContainText('từ chối');
+    });
+
+    test('review vòng 11: một lần đọc treo không bao giờ trả lời: hết thời gian chờ thì làn được giải phóng và thay đổi đang chờ được gửi, không cần tải lại', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 1000;
+        });
+        a.state.deferReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        expect(a.state.deferred).toHaveLength(1);
+
+        // While the read is stuck nothing else goes out (one request at a time) ...
+        await addExpense(a.page, 7000, 'dang-ket');
+        await wait(150);
+        expect(a.state.posts).toHaveLength(0);
+
+        // ... until the client gives up on it.
+        await wait(1500);
+        expect(notesOf(serverRows(server))).toContain('dang-ket');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 11: lần ghi treo quá thời gian chờ: không chuyển sang GET dự phòng, bản ghi inflight còn, gửi lại bằng POST; bản cũ tới muộn không nhân đôi', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 400;
+        });
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'cho-lau');
+        await wait(1100);
+
+        // A timeout is not "the POST cannot be made": the same change is not sent a second way.
+        expect(a.state.getUrls.some((url) => url.includes('payload='))).toBe(false);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(900);
+        expect(notesOf(serverRows(server))).toContain('cho-lau');
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+
+        // The copy the client gave up on arrives after all: it is the same change, applied once.
+        a.state.releaseHeld(0);
+        await wait(400);
+        expect(notesOf(serverRows(server)).filter((note) => note === 'cho-lau')).toHaveLength(1);
+    });
+
+    test('review vòng 11: script cũ (legacy): lần ghi treo quá thời gian chờ không chuyển sang GET ?action=save dự phòng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('legacy', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 400;
+        });
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'cho-lau');
+        await wait(1100);
+
+        expect(a.state.getUrls.some((url) => url.includes('action=save'))).toBe(false);
+        await expect(a.page.locator('#sync-status')).not.toContainText('Đã lưu');
+
+        // The change stays pending and goes out again by POST.
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(900);
+        expect(notesOf(serverRows(server))).toContain('cho-lau');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 11: replace treo quá thời gian chờ rồi tới muộn: hỏi kèm fence, gửi lại là R2, bản R1 tới sau bị từ chối nên dữ liệu máy khác còn nguyên', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 400;
+        });
+        a.state.holdWrites = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        await wait(600);
+        expect(await inflight(a.page)).toBeTruthy();
+        expect(idsOf(serverRows(server))).toEqual(['TX_OLD']);
+
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(1000);
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(a.state.posts.some((post) => post.body.fence === true)).toBe(true);
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'cua-may-khac', updatedAt: '2026-11-22T10:00:00.000Z' })],
+        });
+
+        a.state.releaseHeld(0); // R1 reaches the Sheet at last
+        await wait(400);
+        expect(idsOf(serverRows(server))).toEqual(['TX_B', 'TX_BACKUP']);
+    });
+
+    test('review vòng 12: meta sửa lần hai trong cùng mili-giây khi phản hồi của lần gửi đầu chưa về: ACK cũ không xóa thay đổi mới, snapshot cũ không đè lên nó, Sheet cuối cùng có giá trị lần hai', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows),
+            now: '2026-11-22T10:00:00.000Z', // every stamp is the same instant
+        });
+        const budgetNow = () => a.page.evaluate(() => budgets['Ăn uống']);
+        const setBudget = (value) =>
+            a.page.evaluate((amount) => {
+                budgets['Ăn uống'] = amount;
+                saveMeta('budgets');
+                syncToGoogleSheet();
+            }, value);
+
+        // 100 is applied on the Sheet at once; its reply is slow.
+        a.state.holdReplies = 1;
+        await setBudget(100);
+        await wait(300);
+        expect(server.get({ v: '2' }).meta.budgets.value).toEqual({ 'Ăn uống': 100 });
+        expect(a.state.heldReplies).toHaveLength(1);
+
+        // Edited again at the very same instant, while the first request is still unanswered.
+        await setBudget(200);
+
+        a.state.releaseReply(0);
+        await wait(1000);
+
+        // The second value is kept here, was sent, and is what the Sheet holds now.
+        expect(await budgetNow()).toBe(200);
+        expect(server.get({ v: '2' }).meta.budgets.value).toEqual({ 'Ăn uống': 200 });
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_meta'))).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 12: giao dịch sửa lần hai trong cùng mili-giây khi phản hồi của lần gửi đầu chưa về: ACK cũ không xóa thay đổi mới, ghi chú lần hai lên Sheet', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows),
+            now: '2026-11-22T10:00:00.000Z',
+        });
+        const editNote = (note) =>
+            a.page.evaluate((text) => {
+                const stamp = new Date().toISOString();
+
+                transactions = transactions.map((item) =>
+                    item.id === 'TX_A' ? { ...item, note: text, updatedAt: stamp } : item,
+                );
+                saveDataLocally();
+                queueUpsert(['TX_A']);
+                syncToGoogleSheet();
+            }, note);
+        const localNote = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A').note);
+
+        a.state.holdReplies = 1;
+        await editNote('lan-mot');
+        await wait(300);
+        expect(notesOf(serverRows(server))).toEqual(['lan-mot']);
+        expect(a.state.heldReplies).toHaveLength(1);
+
+        await editNote('lan-hai'); // same instant: same updatedAt as the first
+
+        a.state.releaseReply(0);
+        await wait(1000);
+
+        expect(await localNote()).toBe('lan-hai');
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_upserts'))).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 12: phản hồi lần gửi đầu bị mất, rồi sửa lần hai cùng dấu thời gian: appliedCheck "đã áp dụng" chỉ dọn lần một, lần hai vẫn được gửi', async ({
+        app,
+    }) => {
+        // With a token a lost reply cannot be answered through the GET fallback.
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: '2026-11-22T10:00:00.000Z',
+        });
+        const editNote = (note) =>
+            a.page.evaluate((text) => {
+                const stamp = new Date().toISOString();
+
+                transactions = transactions.map((item) =>
+                    item.id === 'TX_A' ? { ...item, note: text, updatedAt: stamp } : item,
+                );
+                saveDataLocally();
+                queueUpsert(['TX_A']);
+                syncToGoogleSheet();
+            }, note);
+
+        a.state.loseReplies = 1;
+        await editNote('lan-mot'); // applied on the Sheet, the reply is lost
+        await wait(500);
+        expect(notesOf(serverRows(server))).toEqual(['lan-mot']);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        await editNote('lan-hai'); // the same instant
+        await wait(1000);
+
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect(
+            await a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A').note),
+        ).toBe('lan-hai');
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 13: giao dịch sửa hai lần cùng dấu thời gian, bản gửi đầu báo lỗi ở client nhưng tới server MUỘN: Sheet giữ ghi chú lần hai, tải lại vẫn đúng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: '2026-11-22T10:00:00.000Z', // the clock does not move
+        });
+        // The real edit form: whatever stamp the app gives the edit is what is under test.
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+
+        // R1: the first edit. The client is told it failed; it is still on its way.
+        a.state.lateWrites = 1;
+        await editNote('lan-mot');
+        await wait(500);
+        expect(a.state.late).toHaveLength(1);
+        expect(notesOf(serverRows(server))).toEqual(['goc']);
+
+        // R2: the second edit, sent while R1 has still not reached the Sheet.
+        await editNote('lan-hai');
+        await wait(1000);
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+
+        // R1 reaches the Sheet at last. It is older: it must not put its note back.
+        a.state.arriveLate(0);
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+
+        await a.page.reload();
+        await wait(1000);
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect(
+            await a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A').note),
+        ).toBe('lan-hai');
+    });
+
+    test('review vòng 13: meta sửa hai lần cùng dấu thời gian, bản gửi đầu tới server MUỘN: Sheet giữ giá trị lần hai, tải lại vẫn đúng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: '2026-11-22T10:00:00.000Z',
+        });
+        const setBudget = (value) =>
+            a.page.evaluate((amount) => {
+                budgets['Ăn uống'] = amount;
+                saveMeta('budgets');
+                syncToGoogleSheet();
+            }, value);
+        const sheetBudget = () => server.get({ v: '2', token: TOKEN }).meta.budgets.value;
+
+        a.state.lateWrites = 1;
+        await setBudget(100);
+        await wait(500);
+        expect(a.state.late).toHaveLength(1);
+
+        await setBudget(200);
+        await wait(1000);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 200 });
+
+        a.state.arriveLate(0); // the older value, at last
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 200 });
+
+        await a.page.reload();
+        await wait(1000);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 200 });
+        expect(await a.page.evaluate(() => budgets['Ăn uống'])).toBe(200);
+    });
+
+    test('review vòng 13: đồng hồ máy bị chỉnh lùi sau lần sửa đầu: lần sửa hai vẫn có dấu mới hơn nên Sheet và máy cùng giữ nó', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: '2026-11-22T10:00:00.000Z' });
+        // The real edit form: whatever stamp the app gives the edit is what is under test.
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        await editNote('lan-mot');
+        await wait(600);
+        expect(notesOf(serverRows(server))).toEqual(['lan-mot']);
+
+        // The clock is set back an hour; the edit that follows must still win.
+        await a.page.clock.setFixedTime(new Date('2026-11-22T09:00:00.000Z'));
+        await editNote('lan-hai');
+        await wait(1000);
+
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect((await localRow()).note).toBe('lan-hai');
+        expect((await localRow()).updatedAt > '2026-11-22T10:00:00.000Z').toBe(true);
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 13: đổi tên thẻ và đổi tên nguồn cũng đóng dấu sau hẳn dấu trước của dòng (đồng hồ không nhích)', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_T', { note: 'cafe #khach' }), row('TX_S')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: NOW });
+        const stamps = () =>
+            a.page.evaluate(() =>
+                Object.fromEntries(transactions.map((item) => [item.id, item.updatedAt])),
+            );
+
+        // Both rows already carry the stamp the clock shows now.
+        await a.page.evaluate((now) => {
+            transactions = transactions.map((item) => ({ ...item, updatedAt: now }));
+            saveDataLocally();
+        }, NOW);
+
+        await a.page.evaluate(() => applyTagRename('khach', 'vip'));
+        expect(await stamps()).toEqual({
+            TX_T: '2026-11-22T10:00:00.001Z', // renamed: after its previous stamp
+            TX_S: NOW, // not touched
+        });
+
+        await a.page.evaluate(() => renameSource('Tiền Mặt', 'Ví Mới'));
+        expect(await stamps()).toEqual({
+            TX_T: '2026-11-22T10:00:00.002Z',
+            TX_S: '2026-11-22T10:00:00.001Z',
+        });
+
+        // And the Sheet takes both changes once they are sent (as the dialogs do).
+        await a.page.evaluate(() => syncToGoogleSheet());
+        await wait(900);
+
+        const sheet = Object.fromEntries(serverRows(server).map((item) => [item.id, item]));
+
+        expect(sheet.TX_T.note).toContain('#vip');
+        expect(sheet.TX_S.source).toBe('Ví Mới');
+    });
+
+    test('review vòng 14: hai bản ghi khác nhau có CÙNG vân tay 32-bit (va chạm tính được): ACK của lần gửi đầu không được xóa lần sửa hai', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: NOW });
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        // A first edit shows the shape of a row as the form writes it; its stamp is the clock's.
+        await editNote('mau');
+        await wait(600);
+
+        const base = await localRow();
+        const stampOf = (steps) => new Date(Date.parse(base.updatedAt) + steps).toISOString();
+        // Edits 2 and 3 get the next two stamps; their rows collide under the 32-bit fingerprint.
+        const [first, second] = collidingNotes(base, stampOf(1), stampOf(2));
+
+        expect(legacyFingerprint({ ...base, note: first, updatedAt: stampOf(1) })).toBe(
+            legacyFingerprint({ ...base, note: second, updatedAt: stampOf(2) }),
+        );
+
+        a.state.holdReplies = 1;
+        await editNote(first); // applied on the Sheet, the reply is slow
+        await wait(300);
+        expect(notesOf(serverRows(server))).toEqual([first]);
+
+        await editNote(second); // a real second edit, whose row has the very same 32-bit value
+
+        a.state.releaseReply(0);
+        await wait(1200);
+
+        expect((await localRow()).note).toBe(second);
+        expect(notesOf(serverRows(server))).toEqual([second]);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_upserts'))).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 14: cặp va chạm khi phản hồi lần một bị mất và appliedCheck trả "đã áp dụng" (đường settleInflightV2): lần sửa hai vẫn được gửi', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_A', { note: 'goc' })];
+        // With a token a lost reply cannot be answered through the GET fallback.
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: NOW,
+        });
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        await editNote('mau');
+        await wait(800);
+
+        const base = await localRow();
+        const stampOf = (steps) => new Date(Date.parse(base.updatedAt) + steps).toISOString();
+        const [first, second] = collidingNotes(base, stampOf(1), stampOf(2));
+
+        a.state.loseReplies = 1;
+        await editNote(first); // applied on the Sheet, the reply is lost
+        await wait(500);
+        expect(notesOf(serverRows(server))).toEqual([first]);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        await editNote(second); // asks first (applied: true), then must still send this one
+        await wait(1200);
+
+        expect((await localRow()).note).toBe(second);
+        expect(notesOf(serverRows(server))).toEqual([second]);
+        expect(await inflight(a.page)).toBeNull();
+    });
+
+    test('review vòng 14: cùng dấu thời gian và vân tay 32-bit va chạm (sửa không đi qua nextStamp): ACK vẫn không xóa thay đổi mới vì so bằng vân tay mạnh', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: NOW });
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        await editNote('mau');
+        await wait(600);
+
+        const base = await localRow();
+        const stamp = new Date(Date.parse(base.updatedAt) + 1).toISOString();
+        const [first, second] = collidingNotes(base, stamp, stamp);
+
+        a.state.holdReplies = 1;
+        await editNote(first); // stamp = base + 1 ms
+        await wait(300);
+        expect((await localRow()).updatedAt).toBe(stamp);
+
+        // A change that keeps the stamp (a path that does not go through nextStamp).
+        await a.page.evaluate((note) => {
+            transactions = transactions.map((item) =>
+                item.id === 'TX_A' ? { ...item, note } : item,
+            );
+            saveDataLocally();
+            queueUpsert(['TX_A']);
+            syncToGoogleSheet();
+        }, second);
+
+        a.state.releaseReply(0);
+        await wait(1200);
+
+        expect((await localRow()).note).toBe(second);
+        expect(notesOf(serverRows(server))).toEqual([second]);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_upserts'))).toBeNull();
+    });
+
+    test('review vòng 14: meta đổi nội dung mà giữ nguyên dấu thời gian (không qua stampMeta): ACK của lần gửi đầu không xóa thay đổi, Sheet cuối cùng có giá trị mới', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: '2026-11-22T10:00:00.000Z' });
+        const sheetBudget = () => server.get({ v: '2' }).meta.budgets.value;
+
+        a.state.holdReplies = 1;
+        await a.page.evaluate(() => {
+            budgets['Ăn uống'] = 100;
+            saveMeta('budgets');
+            syncToGoogleSheet();
+        });
+        await wait(300);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 100 });
+
+        // A change of the value that keeps its stamp: it does not go through saveMeta / stampMeta.
+        await a.page.evaluate(() => {
+            budgets['Ăn uống'] = 150;
+            localStorage.setItem(META_DEFS.budgets.storage, JSON.stringify(budgets));
+            queueMeta('budgets');
+            syncToGoogleSheet();
+        });
+
+        a.state.releaseReply(0);
+        await wait(1200);
+
+        expect(await a.page.evaluate(() => budgets['Ăn uống'])).toBe(150);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 150 });
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_meta'))).toBeNull();
+    });
+
+    test('review vòng 6: khôi phục sao lưu trên máy chưa có URL: lấy URL trong file và vẫn thay toàn bộ Sheet (không bị coi là đổi URL)', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const { page, state } = await app({ server, seed: { fm_script_token: TOKEN } });
+
+        // No URL on this device yet: the file's URL is adopted (the user agrees in the dialog).
+        await page.evaluate(() => localStorage.removeItem('fm_script_url'));
+        await page.reload();
+        await wait(300);
+        await restoreBackup(page, [row('TX_9')]);
+        await wait(600);
+
+        expect(state.posts.some((post) => post.body.replace === true)).toBe(true);
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        await expect(page.locator('#sync-review')).toBeHidden();
+    });
+
+    test('review vòng 6: cảnh báo đồng bộ nằm lại qua lần tải lại cho tới khi bấm "Đã xem"', async ({
+        app,
+    }) => {
+        const { page } = await app({
+            server: newServer('v2', { rows: [row('TX_1')], properties: { FM_TOKEN: TOKEN } }),
+            seed: syncedSeed([row('TX_1')], {
+                fm_script_token: TOKEN,
+                fm_sync_review: JSON.stringify(['Bạn vừa đổi Google Sheet (thử)']),
+            }),
+        });
+
+        await expect(page.locator('#sync-review')).toBeVisible();
+        await expect(page.locator('#sync-review-list')).toContainText('Bạn vừa đổi Google Sheet');
+        await page.reload();
+        await expect(page.locator('#sync-review')).toBeVisible();
+
+        await page.getByRole('button', { name: 'Đã xem' }).click();
+        await expect(page.locator('#sync-review')).toBeHidden();
+        await page.reload();
+        await expect(page.locator('#sync-review')).toBeHidden();
+        expect(await page.evaluate(() => localStorage.getItem('fm_sync_review'))).toBeNull();
+    });
+
+    test('SEC-001: tập nhỏ mất quá nửa (6 → 1) cũng hỏi', async ({ app }) => {
+        const rows = Array.from({ length: 6 }, (_, i) => row(`TX_${i + 1}`));
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', deletes: ['TX_2', 'TX_3', 'TX_4', 'TX_5', 'TX_6'] });
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms.some((text) => text.includes('thiếu 5 giao dịch'))).toBe(true);
+        expect(await page.evaluate(() => transactions.length)).toBe(6);
+    });
+
+    test('SEC-001: máy khác xóa vài giao dịch thì vẫn nhận việc xóa mà không hỏi', async ({
+        app,
+    }) => {
+        const rows = Array.from({ length: 12 }, (_, i) => row(`TX_${i + 1}`));
+        const server = newServer('v2', { rows });
+        const { page, state } = await app({ server, seed: syncedSeed(rows) });
+
+        server.post({ action: 'sync', deletes: ['TX_1', 'TX_2', 'TX_3'] });
+        await page.reload();
+        await wait(600);
+
+        expect(state.confirms).toEqual([]);
+        expect(await page.evaluate(() => transactions.length)).toBe(9);
+    });
+
     test('"Xóa toàn bộ dữ liệu" xóa giao dịch trên server, không lặp đẩy mãi', async ({ app }) => {
         const rows = [row('TX_1'), row('TX_2')];
         const server = newServer('v2', { rows });
@@ -599,6 +3060,28 @@ test.describe('Giao thức v2: mã bảo vệ (token)', () => {
         // One empty read POST was refused; nothing was written.
         expect(state.posts).toHaveLength(1);
         expect(server.get({ v: '2' }).error).toBe('unauthorized');
+    });
+
+    test('SEC-002: POST lỗi mạng khi có token thì không dùng GET dự phòng, thay đổi vẫn chờ gửi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { properties: { FM_TOKEN: 'bi-mat' } });
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed([], { fm_script_token: 'bi-mat' }),
+            postFails: true,
+        });
+
+        await addExpense(page, 5000, 'cho-gui');
+        await wait(400);
+
+        expect(state.getUrls.length).toBeGreaterThan(0);
+        state.getUrls.forEach((url) => {
+            expect(url).not.toContain('bi-mat');
+            expect(url).not.toContain('action=sync');
+        });
+        expect((await pending(page)).upserts).toHaveLength(1);
+        expect(serverRows(server)).toEqual([]);
     });
 
     test('token không nằm trong file sao lưu', async ({ app }) => {

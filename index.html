@@ -116,6 +116,19 @@
                 </div>
             </header>
 
+            <!-- Changes that were deliberately not sent to the Sheet (see js/sync.js); they stay
+                 here, also after a reload, until the user has seen them -->
+            <div id="sync-review" class="sync-review" role="status" hidden>
+                <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                <div class="sync-review-body">
+                    <strong>Cần xem lại việc đồng bộ</strong>
+                    <div id="sync-review-list"></div>
+                </div>
+                <button type="button" class="btn btn-outline" onclick="dismissSyncReview()">
+                    Đã xem
+                </button>
+            </div>
+
             <!-- TAB 1: TỔNG QUAN -->
             <section id="tab-overview" class="view-section active">
                 <div class="grid-cards">
@@ -594,6 +607,7 @@
                         />
                     </div>
                     <p id="sync-protocol-note" class="hint" role="status" hidden></p>
+                    <p id="origin-note" class="hint" role="note" hidden></p>
                     <button class="btn" onclick="saveScriptUrl()">
                         <i class="fa-solid fa-save"></i> Lưu Cấu Hình
                     </button>
@@ -812,7 +826,7 @@
 
                     <div class="form-group">
                         <label for="txNote">Mô Tả</label
-                        ><input type="text" id="txNote" class="form-control" />
+                        ><input type="text" id="txNote" class="form-control" maxlength="2000" />
                     </div>
                     <div class="form-group">
                         <label for="txTags">Thẻ (tag)</label>

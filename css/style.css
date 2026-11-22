@@ -528,6 +528,51 @@ th {
     cursor: pointer;
     transform: translateY(-14px);
 }
+/* Warnings about changes that were not sent to the Sheet on purpose; they stay until dismissed. */
+.sync-review {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 0 0 16px;
+    padding: 12px 16px;
+    background: #fffbeb;
+    color: var(--text-main);
+    border: 1px solid #fcd34d;
+    border-left: 4px solid var(--warning);
+    border-radius: 10px;
+    font-size: 14px;
+}
+.sync-review[hidden] {
+    display: none;
+}
+.sync-review > i {
+    margin-top: 3px;
+    color: var(--warning);
+}
+.sync-review-body {
+    flex: 1;
+    min-width: 0;
+}
+.sync-review-body p {
+    margin: 6px 0 0;
+}
+.sync-review .btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+@media (max-width: 768px) {
+    /* The icon and the text take a whole row; the button goes on the next one. */
+    .sync-review {
+        flex-wrap: wrap;
+    }
+    .sync-review-body {
+        flex: 1 1 calc(100% - 32px);
+    }
+    .sync-review .btn {
+        margin-left: auto;
+    }
+}
+
 .sync-badge {
     display: inline-flex;
     align-items: center;

@@ -15,7 +15,8 @@
 //    reply is the full server state, which is merged back. A token protects the URL; it only ever
 //    travels in a POST body, never in a URL (URLs end up in logs and proxies). The first read is a
 //    tokenless GET ?v=2: only Code.gs answers "unauthorized", which identifies it, and the state is
-//    then read with an empty sync POST that carries the token.
+//    then read with an empty sync POST that carries the token. When the POST cannot be made the
+//    GET ?action=sync fallback is only used without a token; with one the change stays queued.
 //
 // To keep data safe in both:
 //  - The Sheet is only written after it has been read successfully in this session.
@@ -23,17 +24,80 @@
 //    pending lists below) and are merged with, not replaced by, the Sheet's content.
 //  - Transactions deleted locally are remembered (fm_deleted_ids) so a merge does not bring them
 //    back from the Sheet.
+//  - A v2 server that suddenly lacks many rows this device already synced (an emptied or damaged
+//    Sheet, see isMassRemoteLoss) does not delete them here without asking (decideRemoteLoss):
+//    only an explicit OK on the "Xóa" question deletes; closing a dialog keeps them.
+//  - A replace or a delete whose reply was lost is only sent again when the server has PROMISED it
+//    will never apply it: the check is made with fence: true and the answer must say fenced (the
+//    server then refuses that request id for good, so a copy that is still on its way, or that the
+//    client gave up on after a timeout, cannot arrive later and undo what other devices wrote).
+//    "Not applied so far" is not enough. When there is no such promise (or it is an older Code.gs
+//    that does not answer), the data of both sides is merged instead and nothing is destroyed
+//    (see abandonDestructiveWrite). A replace or delete also names the revision and epoch the
+//    device had seen; the server refuses one built on a view it can no longer vouch for.
+//  - A request that gets no answer within syncRequestTimeoutMs is given up on (fetchSheet), so one
+//    that hangs cannot hold the lane for good. Giving up is not "it did not arrive": the record of
+//    the request stays and is asked about like any other whose reply was lost.
+//  - A replace or a deletion that is still unconfirmed when the Web App URL changes is never sent
+//    to the new Sheet (secureUnconfirmedWrites); the user is told and the notice stays visible.
+//    A reply that arrives after the URL changed is dropped (syncGeneration), and deletions queued
+//    before the first contact with a Sheet have no authority over what it holds
+//    (giveUpDeletesAtFirstContact).
+//  - Only ONE request that answers with a snapshot of the Sheet is on its way at a time (a read, a
+//    push, a settle check; inSyncLane). The order in which a server works through requests that
+//    overlap is not the order they were sent in (network delay, the lock wait, Apps Script
+//    scheduling), so a snapshot that arrived second may be the OLDER one and would roll the local
+//    data back (rows the newer snapshot had would be read as deleted on the Sheet). With one request
+//    at a time the reply of the previous one has been applied before the next is sent, whatever the
+//    server does. And a reply only settles the replace that was pending when its request was
+//    built, never one made while it was on its way (fm_sync_replace_seq, clearSentPending).
+//  - The record of a request that was sent (fm_sync_inflight) is the only way to ask the server
+//    what became of it, so it is the LAST thing to go: the pending lists and flags are settled first,
+//    in steps that can be repeated, and a crash in between leaves a record that is simply asked
+//    about again.
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
 const SYNC_DELETED_KEY = 'fm_deleted_ids'; // ids deleted here, not yet deleted on the server
 const SYNC_UPSERTS_KEY = 'fm_pending_upserts'; // ids created or edited here (v2)
 const SYNC_META_KEY = 'fm_pending_meta'; // meta kinds changed here (v2)
+// The last v2 write whose reply never arrived: {requestId, url, baseRevision, baseEpoch, replace,
+// upserts: [{id, updatedAt}], deletes, meta: {key: {updatedAt}}}. Before sending anything else the
+// server is asked whether it was applied (appliedCheck): true, false or 'unknown'. Only a proven
+// "false" lets a replace or deletes go out again; 'unknown' never does (settleInflightV2).
+const SYNC_INFLIGHT_KEY = 'fm_sync_inflight';
+// {url, revision, epoch}: the revision and epoch of the server's request log in the last state
+// received from `url`. A request records them (baseRevision, baseEpoch) so the server can tell
+// "never applied" from "forgotten" (a log that was lost starts again with another epoch).
+const SYNC_REVISION_KEY = 'fm_sync_revision';
+// Warnings about writes that were not sent on purpose (see abandonDestructiveWrite): kept until the
+// user has seen them, so a toast that went by is not the only trace.
+const SYNC_REVIEW_KEY = 'fm_sync_review';
+// Counts the intents to replace the Sheet (a backup restored, "Xóa toàn bộ dữ liệu"). A reply may
+// only settle the replace that was pending when its request was built (clearSentPending).
+const SYNC_REPLACE_SEQ_KEY = 'fm_sync_replace_seq';
 const GET_FALLBACK_MAX_URL = 6000;
+// What fingerprintOf returns (128 bits of SHA-256, in hex). A stored `h` of any other shape is from
+// an older version and is not compared.
+const STRONG_FINGERPRINT = /^[0-9a-f]{32}$/;
+// Rows the user chose to "decide later" for (see decideRemoteLoss): kept here, not uploaded, and
+// not asked about again until the app is opened again.
+const deferredLossIds = new Set();
 const TRANSFER_CATEGORY_PREFIX = `${TRANSFER_CATEGORY} → `;
 
 let remoteReady = false;
 let syncProtocol = ''; // set by the first successful read: 'legacy' | 'v2'
+// Bumped whenever the Web App URL changes. A request that was made before that belongs to a Sheet
+// that is no longer the connected one: when its reply arrives it must not touch the baseline, the
+// pending lists or the local data (see postSyncV2, pushV2, pushToGoogleSheet).
+let syncGeneration = 0;
+// The tail of the queue of operations that talk to the connected Sheet (inSyncLane). Replaced when
+// the Web App URL changes, so a request that never gets an answer from the old Sheet cannot hold the
+// new connection back.
+let syncLane = Promise.resolve();
+// How long a request to the Web App may take before the client stops waiting (see fetchSheet).
+// Apps Script can wait up to 20 s for its lock and takes a few seconds to start cold.
+let syncRequestTimeoutMs = 90000;
 let pushInFlight = false;
 // Another device may change the data while this one stays open, so the Sheet is read again when
 // the user comes back, but never more often than this.
@@ -55,13 +119,27 @@ const SYNC_BADGES = {
     locked: '<i class="fa-solid fa-lock" style="color:var(--danger)"></i> Sai mã bảo vệ',
 };
 
+/** Transactions kept here with "Để sau": on this device but not on the Sheet. */
+function deferredLossCount() {
+    return transactions.filter((transaction) => deferredLossIds.has(transaction.id)).length;
+}
+
 function setSyncBadge(state, detail = '') {
     const badge = document.getElementById('sync-status');
 
-    if (badge) {
-        badge.innerHTML = SYNC_BADGES[state];
-        badge.title = detail;
+    if (!badge) return;
+
+    const waiting = state === 'synced' ? deferredLossCount() : 0;
+
+    if (waiting) {
+        // Not "saved": these rows exist only here until the user decides (see decideRemoteLoss).
+        badge.innerHTML = `<i class="fa-solid fa-circle-exclamation" style="color:var(--warning)"></i> Chờ xử lý (${waiting})`;
+        badge.title = `${waiting} giao dịch có trên máy này nhưng không còn trên Google Sheet và đang chờ bạn quyết định. Tải lại ứng dụng để chọn Khôi phục hoặc Xóa.`;
+        return;
     }
+
+    badge.innerHTML = SYNC_BADGES[state];
+    badge.title = detail;
 }
 
 /** The badge state for a failed request: a wrong token is not a connection problem. */
@@ -90,7 +168,29 @@ function getSyncDirty() {
     return readStoredText(SYNC_DIRTY_KEY);
 }
 
+/**
+ * Sets the dirty flag to exactly `mode` ('' removes it), even over 'replace' (which setSyncDirty never
+ * lowers). One write: clearing and then setting again would leave a moment, and a crash, with no flag
+ * while changes are still pending.
+ */
+function overwriteSyncDirty(mode) {
+    if (mode) {
+        localStorage.setItem(SYNC_DIRTY_KEY, mode);
+    } else {
+        localStorage.removeItem(SYNC_DIRTY_KEY);
+    }
+}
+
+/** How many replace intents this device has made (persisted: in-flight records carry it). */
+function readReplaceSeq() {
+    return Number(readStoredText(SYNC_REPLACE_SEQ_KEY)) || 0;
+}
+
 function setSyncDirty(mode) {
+    if (mode === 'replace') {
+        localStorage.setItem(SYNC_REPLACE_SEQ_KEY, String(readReplaceSeq() + 1));
+    }
+
     if (!mode) {
         localStorage.removeItem(SYNC_DIRTY_KEY);
     } else if (mode === 'replace' || getSyncDirty() !== 'replace') {
@@ -129,6 +229,15 @@ function hasPendingChanges() {
     return Boolean(getSyncDirty()) || (syncProtocol === 'v2' && readList(SYNC_META_KEY).length > 0);
 }
 
+/**
+ * Work this device still has to settle with the Sheet: changes not sent yet, or a request that was
+ * sent and whose outcome is not noted down (a record of fm_sync_inflight left by a crash, or by a
+ * reply that never came). Such a record is settled on its own, not only when the next change comes.
+ */
+function hasUnsettledWork() {
+    return hasPendingChanges() || (syncProtocol === 'v2' && Boolean(readInflight()));
+}
+
 // --- CHANGE QUEUE ---
 // Call these after a local change, then syncToGoogleSheet(). The legacy protocol only needs the
 // dirty flag and the deleted ids, because it rewrites the whole list.
@@ -154,12 +263,32 @@ function queueMeta(key) {
 }
 
 // --- SETTINGS ---
-function setScriptUrl(url) {
+/**
+ * `keepPending`: the caller has just queued a replace for exactly this URL on purpose (restoring a
+ * backup on a device that had no URL and takes the file's), so nothing is secured.
+ */
+function setScriptUrl(url, { keepPending = false } = {}) {
+    // What was written to the old Sheet and never confirmed must not reach the new one.
+    const notice =
+        url !== webAppUrl && !keepPending
+            ? secureUnconfirmedWrites(webAppUrl ? 'url' : 'connect')
+            : '';
+
+    if (url !== webAppUrl) {
+        // Whatever is still on its way to the old Sheet is answered into a connection that is gone.
+        syncGeneration++;
+        pushInFlight = false;
+        pushQueued = false;
+        syncLane = Promise.resolve();
+    }
+
     webAppUrl = url;
     localStorage.setItem('fm_script_url', url);
     remoteReady = false;
     syncProtocol = '';
     updateSyncNote();
+
+    if (notice) announceUnsentWrites(notice);
 
     return syncFromGoogleSheet();
 }
@@ -188,9 +317,30 @@ function saveScriptUrl() {
     );
 }
 
+/** The host the app is served from (a function, so a test can pretend to be on another one). */
+function currentHostname() {
+    return window.location.hostname;
+}
+
+/** Warns in Settings when this address is shared with other sites (see isSharedPagesOrigin). */
+function updateOriginNote() {
+    const note = document.getElementById('origin-note');
+
+    if (!note) return;
+
+    const host = currentHostname();
+
+    note.textContent = isSharedPagesOrigin(host)
+        ? `Lưu ý cách ly dữ liệu: ứng dụng đang chạy ở ${host}. Trình duyệt dùng chung bộ nhớ (localStorage) cho mọi trang cùng tên miền này, kể cả các trang GitHub Pages khác của cùng tài khoản, nên một trang khác bị lỗi bảo mật có thể đọc dữ liệu thu chi và mã bảo vệ lưu trên máy. Hãy dùng một tên miền riêng cho ứng dụng này (xem README, mục "Triển khai và cách ly dữ liệu").`
+        : '';
+    note.hidden = !note.textContent;
+}
+
 /** Explain which kind of Apps Script is connected (shown under the settings form). */
 function updateSyncNote() {
     const note = document.getElementById('sync-protocol-note');
+
+    updateOriginNote();
 
     if (!note) return;
 
@@ -211,10 +361,75 @@ function updateSyncNote() {
 }
 
 // --- RESPONSES AND URLS ---
-function sheetUrl(params = {}) {
+function sheetUrl(params = {}, base = webAppUrl) {
     const query = new URLSearchParams(params).toString();
 
-    return query ? `${webAppUrl}${webAppUrl.includes('?') ? '&' : '?'}${query}` : webAppUrl;
+    return query ? `${base}${base.includes('?') ? '&' : '?'}${query}` : base;
+}
+
+/**
+ * Runs an operation that sends requests answered with a snapshot of the Sheet (a read, a push with
+ * its settle check) after every earlier one has finished, whether it succeeded or failed. Nothing
+ * that is built from the local data or that applies a reply may run beside another: the reply of one
+ * must be merged before the next request is made, so the Sheet always answers in the order the data
+ * here was prepared. Every call site of fetch that returns a state must be inside this. A request
+ * that never gets an answer holds the later ones back until the browser gives up on it (what was
+ * asked for stays queued, nothing is lost); changing the Web App URL frees the lane.
+ * An operation that was queued for a connection that has been replaced is not run at all.
+ */
+function inSyncLane(operation) {
+    const generation = syncGeneration;
+    const run = syncLane.then(() => {
+        if (generation !== syncGeneration) throw staleConnection();
+
+        return operation();
+    });
+
+    syncLane = run.then(
+        () => {},
+        () => {},
+    );
+
+    return run;
+}
+
+/** What a request that outlived its connection (the Web App URL changed) fails with. */
+function staleConnection() {
+    const error = new Error('Kết nối Google Sheet đã đổi trong lúc đang gửi.');
+
+    error.stale = true;
+
+    return error;
+}
+
+/**
+ * fetch with a deadline for the whole answer (headers and body). On expiry the request is aborted
+ * on this side only: it may still reach the server, or already have been applied, which is why
+ * callers keep their record of what was sent (fm_sync_inflight) and treat the outcome as unknown.
+ * Resolves with {ok, json()} for parseSheetResponse.
+ */
+async function fetchSheet(url, options = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), syncRequestTimeoutMs);
+
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        const text = await response.text();
+
+        return { ok: response.ok, json: async () => JSON.parse(text) };
+    } catch (error) {
+        if (!controller.signal.aborted) throw error;
+
+        const timeout = new Error(
+            'Google Sheet không trả lời kịp (quá thời gian chờ). Thay đổi vẫn được giữ và sẽ gửi lại.',
+        );
+
+        timeout.timeout = true;
+
+        throw timeout;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /** The Apps Script answers HTTP 200 even for errors: look inside the JSON body. */
@@ -258,17 +473,21 @@ function decodeLegacyRow(row) {
  */
 async function writeLegacySheet(list) {
     const rows = list.map(encodeLegacyRow);
+    const target = webAppUrl;
     let response;
 
     try {
-        response = await fetch(webAppUrl, {
+        response = await fetchSheet(target, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({ transactions: rows }),
         });
     } catch (error) {
+        // A timeout is not "the POST cannot be made": the request may be on its way.
+        if (error.timeout) throw error;
+
         const payload = JSON.stringify(rows);
-        const url = sheetUrl({ action: 'save', data: payload });
+        const url = sheetUrl({ action: 'save', data: payload }, target);
 
         // The script decodes the parameter a second time, so "%" in the data would break it.
         if (url.length > GET_FALLBACK_MAX_URL || payload.includes('%')) {
@@ -277,7 +496,7 @@ async function writeLegacySheet(list) {
             );
         }
 
-        response = await fetch(url);
+        response = await fetchSheet(url);
     }
 
     return parseSheetResponse(response);
@@ -340,11 +559,17 @@ function reconcileWithSheet(rows) {
 
 async function pushLegacy() {
     const changeCountAtStart = localChangeCount;
+    const replaceSeqAtStart = readReplaceSeq();
+    const generation = syncGeneration;
 
     await writeLegacySheet(transactions);
+
+    if (generation !== syncGeneration) throw staleConnection();
+
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
 
-    if (changeCountAtStart === localChangeCount) {
+    // A restored backup does not go through syncToGoogleSheet, so it is not in localChangeCount.
+    if (changeCountAtStart === localChangeCount && replaceSeqAtStart === readReplaceSeq()) {
         setSyncDirty('');
         clearDeletedIds();
         writeList(SYNC_UPSERTS_KEY, []);
@@ -357,16 +582,23 @@ async function pushLegacy() {
 // --- PROTOCOL V2 ---
 /** Send a sync request; if the POST cannot be made at all, retry as a GET when it is small. */
 async function postSyncV2(payload) {
+    const target = webAppUrl;
+    const generation = syncGeneration;
     let response;
 
     try {
-        response = await fetch(webAppUrl, {
+        response = await fetchSheet(target, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify(payload),
         });
     } catch (error) {
-        const url = sheetUrl({ action: 'sync', payload: JSON.stringify(payload) });
+        // The fallback puts the whole payload in the URL, and URLs end up in logs and proxies: never
+        // with a token. The change stays queued and is sent again later. And a timeout is not "the
+        // POST cannot be made": the request may be on its way, so it is not sent a second way.
+        if (payload.token || error.timeout || generation !== syncGeneration) throw error;
+
+        const url = sheetUrl({ action: 'sync', payload: JSON.stringify(payload) }, target);
 
         if (url.length > GET_FALLBACK_MAX_URL) {
             throw new Error(
@@ -374,16 +606,59 @@ async function postSyncV2(payload) {
             );
         }
 
-        response = await fetch(url);
+        response = await fetchSheet(url);
     }
 
     const state = await parseSheetResponse(response);
+
+    // The reply of a request made to the Sheet that was connected before is not about this one.
+    if (generation !== syncGeneration) throw staleConnection();
 
     if (!state || state.version !== 2) {
         throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
     }
 
     return state;
+}
+
+/**
+ * Keeps the revision and epoch of the server's request log (absent from an older Code.gs). Call it
+ * for every snapshot that is applied. Within one epoch the revision only grows; a smaller number
+ * could only weaken what appliedAfter proves.
+ */
+function rememberRevision(state) {
+    if (!(Number.isInteger(state.revision) && state.revision >= 0)) {
+        localStorage.removeItem(SYNC_REVISION_KEY);
+        return;
+    }
+
+    const epoch = typeof state.epoch === 'string' ? state.epoch : null;
+    const known = readStoredJson(SYNC_REVISION_KEY, null);
+    const sameLog =
+        Boolean(known) &&
+        known.url === webAppUrl &&
+        known.epoch === epoch &&
+        Number.isInteger(known.revision);
+
+    localStorage.setItem(
+        SYNC_REVISION_KEY,
+        JSON.stringify({
+            url: webAppUrl,
+            revision: sameLog ? Math.max(known.revision, state.revision) : state.revision,
+            epoch,
+        }),
+    );
+}
+
+/** {revision, epoch} last seen from the current server; null members when there is none. */
+function lastKnownServerView() {
+    const record = readStoredJson(SYNC_REVISION_KEY, null);
+    const usable = Boolean(record) && record.url === webAppUrl;
+
+    return {
+        revision: usable && Number.isInteger(record.revision) ? record.revision : null,
+        epoch: usable && typeof record.epoch === 'string' ? record.epoch : null,
+    };
 }
 
 function buildV2Payload() {
@@ -396,13 +671,18 @@ function buildV2Payload() {
         (key) => META_DEFS[key],
     );
     const updated = readMetaUpdated();
+    const deletes = replace ? [] : readDeletedIds();
 
     return {
         action: 'sync',
         token: webAppToken,
         replace,
+        // Code.gs refuses a request that empties the Sheet unless it is asked for explicitly: only
+        // when this device holds no transaction any more (reset, empty backup, the last one
+        // deleted) is an empty Sheet what the user wants.
+        confirmWipe: transactions.length === 0 && (replace || deletes.length > 0),
         upserts,
-        deletes: replace ? [] : readDeletedIds(),
+        deletes,
         meta: Object.fromEntries(
             metaKeys.map((key) => [
                 key,
@@ -412,26 +692,55 @@ function buildV2Payload() {
     };
 }
 
+/**
+ * Whether a transaction is no longer what was sent: it was edited again after the request was built.
+ * Records carry a fingerprint of the content (`h`). The updatedAt stamp is not proof of "no edit":
+ * two edits in the same millisecond, or on a clock that did not move, carry the same one, and an
+ * ACK would then settle (and a snapshot overwrite) the newer edit. Older records (no `h`) only have
+ * the stamp.
+ */
+function editedSince(sent, current) {
+    // The stamp first: every edit made through the app moves it (nextStamp), and it is free.
+    if (current.updatedAt !== sent.updatedAt) return true;
+
+    // The same stamp: only a content that is exactly what was sent counts as "not edited". A record
+    // of an older version (no, or a short, fingerprint) has nothing more to compare.
+    return STRONG_FINGERPRINT.test(sent.h || '') && fingerprintOf(current) !== sent.h;
+}
+
+/** The same for a meta value (its content and its stamp, as they were sent). */
+function metaEditedSince(key, sent) {
+    const current = { value: META_ACCESSORS[key].get(), updatedAt: readMetaUpdated()[key] || '' };
+
+    if (current.updatedAt !== sent.updatedAt) return true;
+
+    return STRONG_FINGERPRINT.test(sent.h || '') && fingerprintOf(current) !== sent.h;
+}
+
 /** After a successful request, forget what was sent unless it changed again in the meantime. */
 function clearSentPending(payload) {
+    // A replace made after this request was built (a backup restored, "Xóa toàn bộ dữ liệu" while
+    // it was on its way) is not what its reply confirms: it stays pending, with everything it will
+    // send. Records of older versions carry no number and settle as before.
+    if (payload.replaceSeq !== undefined && payload.replaceSeq !== readReplaceSeq()) return;
+
     const byId = new Map(transactions.map((transaction) => [transaction.id, transaction]));
-    const sentUpserts = new Map(payload.upserts.map((item) => [item.id, item.updatedAt]));
+    const sentUpserts = new Map(payload.upserts.map((item) => [item.id, item]));
     const upserts = readList(SYNC_UPSERTS_KEY).filter((id) => {
         const current = byId.get(id);
 
         if (!current) return false; // deleted since: nothing left to send
         if (!sentUpserts.has(id)) return true; // queued after the request was built
 
-        return current.updatedAt !== sentUpserts.get(id); // edited again meanwhile
+        return editedSince(sentUpserts.get(id), current); // edited again meanwhile
     });
     // After a replace the server holds exactly what was sent, so a deletion of one of those rows
     // still has to be sent; other recorded deletions concern rows the server no longer has.
     const deletes = readDeletedIds().filter((id) =>
         payload.replace ? sentUpserts.has(id) : !payload.deletes.includes(id),
     );
-    const updated = readMetaUpdated();
     const meta = readList(SYNC_META_KEY).filter(
-        (key) => !payload.meta[key] || (updated[key] || '') !== payload.meta[key].updatedAt,
+        (key) => !payload.meta[key] || metaEditedSince(key, payload.meta[key]),
     );
 
     writeList(SYNC_UPSERTS_KEY, upserts);
@@ -439,9 +748,7 @@ function clearSentPending(payload) {
     writeList(SYNC_META_KEY, meta);
 
     // A replace has been applied; anything still pending is an ordinary change made meanwhile.
-    setSyncDirty('');
-
-    if (upserts.length || deletes.length) setSyncDirty('merge');
+    overwriteSyncDirty(upserts.length || deletes.length ? 'merge' : '');
 }
 
 function unionBy(primary, secondary, keyOf) {
@@ -525,6 +832,44 @@ function reconcileMeta(remoteMeta, hasBaseline, replace) {
 }
 
 /**
+ * Rows this device had already synced that the server no longer has. When that looks like an
+ * emptied or damaged Sheet (isMassRemoteLoss) the user decides, and only an explicit "OK" on the
+ * question that says "Xóa" deletes anything here; closing or cancelling a dialog never does:
+ *  - 'restore': keep the rows and queue them so the Sheet gets them back;
+ *  - 'delete':  follow the Sheet and delete them here;
+ *  - 'defer':   keep them here without uploading, and ask again next time the app opens;
+ *  - 'none':    an ordinary deletion elsewhere, applied without asking.
+ */
+function decideRemoteLoss(lostIds, syncedCount, remoteCount) {
+    if (!isMassRemoteLoss(lostIds.length, syncedCount, remoteCount)) return 'none';
+    if (lostIds.every((id) => deferredLossIds.has(id))) return 'defer';
+
+    const count = lostIds.length;
+    const restore = confirm(
+        `Google Sheet vừa thiếu ${count} giao dịch mà máy này vẫn còn` +
+            (remoteCount === 0 ? ' (Sheet không còn giao dịch nào).' : '.') +
+            '\n\nNếu bạn không chủ động xóa chúng ở máy khác, có thể Sheet đã bị xóa nhầm hoặc ghi lỗi.' +
+            '\n\nOK: Khôi phục — giữ trên máy này và đưa lại lên Sheet (khuyên dùng).' +
+            '\nHủy: chọn cách khác (xóa trên máy hoặc để sau).',
+    );
+
+    if (restore) return 'restore';
+
+    const remove = confirm(
+        `Xóa ${count} giao dịch này khỏi máy này cho giống Google Sheet?` +
+            '\n\nKhông hoàn tác được, trừ khi bạn có file sao lưu.' +
+            '\n\nOK: Xóa trên máy này.' +
+            '\nHủy: Để sau — giữ trên máy, chưa gửi lên Sheet, hỏi lại khi mở app lần sau.',
+    );
+
+    if (remove) return 'delete';
+
+    lostIds.forEach((id) => deferredLossIds.add(id));
+
+    return 'defer';
+}
+
+/**
  * Merge the server state into local data, keeping local changes the server has not confirmed:
  *  - rows pending here win when they are not older than the server's copy;
  *  - everything else follows the server, so deletions made elsewhere arrive here.
@@ -555,6 +900,28 @@ function reconcileV2(state) {
     if (!replace) migratedIds.forEach((id) => pendingUpserts.add(id));
     const deleted = new Set(readDeletedIds());
 
+    // Rows kept here for now without being uploaded ("Để sau").
+    const keptIds = new Set();
+
+    if (!replace && hasBaseline) {
+        const remoteIdSet = new Set(remote.map((row) => row.id));
+        const synced = transactions.filter(
+            (transaction) => !pendingUpserts.has(transaction.id) && !deleted.has(transaction.id),
+        );
+        const lostIds = synced
+            .filter((transaction) => !remoteIdSet.has(transaction.id))
+            .map((transaction) => transaction.id);
+
+        const decision = decideRemoteLoss(lostIds, synced.length, remote.length);
+
+        if (decision === 'restore') {
+            lostIds.forEach((id) => pendingUpserts.add(id));
+            addToList(SYNC_UPSERTS_KEY, lostIds);
+        } else if (decision === 'defer') {
+            lostIds.forEach((id) => keptIds.add(id));
+        }
+    }
+
     if (!replace) {
         const merged = [];
         const remoteIds = new Set();
@@ -576,7 +943,9 @@ function reconcileV2(state) {
         });
 
         transactions.forEach((transaction) => {
-            if (pendingUpserts.has(transaction.id) && !remoteIds.has(transaction.id)) {
+            const keep = pendingUpserts.has(transaction.id) || keptIds.has(transaction.id);
+
+            if (keep && !remoteIds.has(transaction.id)) {
                 merged.push(transaction);
             }
         });
@@ -600,12 +969,353 @@ function reconcileV2(state) {
     generateSavingsDeposits();
 }
 
-async function pushV2() {
-    const payload = buildV2Payload();
-    const state = await postSyncV2(payload);
+function newRequestId() {
+    const random =
+        window.crypto && typeof window.crypto.randomUUID === 'function'
+            ? window.crypto.randomUUID()
+            : `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 
+    return `fm-${Date.now().toString(36)}-${random}`;
+}
+
+/** What clearSentPending needs to know about a request, small enough to keep across reloads. */
+function inflightRecord(payload) {
+    const view = lastKnownServerView();
+
+    return {
+        requestId: payload.requestId,
+        url: webAppUrl,
+        baseRevision: view.revision,
+        baseEpoch: view.epoch,
+        replaceSeq: readReplaceSeq(),
+        replace: payload.replace,
+        // `h` fingerprints what was sent: the reply may only settle what is still exactly that.
+        upserts: payload.upserts.map((item) => ({
+            id: item.id,
+            updatedAt: item.updatedAt,
+            h: fingerprintOf(item),
+        })),
+        deletes: payload.deletes,
+        meta: Object.fromEntries(
+            Object.entries(payload.meta).map(([key, entry]) => [
+                key,
+                {
+                    updatedAt: entry.updatedAt,
+                    h: fingerprintOf({ value: entry.value, updatedAt: entry.updatedAt }),
+                },
+            ]),
+        ),
+    };
+}
+
+function readInflight() {
+    const record = readStoredJson(SYNC_INFLIGHT_KEY, null);
+
+    return record && typeof record.requestId === 'string' ? record : null;
+}
+
+/** A replace or a deletion: sending it again could undo what another device wrote since. */
+function isDestructiveWrite(inflight) {
+    return inflight.replace === true || (inflight.deletes || []).length > 0;
+}
+
+/**
+ * A replace or deletion that must not be sent (the server could not say whether it went through,
+ * or the Web App URL changed since): sending it could remove what another device wrote or what
+ * the other Sheet holds. Nothing is destroyed either way:
+ *  - a replace becomes an ordinary merge: everything held here is queued as a change and the
+ *    server's content is kept (rows the replace was meant to drop may come back);
+ *  - deletions are not sent: a row still on the server comes back here, one already gone stays
+ *    gone.
+ * `intent` is {replace, deletes}; `why` is 'unknown', 'url' (the Web App URL changed), 'connect'
+ * (a first Sheet was just switched on) or 'refused' (the Sheet would not take it). Returns the sentence to tell the
+ * user ('' when there was nothing to give up).
+ */
+function abandonDestructiveWrite(intent, why) {
+    const notes = [];
+    const leads = {
+        url: 'Bạn vừa đổi Google Sheet khi còn thay đổi chưa được Sheet cũ xác nhận, nên app không gửi chúng sang Sheet mới. ',
+        connect:
+            'Bạn vừa bật Google Sheet khi còn một lần thay toàn bộ dữ liệu chưa gửi đi, nên app không gửi nó lên Sheet. ',
+        unknown: 'Không rõ lần ghi trước lên Google Sheet đã được áp dụng chưa (mất phản hồi). ',
+        refused:
+            'Google Sheet từ chối lệnh thay thế / xóa vì dữ liệu trên máy này đã quá cũ so với Sheet (hoặc lệnh đã bị hủy). ',
+    };
+    const lead = leads[why];
+
+    if (intent.replace && getSyncDirty() === 'replace') {
+        addToList(
+            SYNC_UPSERTS_KEY,
+            transactions.map((transaction) => transaction.id),
+        );
+        addToList(SYNC_META_KEY, Object.keys(META_DEFS));
+        // Everything is queued by now; only then does the flag change (one write).
+        overwriteSyncDirty('merge');
+        notes.push(
+            'Lần thay toàn bộ dữ liệu trên Sheet đã được đổi thành gộp: dữ liệu trên máy được gộp với Sheet thay vì ghi đè (dòng định bỏ có thể quay lại). Muốn thay toàn bộ Sheet, hãy thực hiện lại.',
+        );
+    }
+
+    const dropped = new Set(intent.deletes || []);
+
+    if (dropped.size) {
+        writeList(
+            SYNC_DELETED_KEY,
+            readDeletedIds().filter((id) => !dropped.has(id)),
+        );
+        notes.push(
+            `Lệnh xóa ${dropped.size} giao dịch không được gửi lại: giao dịch nào còn trên Google Sheet sẽ quay về máy này, hãy xóa lại nếu cần.`,
+        );
+    }
+
+    return notes.length ? lead + notes.join(' ') : '';
+}
+
+/**
+ * First contact with a Sheet (nothing was ever synced with this URL): deletions queued before have
+ * no authority over what it holds. Sending them would delete rows that were there before this
+ * device connected (and, with nothing else on the device, empty the Sheet). They are given up; rows
+ * of the Sheet that they named come back here, and the user is told when there were such rows.
+ */
+function giveUpDeletesAtFirstContact(state) {
+    const deleted = readDeletedIds();
+
+    if (!deleted.length) return;
+    if (localStorage.getItem(SYNC_BASELINE_KEY) === webAppUrl) return;
+    if (getSyncDirty() === 'replace') return;
+
+    const onSheet = new Set((state.transactions || []).map((row) => String(row.id)));
+    const named = deleted.filter((id) => onSheet.has(id));
+
+    writeList(SYNC_DELETED_KEY, []);
+
+    if (named.length) {
+        announceUnsentWrites(
+            `Google Sheet vừa kết nối đã có ${named.length} giao dịch mà trước đó bạn xóa trên máy này (lúc chưa kết nối). App không xóa chúng trên Sheet mà giữ lại; hãy xóa lại nếu muốn.`,
+        );
+    }
+}
+
+/**
+ * The Web App URL is about to change (or the server of an in-flight write is not the current one):
+ * what is still unconfirmed - an in-flight request, a pending replace, pending deletions - was made
+ * against the old Sheet and is not sent to the new one. Returns the notice ('' when nothing was
+ * pending). `why` 'connect' = there was no Sheet before: only a pending replace (which would
+ * overwrite the Sheet that is being connected) is given up; deletions made while no Sheet was
+ * configured are ordinary changes and are still sent.
+ */
+function secureUnconfirmedWrites(why) {
+    const inflight = readInflight();
+    const notice = abandonDestructiveWrite(
+        {
+            replace: getSyncDirty() === 'replace',
+            deletes:
+                why === 'connect'
+                    ? []
+                    : Array.from(
+                          new Set([
+                              ...(inflight ? inflight.deletes || [] : []),
+                              ...readDeletedIds(),
+                          ]),
+                      ),
+        },
+        why,
+    );
+
+    // Only when what it stood for has been given up: until then it is the way back to the request.
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
+
+    return notice;
+}
+
+// --- WARNINGS THAT STAY ---
+function readSyncReview() {
+    const list = readStoredJson(SYNC_REVIEW_KEY, []);
+
+    return Array.isArray(list) ? list.filter((item) => typeof item === 'string') : [];
+}
+
+/** Shows the warnings the user has not dismissed yet (the banner under the header). */
+function renderSyncReview() {
+    const banner = document.getElementById('sync-review');
+
+    if (!banner) return;
+
+    const list = readSyncReview();
+    const body = document.getElementById('sync-review-list');
+
+    body.replaceChildren(
+        ...list.map((text) => {
+            const item = document.createElement('p');
+
+            item.textContent = text;
+
+            return item;
+        }),
+    );
+    banner.hidden = !list.length;
+}
+
+function addSyncReview(text) {
+    writeList(
+        SYNC_REVIEW_KEY,
+        [...readSyncReview().filter((item) => item !== text), text].slice(-5),
+    );
+    renderSyncReview();
+}
+
+function dismissSyncReview() {
+    writeList(SYNC_REVIEW_KEY, []);
+    renderSyncReview();
+}
+
+/** A toast for the moment, and a notice that stays until it is dismissed. */
+function announceUnsentWrites(notice) {
+    addSyncReview(notice);
+    showToast(notice, 'warning', 20000);
+}
+
+/**
+ * A previous write may or may not have been applied (its reply was lost). Ask the server, which
+ * answers true, false (proven never applied) or 'unknown'. `true` is handled exactly as if the
+ * reply had arrived. `false`, or 'unknown' for a write that is safe to repeat (upserts only: the
+ * newest updatedAt wins), leaves the changes queued to be sent. A replace or deletion whose
+ * outcome is not known is never sent again (abandonDestructiveWrite). A Code.gs that predates
+ * request ids does not answer `applied` at all, which counts as 'unknown'. Either way the server's
+ * current state is merged before anything new is built.
+ */
+async function settleInflightV2() {
+    const inflight = readInflight();
+
+    if (!inflight) return;
+
+    // A request made to another deployment cannot be asked about here, and what it left pending
+    // must not go to this one.
+    if (inflight.url && inflight.url !== webAppUrl) {
+        const notice = secureUnconfirmedWrites('url');
+
+        if (notice) announceUnsentWrites(notice);
+
+        return;
+    }
+
+    const state = await postSyncV2({
+        action: 'sync',
+        token: webAppToken,
+        replace: false,
+        upserts: [],
+        deletes: [],
+        meta: {},
+        appliedCheck: inflight.requestId,
+        // A replace or a deletion is only sent again on a promise, not on "not applied so far".
+        ...(isDestructiveWrite(inflight) ? { fence: true } : {}),
+        ...(Number.isInteger(inflight.baseRevision) ? { appliedAfter: inflight.baseRevision } : {}),
+        ...(typeof inflight.baseEpoch === 'string' ? { appliedEpoch: inflight.baseEpoch } : {}),
+    });
+    let notice = '';
+
+    if (state.applied === true) {
+        localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+        clearSentPending(inflight);
+    } else if (
+        isDestructiveWrite(inflight) &&
+        !(state.applied === false && state.fenced === true)
+    ) {
+        notice = abandonDestructiveWrite(
+            {
+                // A newer replace (made while this one was in flight) is the user's current
+                // intent, a request of its own: only the old one is given up.
+                replace:
+                    inflight.replace === true &&
+                    (inflight.replaceSeq === undefined || inflight.replaceSeq === readReplaceSeq()),
+                deletes: inflight.deletes || [],
+            },
+            'unknown',
+        );
+    }
+
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
+    rememberRevision(state);
+    reconcileV2(state);
+
+    if (notice) announceUnsentWrites(notice);
+}
+
+/** The Sheet answered that it will not take a replace / deletion (see Code.gs handleSync_). */
+function refusedDestructive(error) {
+    const message = (error && error.message) || '';
+
+    return message.startsWith('request-stale') || message.startsWith('request-cancelled');
+}
+
+async function pushV2() {
+    const generation = syncGeneration;
+
+    await settleInflightV2();
+
+    if (generation !== syncGeneration) throw staleConnection();
+
+    if (!hasPendingChanges()) {
+        setSyncBadge('synced');
+        return;
+    }
+
+    const built = buildV2Payload();
+    const view = lastKnownServerView();
+    // A replace or a deletion says which revision and epoch of the server's log it was built on: the
+    // server refuses one it can no longer vouch for (an old copy that was cancelled, see Code.gs).
+    const payload = {
+        ...built,
+        requestId: newRequestId(),
+        ...((built.replace || built.deletes.length > 0) &&
+        view.revision !== null &&
+        view.epoch !== null
+            ? { baseRevision: view.revision, baseEpoch: view.epoch }
+            : {}),
+    };
+    const record = inflightRecord(payload);
+
+    localStorage.setItem(SYNC_INFLIGHT_KEY, JSON.stringify(record));
+
+    // On any failure the record stays: even an error reply ("Không chắc dữ liệu đã được ghi xong",
+    // a failed rollback, an HTTP error after a timeout) can follow a write, so the next push asks.
+    let state;
+
+    try {
+        state = await postSyncV2(payload);
+    } catch (error) {
+        if (generation !== syncGeneration || !refusedDestructive(error)) throw error;
+
+        // The Sheet says it did NOT take this replace / deletion (built on a view that is too old,
+        // or cancelled): that is a known "no", not a lost reply. It is not sent again as it was;
+        // the data is merged instead, and the user is told.
+        const notice = abandonDestructiveWrite(
+            {
+                replace: payload.replace && record.replaceSeq === readReplaceSeq(),
+                deletes: payload.deletes,
+            },
+            'refused',
+        );
+
+        localStorage.removeItem(SYNC_INFLIGHT_KEY);
+
+        if (notice) announceUnsentWrites(notice);
+
+        pushQueued = true;
+
+        return;
+    }
+
+    // Settle first, remove the record LAST: a crash or a full disk in between must leave a record
+    // to ask the server about (appliedCheck), not a replace or deletion that is still pending with
+    // nothing to say it was sent. Every step can be repeated (settleInflightV2 repeats them).
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
-    clearSentPending(payload);
+    // The reply confirms what was sent; only that.
+    // The record, not the payload: it holds what was sent as it was (a fingerprint of each row and
+    // value), whatever became of the live objects since, and it is what the settle path uses too.
+    clearSentPending(record);
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
+    rememberRevision(state);
     reconcileV2(state);
 
     if (hasPendingChanges()) {
@@ -637,16 +1347,35 @@ function syncToGoogleSheet(mode = 'merge') {
 
 function pushToGoogleSheet() {
     // Never write before a read has told us which protocol the script speaks.
-    if (!syncProtocol || !hasPendingChanges()) return Promise.resolve();
+    if (!syncProtocol || !hasUnsettledWork()) return Promise.resolve();
+
+    const generation = syncGeneration;
 
     pushInFlight = true;
     setSyncBadge('syncing');
 
-    return (syncProtocol === 'v2' ? pushV2() : pushLegacy())
+    return inSyncLane(() => {
+        // A request ahead of this one in the lane (a read) may have changed what there is to send,
+        // or failed before the protocol was known.
+        if (!syncProtocol) return undefined;
+
+        if (!hasUnsettledWork()) {
+            setSyncBadge('synced');
+            return undefined;
+        }
+
+        return syncProtocol === 'v2' ? pushV2() : pushLegacy();
+    })
         .catch((error) => {
+            // A push of the previous connection says nothing about this one.
+            if (generation !== syncGeneration || (error && error.stale)) return;
+
             setSyncBadge(failureBadge(error, 'error'), failureDetail(error));
         })
         .finally(() => {
+            // setScriptUrl reset the flags for the new connection; this push is not part of it.
+            if (generation !== syncGeneration) return;
+
             pushInFlight = false;
 
             if (pushQueued) {
@@ -674,7 +1403,7 @@ function readStateV2() {
  * says; only then is a POST safe (the legacy script clears the sheet on any unknown POST body).
  */
 async function readSheet() {
-    const response = await fetch(sheetUrl({ v: 2 }));
+    const response = await fetchSheet(sheetUrl({ v: 2 }));
 
     try {
         const result = await parseSheetResponse(response);
@@ -702,36 +1431,43 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
 
     lastPullAt = Date.now();
 
-    // A refresh in the background does not flash "Đang tải..." over a badge that is already fine.
-    if (!quiet) setSyncBadge('loading');
+    return inSyncLane(async () => {
+        if (requestedUrl !== webAppUrl) return;
 
-    return readSheet()
-        .then((result) => {
-            if (requestedUrl !== webAppUrl) return;
+        // A refresh in the background does not flash "Đang tải..." over a badge that is already fine.
+        if (!quiet) setSyncBadge('loading');
 
-            if (Array.isArray(result)) {
-                syncProtocol = 'legacy';
-                updateSyncNote();
-                reconcileWithSheet(result);
-            } else if (result && result.version === 2) {
-                syncProtocol = 'v2';
-                updateSyncNote();
-                reconcileV2(result);
-                remoteReady = true;
+        const result = await readSheet();
 
-                if (hasPendingChanges()) {
-                    syncToGoogleSheet();
-                } else {
-                    localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
-                    setSyncBadge('synced');
-                }
+        if (requestedUrl !== webAppUrl) return;
+
+        if (Array.isArray(result)) {
+            syncProtocol = 'legacy';
+            updateSyncNote();
+            reconcileWithSheet(result);
+        } else if (result && result.version === 2) {
+            syncProtocol = 'v2';
+            updateSyncNote();
+            // Also from the tokenless GET of an open server, which never goes through postSyncV2.
+            rememberRevision(result);
+            giveUpDeletesAtFirstContact(result);
+            reconcileV2(result);
+            remoteReady = true;
+
+            if (hasUnsettledWork()) {
+                syncToGoogleSheet();
             } else {
-                throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
+                localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+                setSyncBadge('synced');
             }
-        })
-        .catch((error) => {
-            setSyncBadge(failureBadge(error, 'offline'), failureDetail(error));
-        });
+        } else {
+            throw new Error('Phản hồi từ Apps Script không đúng định dạng.');
+        }
+    }).catch((error) => {
+        if (requestedUrl !== webAppUrl || (error && error.stale)) return;
+
+        setSyncBadge(failureBadge(error, 'offline'), failureDetail(error));
+    });
 }
 
 /** Read the Sheet again when the user returns to this window or tab (see REFRESH_MIN_INTERVAL_MS). */

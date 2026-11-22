@@ -3159,3 +3159,229 @@ test('formatMoneyDigits: số 0 đứng đầu bị bỏ khi gõ ở cuối, đ�
     assert.equal(run('parseMoneyText("0.000")'), 0);
     assert.equal(run('parseMoneyText("050.000")'), 50000);
 });
+
+test('isMassRemoteLoss: Sheet trống, mất quá nửa hoặc từ 20 dòng thì hỏi; xóa lẻ thì không', () => {
+    const mass = (lost, synced, remote) => run(`isMassRemoteLoss(${lost}, ${synced}, ${remote})`);
+
+    assert.equal(mass(0, 10, 0), false);
+    assert.equal(mass(1, 1, 0), true); // Sheet không còn dòng nào
+    assert.equal(mass(5, 6, 1), true); // 6 -> 1 (review PR #33)
+    assert.equal(mass(1, 2, 1), false); // đúng một nửa: xóa bình thường
+    assert.equal(mass(3, 12, 9), false);
+    assert.equal(mass(20, 1000, 980), true);
+    assert.equal(mass(19, 1000, 981), false);
+});
+
+test('isSharedPagesOrigin: chỉ <tài khoản>.github.io dùng chung bộ nhớ giữa các trang', () => {
+    const shared = (host) => run(`isSharedPagesOrigin(${JSON.stringify(host)})`);
+
+    assert.equal(shared('dangvien-dev.github.io'), true);
+    assert.equal(shared('Ten-Khac.GitHub.io'), true);
+    assert.equal(shared('github.io'), false);
+    assert.equal(shared('a.b.github.io'), false);
+    assert.equal(shared('thuchi.example.com'), false);
+    assert.equal(shared('example.com.github.io.evil.test'), false);
+    assert.equal(shared('localhost'), false);
+    assert.equal(shared('127.0.0.1'), false);
+    assert.equal(shared(''), false);
+    assert.equal(run('isSharedPagesOrigin(null)'), false);
+});
+
+test('canonicalJson: khóa đối tượng theo thứ tự, bỏ undefined, mảng giữ thứ tự', () => {
+    const canon = (expression) => run(`canonicalJson(${expression})`);
+
+    assert.equal(canon('{ b: 1, a: [2, { d: 4, c: 3 }] }'), '{"a":[2,{"c":3,"d":4}],"b":1}');
+    assert.equal(canon('{ a: 1, b: undefined }'), '{"a":1}');
+    assert.equal(canon('[undefined, 1]'), '[null,1]');
+    assert.equal(canon('"x"'), '"x"');
+    assert.equal(canon('null'), 'null');
+    assert.equal(canon('undefined'), 'null');
+    assert.equal(canon('[1, 2]') === canon('[2, 1]'), false);
+});
+
+test('fingerprintOf: cùng nội dung (khác thứ tự khóa) cùng vân tay; khác nội dung, kể cả cùng updatedAt, khác vân tay', () => {
+    const fp = (expression) => run(`fingerprintOf(${expression})`);
+    const stamp = '"2026-11-22T10:00:00.000Z"';
+
+    assert.equal(
+        fp(`{ id: 'A', note: 'x', updatedAt: ${stamp} }`),
+        fp(`{ updatedAt: ${stamp}, note: 'x', id: 'A' }`),
+    );
+    // The review's case: two edits that carry the same stamp.
+    assert.notEqual(
+        fp(`{ id: 'A', note: 'lan-mot', updatedAt: ${stamp} }`),
+        fp(`{ id: 'A', note: 'lan-hai', updatedAt: ${stamp} }`),
+    );
+    assert.notEqual(
+        fp(`{ value: { 'Ăn uống': 100 }, updatedAt: ${stamp} }`),
+        fp(`{ value: { 'Ăn uống': 200 }, updatedAt: ${stamp} }`),
+    );
+    assert.match(fp('{ a: 1 }'), /^[0-9a-f]{32}$/);
+});
+
+test('nextStamp: luôn là dấu sau hẳn dấu trước, dù đồng hồ không nhích, đứng yên hay lùi', () => {
+    const next = (previous, nowIso) =>
+        run(`nextStamp(${JSON.stringify(previous)}, ${Date.parse(nowIso)})`);
+    const T = '2026-11-22T10:00:00.000Z';
+
+    assert.equal(next('', T), T, 'chưa có dấu trước: giờ hiện tại');
+    assert.equal(next('khong-phai-ngay', T), T, 'dấu trước hỏng: giờ hiện tại');
+    assert.equal(next('2026-11-22T09:00:00.000Z', T), T, 'dấu trước cũ hơn: giờ hiện tại');
+    assert.equal(next(T, T), '2026-11-22T10:00:00.001Z', 'cùng mili-giây: sau 1 ms');
+    assert.equal(next('2026-11-22T10:30:00.000Z', T), '2026-11-22T10:30:00.001Z', 'đồng hồ lùi');
+    assert.equal(next(undefined, T), T);
+
+    // Fed back into itself within one instant it keeps increasing, and strings compare as time does.
+    let stamp = '';
+
+    for (let i = 0; i < 5; i++) {
+        const following = next(stamp, T);
+
+        assert.ok(following > stamp, `${following} > ${stamp}`);
+        stamp = following;
+    }
+
+    assert.equal(stamp, '2026-11-22T10:00:00.004Z');
+});
+
+test('sha256Hex: khớp SHA-256 của Node với mọi độ dài quanh ranh giới đệm, tiếng Việt, emoji, ký tự lẻ', () => {
+    const crypto = require('node:crypto');
+    const reference = (text) =>
+        crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
+    const mine = (text) => run(`sha256Hex(${JSON.stringify(text)})`);
+
+    assert.equal(mine('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    assert.equal(mine(''), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+
+    for (let length = 0; length <= 200; length++) {
+        const text = 'x'.repeat(length);
+
+        assert.equal(mine(text), reference(text), `độ dài ${length}`);
+    }
+
+    const samples = [
+        'Tiền Mặt — Ăn uống đ Đ ư ơ',
+        '😀 và 🧾 và 𝒳',
+        'a'.repeat(5000),
+        '{"id":"TX_A","note":"cà phê #khach","amount":1000}',
+        'dòng\nmới\ttab',
+    ];
+
+    for (let round = 0; round < 200; round++) {
+        let text = '';
+
+        for (let index = 0; index < 1 + (round % 90); index++) {
+            const pool = ['a', 'Z', ' ', 'ế', 'đ', '€', '😀', '\u0000', '{', '"'];
+
+            text += pool[(round * 7 + index * 13) % pool.length];
+        }
+
+        samples.push(text);
+    }
+
+    samples.forEach((text) => assert.equal(mine(text), reference(text), JSON.stringify(text)));
+});
+
+test('fingerprintOf: cặp va chạm FNV 32-bit của review vòng 14 không còn va chạm', () => {
+    const row = (note, updatedAt) => ({
+        id: 'TX_A',
+        date: '2026-11-22',
+        type: 'expense',
+        source: 'Tiền Mặt',
+        targetSource: null,
+        category: 'Ăn uống',
+        amount: 1000,
+        note,
+        updatedAt,
+    });
+    const first = row('n001b9t', '2026-11-22T10:00:00.000Z');
+    const second = row('n000l27', '2026-11-22T10:00:00.001Z');
+    const legacy = (value) => {
+        const canonical = run(`canonicalJson(${JSON.stringify(value)})`);
+
+        return `${run(`hashText(${JSON.stringify(canonical)})`)}.${canonical.length.toString(36)}`;
+    };
+    const fingerprint = (value) => run(`fingerprintOf(${JSON.stringify(value)})`);
+
+    // What the review found: the fingerprint of round 12 is the same for these two different rows.
+    assert.equal(legacy(first), '037a0253.51');
+    assert.equal(legacy(second), '037a0253.51');
+    // Now it is not.
+    assert.notEqual(fingerprint(first), fingerprint(second));
+});
+
+test('editedSince: dấu thời gian trước, vân tay mạnh sau; bản ghi cũ không có vân tay mạnh chỉ so dấu', () => {
+    const load = () => loadScripts('js/utils.js', 'js/sync.js');
+    const sync = load();
+    const T = '2026-11-22T10:00:00.000Z';
+    const T1 = '2026-11-22T10:00:00.001Z';
+    const row = (note, updatedAt) => ({ id: 'TX_A', note, updatedAt });
+    const sentOf = (value) => ({
+        id: value.id,
+        updatedAt: value.updatedAt,
+        h: sync(`fingerprintOf(${JSON.stringify(value)})`),
+    });
+    const edited = (run2, sent, current) =>
+        run2(`editedSince(${JSON.stringify(sent)}, ${JSON.stringify(current)})`);
+
+    // The same stamp: identical content is not an edit, different content is.
+    assert.equal(edited(sync, sentOf(row('a', T)), row('a', T)), false);
+    assert.equal(edited(sync, sentOf(row('a', T)), row('b', T)), true);
+    // A different stamp is an edit.
+    assert.equal(edited(sync, sentOf(row('a', T)), row('a', T1)), true);
+
+    // Even if the fingerprint were useless (everything collides), a different stamp still shows an
+    // edit: the stamp is checked on its own.
+    const weak = load();
+
+    weak('fingerprintOf = () => "00000000000000000000000000000000"');
+    assert.equal(
+        edited(
+            weak,
+            { id: 'TX_A', updatedAt: T, h: '00000000000000000000000000000000' },
+            row('b', T1),
+        ),
+        true,
+    );
+
+    // A record of an older version: a short fingerprint, or none, is compared by stamp only.
+    assert.equal(edited(sync, { id: 'TX_A', updatedAt: T, h: '037a0253.51' }, row('b', T)), false);
+    assert.equal(edited(sync, { id: 'TX_A', updatedAt: T }, row('b', T)), false);
+    assert.equal(edited(sync, { id: 'TX_A', updatedAt: T }, row('b', T1)), true);
+});
+
+test('metaEditedSince: dấu thời gian trước, vân tay mạnh sau', () => {
+    const T = '2026-11-22T10:00:00.000Z';
+    const T1 = '2026-11-22T10:00:00.001Z';
+    const load = (value, stamp) => {
+        const sync = loadScripts('js/utils.js', 'js/sync.js');
+
+        sync(
+            `var META_ACCESSORS = { budgets: { get: () => (${JSON.stringify(value)}) } };` +
+                `var readMetaUpdated = () => ({ budgets: ${JSON.stringify(stamp)} });`,
+        );
+
+        return sync;
+    };
+    const sentFor = (value, stamp) => ({
+        updatedAt: stamp,
+        h: loadScripts('js/utils.js')(
+            `fingerprintOf(${JSON.stringify({ value, updatedAt: stamp })})`,
+        ),
+    });
+    const edited = (sync, sent) => sync(`metaEditedSince('budgets', ${JSON.stringify(sent)})`);
+
+    // Unchanged: same stamp and same content. Changed content under the same stamp. A new stamp.
+    assert.equal(edited(load({ a: 1 }, T), sentFor({ a: 1 }, T)), false);
+    assert.equal(edited(load({ a: 2 }, T), sentFor({ a: 1 }, T)), true);
+    assert.equal(edited(load({ a: 1 }, T1), sentFor({ a: 1 }, T)), true);
+
+    // Even when the fingerprint is useless (everything collides) a new stamp is an edit.
+    const weak = load({ a: 1 }, T1);
+
+    weak('fingerprintOf = () => "00000000000000000000000000000000"');
+    assert.equal(edited(weak, { updatedAt: T, h: '00000000000000000000000000000000' }), true);
+
+    // A record of an older version has no usable fingerprint: only the stamp is compared.
+    assert.equal(edited(load({ a: 2 }, T), { updatedAt: T, h: '037a0253.51' }), false);
+});
