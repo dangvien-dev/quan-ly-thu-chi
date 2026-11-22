@@ -238,7 +238,7 @@ test.describe('giao thức v2', () => {
     test('replace với danh sách rỗng chỉ xóa hết dòng khi có confirmWipe', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
 
-        sync(gas, { replace: true, upserts: [], confirmWipe: true });
+        sync(gas, { replace: true, upserts: [], meta: {}, confirmWipe: true });
 
         assert.deepEqual(gas.get(), []);
     });
@@ -247,10 +247,10 @@ test.describe('giao thức v2', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
         const before = ids(gas);
 
-        assert.match(sync(gas, { replace: true, upserts: [] }).error, /confirmWipe/);
+        assert.match(sync(gas, { replace: true, upserts: [], meta: {} }).error, /confirmWipe/);
         // Invalid rows are refused outright (review round 3), so they cannot empty it either.
         assert.match(
-            sync(gas, { replace: true, upserts: [{ id: 'X', type: 'nope' }] }).error,
+            sync(gas, { replace: true, upserts: [{ id: 'X', type: 'nope' }], meta: {} }).error,
             /không hợp lệ/,
         );
         assert.deepEqual(ids(gas), before);
@@ -259,7 +259,7 @@ test.describe('giao thức v2', () => {
     test('replace rỗng trên Sheet đã trống không cần confirmWipe', () => {
         const gas = createGas();
 
-        assert.equal(sync(gas, { replace: true, upserts: [] }).version, 2);
+        assert.equal(sync(gas, { replace: true, upserts: [], meta: {} }).version, 2);
     });
 
     test('PR #33 review: Sheet đầy hàng thì thêm hàng trước khi ghi, không mất dòng cũ', () => {
@@ -475,13 +475,93 @@ test.describe('giao thức v2', () => {
         assert.equal(gas.stats.flushesOutsideLock, 0);
     });
 
+    test('review vòng 4: null ở các trường quan trọng bị từ chối, replace phải có upserts và meta', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        sync(gas, {
+            meta: { budgets: { value: { a: 1 }, updatedAt: '2026-10-28T00:00:00.000Z' } },
+        });
+
+        const before = gas.get({ v: '2' });
+        const meta = { budgets: { value: { b: 2 }, updatedAt: '2026-10-29T00:00:00.000Z' } };
+
+        for (const body of [
+            { replace: true, confirmWipe: true, upserts: null, meta },
+            { replace: true, confirmWipe: true, meta },
+            { replace: true, upserts: [row({ id: 'TX_NEW' })], meta: null },
+            { replace: true, upserts: [row({ id: 'TX_NEW' })] },
+            { upserts: null },
+            { deletes: null },
+            { meta: null },
+            { replace: null, upserts: [] },
+            { confirmWipe: null, deletes: [] },
+        ]) {
+            assert.match(sync(gas, body).error, /không hợp lệ/, JSON.stringify(body));
+            assert.deepEqual(gas.get({ v: '2' }), {
+                ...before,
+                serverTime: gas.get({ v: '2' }).serverTime,
+            });
+        }
+    });
+
+    test('review vòng 4: requestId đã áp dụng thì gửi lại không áp dụng lần nữa (máy khác ghi xen giữa)', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const meta = { budgets: { value: { a: 1 }, updatedAt: '2026-10-29T00:00:00.000Z' } };
+        const restore = {
+            replace: true,
+            upserts: [row({ id: 'TX_A' })],
+            meta,
+            requestId: 'req-A1',
+        };
+
+        sync(gas, restore); // applied, but device A never got the reply
+        sync(gas, { upserts: [row({ id: 'TX_B' })], requestId: 'req-B1' }); // device B in between
+
+        const replay = sync(gas, restore); // A retries the same request
+
+        assert.equal(replay.applied, true);
+        assert.deepEqual(ids(gas), ['TX_A', 'TX_B']);
+
+        // The same for a replayed delete: B re-created the row in between.
+        sync(gas, { deletes: ['TX_A'], requestId: 'req-A2' });
+        sync(gas, { upserts: [row({ id: 'TX_A', updatedAt: '2026-11-01T00:00:00.000Z' })] });
+        sync(gas, { deletes: ['TX_A'], requestId: 'req-A2' });
+        assert.deepEqual(ids(gas), ['TX_B', 'TX_A']);
+    });
+
+    test('review vòng 4: appliedCheck cho biết một requestId đã được áp dụng chưa, không ghi gì', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' });
+
+        const before = ids(gas);
+
+        assert.equal(sync(gas, { appliedCheck: 'req-1' }).applied, true);
+        assert.equal(sync(gas, { appliedCheck: 'req-x' }).applied, false);
+        assert.deepEqual(ids(gas), before);
+    });
+
+    test('review vòng 4: flush lỗi sau khi ghi thì báo "không chắc đã ghi xong" và không ghi nhận requestId', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        gas.faults.flush = 1;
+
+        const reply = sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'req-1' });
+
+        assert.match(reply.error, /Không chắc/);
+        assert.equal(sync(gas, { appliedCheck: 'req-1' }).applied, false);
+    });
+
     test('SEC-005: ô quá 50.000 ký tự bị từ chối trước khi xóa, Sheet giữ nguyên', () => {
         const gas = createGas({ sheets: { Transactions: existingSheet() } });
         const before = gas.get();
         const huge = 'x'.repeat(49001);
 
         assert.match(sync(gas, { upserts: [row({ id: 'TX_BIG', note: huge })] }).error, /quá dài/);
-        assert.match(sync(gas, { replace: true, upserts: [row({ note: huge })] }).error, /quá dài/);
+        assert.match(
+            sync(gas, { replace: true, upserts: [row({ note: huge })], meta: {} }).error,
+            /quá dài/,
+        );
         assert.deepEqual(gas.get(), before);
     });
 

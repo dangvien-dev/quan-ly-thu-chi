@@ -112,6 +112,10 @@ function createGas({
     // sizes: { [sheet name]: { maxRows, maxColumns } } for sheets smaller than Google's default.
     // stats: how often the script took the lock and flushed (and whether it held the lock then).
     const stats = { locks: 0, held: false, flushes: 0, flushesOutsideLock: 0 };
+    // Script Properties the script may also write (a copy: the options object may be frozen).
+    const props = { ...properties };
+    // faults.flush: how many coming SpreadsheetApp.flush() calls throw.
+    const faults = { flush: 0 };
     const book = new Map(
         Object.entries(sheets).map(([name, grid]) => [name, createSheet(grid, sizes[name])]),
     );
@@ -119,6 +123,10 @@ function createGas({
         SpreadsheetApp: {
             flush() {
                 stats.flushes++;
+                if (faults.flush > 0) {
+                    faults.flush--;
+                    throw new Error('Service error: Spreadsheets (flush)');
+                }
                 if (!stats.held) stats.flushesOutsideLock++;
             },
             getActiveSpreadsheet: () => ({
@@ -145,7 +153,12 @@ function createGas({
             }),
         },
         PropertiesService: {
-            getScriptProperties: () => ({ getProperty: (key) => properties[key] ?? null }),
+            getScriptProperties: () => ({
+                getProperty: (key) => props[key] ?? null,
+                setProperty(key, value) {
+                    props[key] = String(value);
+                },
+            }),
         },
         ContentService: {
             MimeType: { JSON: 'json', JAVASCRIPT: 'javascript' },
@@ -185,6 +198,8 @@ function createGas({
     return {
         book,
         stats,
+        faults,
+        properties: props,
         sheet: (name) => book.get(name),
         /** GET request; returns the parsed JSON body. */
         get: (parameter = {}) => respond(sandbox.doGet({ parameter })),

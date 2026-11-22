@@ -136,16 +136,66 @@ function withLock_(action) {
     lock.waitLock(20000);
 
     try {
-        return action();
-    } finally {
+        const result = action();
+
         // Apply pending spreadsheet changes while the lock is still held, so the next request
         // (or reader) starts from what this one wrote.
-        try {
-            SpreadsheetApp.flush();
-        } finally {
-            lock.releaseLock();
-        }
+        flushOrUncertain_();
+
+        return result;
+    } finally {
+        lock.releaseLock();
     }
+}
+
+/**
+ * SpreadsheetApp.flush(), with its failure reported as what it is: the writes before it may or
+ * may not have reached the sheet, so neither a rollback nor a blind retry is known to be safe.
+ */
+function flushOrUncertain_() {
+    try {
+        SpreadsheetApp.flush();
+    } catch (error) {
+        throw new Error(
+            'Không chắc dữ liệu đã được ghi xong (' +
+                String(error && error.message ? error.message : error) +
+                '). Mở Google Sheet kiểm tra trước khi sửa tay; app sẽ hỏi lại server trước khi gửi lại.',
+        );
+    }
+}
+
+// --- REQUEST IDS ---
+// Ids of the last write requests that were applied (Script Property, newest last), so a request
+// that is sent again after its reply was lost is not applied a second time.
+const APPLIED_REQUESTS_KEY = 'FM_APPLIED_REQUESTS';
+const MAX_APPLIED_REQUESTS = 50;
+
+function appliedRequests_() {
+    try {
+        const list = JSON.parse(
+            PropertiesService.getScriptProperties().getProperty(APPLIED_REQUESTS_KEY) || '[]',
+        );
+
+        return Array.isArray(list) ? list : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+function wasApplied_(id) {
+    return appliedRequests_().indexOf(id) !== -1;
+}
+
+function recordApplied_(id) {
+    const list = appliedRequests_().filter(function (item) {
+        return item !== id;
+    });
+
+    list.push(id);
+    PropertiesService.getScriptProperties().setProperty(
+        APPLIED_REQUESTS_KEY,
+        JSON.stringify(list.slice(-MAX_APPLIED_REQUESTS)),
+    );
 }
 
 /**
@@ -494,8 +544,12 @@ function validateSyncBody_(body) {
     const fail = function (what) {
         throw new Error('Yêu cầu đồng bộ không hợp lệ: ' + what);
     };
+    // A field may be left out; when it is present (null included) it must have its type.
     const optional = function (value, check) {
-        return value === undefined || value === null || check(value);
+        return value === undefined || check(value);
+    };
+    const requestKey = function (value) {
+        return typeof value === 'string' && value.length > 0 && value.length <= 100;
     };
 
     if (!optional(body.replace, isBoolean_)) fail('replace phải là true / false');
@@ -503,6 +557,14 @@ function validateSyncBody_(body) {
     if (!optional(body.upserts, Array.isArray)) fail('upserts phải là một danh sách');
     if (!optional(body.deletes, Array.isArray)) fail('deletes phải là một danh sách');
     if (!optional(body.meta, isPlainObject_)) fail('meta phải là một đối tượng');
+    if (!optional(body.requestId, requestKey)) fail('requestId');
+    if (!optional(body.appliedCheck, requestKey)) fail('appliedCheck');
+
+    // A replace states the complete content: both lists must be there explicitly.
+    if (body.replace === true) {
+        if (!Array.isArray(body.upserts)) fail('replace cần upserts');
+        if (!isPlainObject_(body.meta)) fail('replace cần meta');
+    }
 
     (body.deletes || []).forEach(function (id, index) {
         if (typeof id !== 'string' && typeof id !== 'number') fail('deletes[' + index + ']');
@@ -667,8 +729,8 @@ function restoreDataRows_(snapshot) {
  * planMetaChanges_). Apps Script has no transactions, so the writes themselves are best effort:
  * a failed write puts its sheet back, a Meta write that fails after Transactions was rewritten
  * puts Transactions back, and when a rollback itself fails the error says so explicitly.
- * Replaying the same request gives the same state (upserts by id and updatedAt, deletes by id,
- * replace), so a client that lost the reply can simply send it again.
+ * A request with a requestId is applied at most once (FM_APPLIED_REQUESTS); a client that lost
+ * a reply asks with appliedCheck whether its last request went through before sending again.
  */
 function handleSync_(body) {
     if (!body || typeof body !== 'object' || !isAuthorized_(body.token)) {
@@ -676,6 +738,13 @@ function handleSync_(body) {
     }
 
     validateSyncBody_(body);
+
+    // Sent again after its reply was lost: it was applied already, and applying it again could
+    // undo what another device wrote in between (a replace drops its rows, a delete removes a row
+    // it re-created). Only the current state is returned.
+    if (body.requestId && wasApplied_(body.requestId)) {
+        return withApplied_(readState_(), true);
+    }
 
     const transactions = planTransactionChanges_(body);
     const meta = planMetaChanges_(body.meta, body.replace === true);
@@ -700,13 +769,29 @@ function handleSync_(body) {
         writeMetaRows_(meta);
     }
 
+    // Recorded only once the writes are known to be in the sheet.
+    if (body.requestId) {
+        flushOrUncertain_();
+        recordApplied_(body.requestId);
+    }
+
+    let state;
+
     try {
-        return readState_();
+        state = readState_();
     } catch (error) {
         throw new Error(
             'Đã ghi xong nhưng không đọc lại được trạng thái (' +
                 String(error && error.message ? error.message : error) +
-                '); app sẽ gửi lại, việc này an toàn.',
+                '); app sẽ hỏi lại server trước khi gửi lại.',
         );
     }
+
+    return body.appliedCheck ? withApplied_(state, wasApplied_(body.appliedCheck)) : state;
+}
+
+function withApplied_(state, applied) {
+    state.applied = applied;
+
+    return state;
 }
