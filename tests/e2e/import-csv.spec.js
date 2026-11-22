@@ -820,6 +820,69 @@ test.describe('Nhập sao kê: id không va chạm giữa các lần nhập (rev
         await expect(rowsLocator(page).first()).toContainText('Đã nhập từ lần trước');
     });
 
+    test('review vòng 16: sổ có giao dịch id 32-bit cũ, dòng mới cùng ngày, nguồn, loại và SỐ TIỀN nhưng ghi chú khác (hash 32-bit trùng): không bị coi là đã nhập, hiện là có thể trùng, chưa chọn, nhập được nếu chọn', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+        // The same date, source, direction and amount; only the note differs, and the 32-bit hash
+        // of the key is the same (13597401): the amount is no proof that it is the same row.
+        const AMOUNT = 11814;
+        const id = await legacyId(page, AMOUNT, 'muc 00043zx');
+
+        expect(await legacyId(page, AMOUNT, 'muc 000bpad')).toBe(id);
+
+        await page.evaluate(
+            (entry) => {
+                transactions = [entry];
+                saveDataLocally();
+            },
+            oldImport(id, AMOUNT, 'muc 00043zx'),
+        );
+
+        await openImport(page);
+        await chooseFile(page, csv('muc 000bpad', '-11.814'), CASH);
+        await toPreview(page);
+
+        const row = rowsLocator(page).first();
+
+        await expect(row).toContainText('Có thể trùng');
+        await expect(row).not.toContainText('Đã nhập từ lần trước');
+        await expect(row.locator('input[data-field="include"]')).not.toBeChecked();
+
+        await row.locator('input[data-field="include"]').check();
+        await page.click('#import-commit');
+        await expect(page.locator('#importModal')).not.toHaveClass(/open/);
+
+        const list = await stored(page);
+
+        expect(list.map((entry) => entry.note).sort()).toEqual(
+            ['muc 000bpad', 'muc 00043zx'].sort(),
+        );
+        expect(new Set(list.map((entry) => entry.id)).size).toBe(2);
+    });
+
+    test('review vòng 16: cùng dòng, ghi chú chỉ khác hoa thường, dấu cách hay thẻ #đã thêm sau khi nhập: vẫn là đã nhập, không nhân đôi', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+        const id = await legacyId(page, 137236, 'muc 105244');
+
+        // The user added a tag and changed the case after importing.
+        await page.evaluate(
+            (entry) => {
+                transactions = [entry];
+                saveDataLocally();
+            },
+            oldImport(id, 137236, 'MUC  105244 #khachA'),
+        );
+
+        await openImport(page);
+        await chooseFile(page, FILE_A(), CASH);
+        await toPreview(page);
+
+        await expect(rowsLocator(page).first()).toContainText('Đã nhập từ lần trước');
+    });
+
     test('sổ có sẵn giao dịch id 32-bit cũ của một dòng KHÁC cùng hash: dòng mới không bị bỏ âm thầm mà hiện là có thể trùng, chưa chọn, và nhập được nếu bạn chọn', async ({
         app,
     }) => {

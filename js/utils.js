@@ -1349,16 +1349,24 @@ function markImportDuplicates(items, existing, sourceName) {
     const ids = new Set(byId.keys());
     const pool = new Map();
     // A transaction that carries the id this row had in older versions (a 32-bit hash). That hash
-    // can be shared by a different row, so it only counts as "the same row" when the transaction has
-    // the same effect on the source; if not, a person decides (the row is shown, unticked).
+    // can be shared by a different row, and the amount alone does not tell them apart (two rows on
+    // one day can have the same amount), so it only counts as "the same row" when the transaction
+    // also has the same effect on the source AND the same note (as the key was made: lower case, no
+    // diacritics, one space; a #tag added after the import is not part of it). What cannot be proven
+    // is shown, unticked, and a person decides.
     const legacyOf = (item) => {
         const found = item.legacyId && item.legacyId !== item.id ? byId.get(item.legacyId) : null;
 
         if (!found) return null;
 
         const effect = item.type === 'income' ? item.amount : -item.amount;
+        const note = (text) => normalizeSearchText(extractTags(String(text ?? '')).text);
 
-        return { id: found.id, same: sourceEffect(found, sourceName) === effect };
+        return {
+            id: found.id,
+            same:
+                sourceEffect(found, sourceName) === effect && note(found.note) === note(item.note),
+        };
     };
 
     existing.forEach((transaction) => {

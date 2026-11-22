@@ -3533,3 +3533,73 @@ test('markImportDuplicates: id mạnh trùng là đã nhập; id cũ 32-bit trù
     // The review's own pair, from a book whose A row has the OLD id: B is shown, unticked.
     assert.deepEqual(first(mark([b], [book(a.legacyId, 11814)])), ['duplicate', false, a.legacyId]);
 });
+
+test('markImportDuplicates: id cũ 32-bit + cùng tác động chưa đủ: phải cùng ghi chú (chuẩn hóa, bỏ thẻ), không thì để người dùng quyết định', () => {
+    const mark = (items, existing, source = 'Tiền Mặt') =>
+        plain(
+            run(
+                `markImportDuplicates(${JSON.stringify(items)},${JSON.stringify(existing)},${JSON.stringify(source)})`,
+            ),
+        );
+    // Two rows with the same date, source, direction and amount whose old 32-bit ids are the same
+    // (c9f627a7): only the note tells them apart.
+    const LEGACY = 'TX_IMP_20261122_c9f627a7';
+    const item = (note) => ({
+        id: `TX_IMP_20261122_${note === 'muc 0009rnw' ? 'b926371f16410984' : '7e4e3fe9cdd6982e'}`,
+        legacyId: LEGACY,
+        date: '2026-11-22',
+        type: 'expense',
+        amount: 11814,
+        note,
+    });
+    const book = (note) => ({
+        id: LEGACY,
+        date: '2026-11-22',
+        type: 'expense',
+        source: 'Tiền Mặt',
+        amount: 11814,
+        note,
+    });
+    const first = (marked) => [marked[0].status, marked[0].include, marked[0].match];
+
+    assert.equal(run('hashText("Tiền Mặt|2026-11-22|expense|11814|muc 0009rnw|")'), 'c9f627a7');
+    assert.equal(run('hashText("Tiền Mặt|2026-11-22|expense|11814|muc 000apba|")'), 'c9f627a7');
+
+    // The same row (same note): imported before.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('muc 0009rnw')])), [
+        'imported',
+        false,
+        '',
+    ]);
+    // The same row, the note changed in case / spacing / diacritics, or a tag added later.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('MUC   0009rnw')])), [
+        'imported',
+        false,
+        '',
+    ]);
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('muc 0009rnw #khachA #vip')])), [
+        'imported',
+        false,
+        '',
+    ]);
+    assert.deepEqual(first(mark([item('Cà phê')], [book('ca phe')])), ['imported', false, '']);
+
+    // Another row with the same amount and the same old id: NOT the same, a person decides.
+    assert.deepEqual(first(mark([item('muc 000apba')], [book('muc 0009rnw')])), [
+        'duplicate',
+        false,
+        LEGACY,
+    ]);
+    // A note that was rewritten completely cannot be proven to be the same row either.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [book('mua do an sang')])), [
+        'duplicate',
+        false,
+        LEGACY,
+    ]);
+    // A book entry with no note at all.
+    assert.deepEqual(first(mark([item('muc 0009rnw')], [{ ...book(''), note: undefined }])), [
+        'duplicate',
+        false,
+        LEGACY,
+    ]);
+});
