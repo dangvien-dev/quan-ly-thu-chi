@@ -139,11 +139,15 @@ function readMetaUpdated() {
     return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
 }
 
-/** Record when a meta value last changed (an ISO time; the sync keeps the newest). */
-function stampMeta(key, isoTime = new Date().toISOString()) {
+/**
+ * Record when a meta value last changed (an ISO time; the sync keeps the newest). A local change
+ * is stamped strictly after the previous stamp of the same value (nextStamp); a stamp that comes
+ * from the server is stored as it is.
+ */
+function stampMeta(key, isoTime) {
     const updated = readMetaUpdated();
 
-    updated[key] = isoTime;
+    updated[key] = isoTime ?? nextStamp(updated[key]);
     localStorage.setItem(META_UPDATED_KEY, JSON.stringify(updated));
 }
 

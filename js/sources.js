@@ -748,7 +748,7 @@ function renameSource(oldName, newName) {
             ...transaction,
             source: transaction.source === oldName ? newName : transaction.source,
             targetSource: transaction.targetSource === oldName ? newName : transaction.targetSource,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nextStamp(transaction.updatedAt),
         };
     });
 

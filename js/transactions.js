@@ -42,7 +42,11 @@ function handleFormSubmit(e) {
         return;
     }
 
-    const stamp = new Date().toISOString();
+    const edited = editingId
+        ? transactions.find((transaction) => transaction.id === editingId)
+        : null;
+    // After the stamp this transaction already has: two edits never share one (see nextStamp).
+    const stamp = nextStamp(edited ? edited.updatedAt : '');
     const wasEditing = Boolean(editingId);
     const savedId = editingId || 'TX_' + Date.now();
 

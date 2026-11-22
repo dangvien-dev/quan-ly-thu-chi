@@ -3218,3 +3218,28 @@ test('fingerprintOf: cùng nội dung (khác thứ tự khóa) cùng vân tay; k
     );
     assert.match(fp('{ a: 1 }'), /^[0-9a-f]{8}\.[0-9a-z]+$/);
 });
+
+test('nextStamp: luôn là dấu sau hẳn dấu trước, dù đồng hồ không nhích, đứng yên hay lùi', () => {
+    const next = (previous, nowIso) =>
+        run(`nextStamp(${JSON.stringify(previous)}, ${Date.parse(nowIso)})`);
+    const T = '2026-11-22T10:00:00.000Z';
+
+    assert.equal(next('', T), T, 'chưa có dấu trước: giờ hiện tại');
+    assert.equal(next('khong-phai-ngay', T), T, 'dấu trước hỏng: giờ hiện tại');
+    assert.equal(next('2026-11-22T09:00:00.000Z', T), T, 'dấu trước cũ hơn: giờ hiện tại');
+    assert.equal(next(T, T), '2026-11-22T10:00:00.001Z', 'cùng mili-giây: sau 1 ms');
+    assert.equal(next('2026-11-22T10:30:00.000Z', T), '2026-11-22T10:30:00.001Z', 'đồng hồ lùi');
+    assert.equal(next(undefined, T), T);
+
+    // Fed back into itself within one instant it keeps increasing, and strings compare as time does.
+    let stamp = '';
+
+    for (let i = 0; i < 5; i++) {
+        const following = next(stamp, T);
+
+        assert.ok(following > stamp, `${following} > ${stamp}`);
+        stamp = following;
+    }
+
+    assert.equal(stamp, '2026-11-22T10:00:00.004Z');
+});

@@ -115,7 +115,6 @@ function updateTagRenameHint() {
 
 /** Rewrite the notes that carry `from` so they carry `to`; returns how many transactions changed. */
 function applyTagRename(from, to) {
-    const stamp = new Date().toISOString();
     const changedIds = [];
 
     transactions = transactions.map((transaction) => {
@@ -125,7 +124,7 @@ function applyTagRename(from, to) {
 
         changedIds.push(transaction.id);
 
-        return { ...transaction, note, updatedAt: stamp };
+        return { ...transaction, note, updatedAt: nextStamp(transaction.updatedAt) };
     });
 
     if (changedIds.length) {

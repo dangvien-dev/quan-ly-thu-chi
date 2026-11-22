@@ -2469,6 +2469,155 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
     });
 
+    test('review vòng 13: giao dịch sửa hai lần cùng dấu thời gian, bản gửi đầu báo lỗi ở client nhưng tới server MUỘN: Sheet giữ ghi chú lần hai, tải lại vẫn đúng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: '2026-11-22T10:00:00.000Z', // the clock does not move
+        });
+        // The real edit form: whatever stamp the app gives the edit is what is under test.
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+
+        // R1: the first edit. The client is told it failed; it is still on its way.
+        a.state.lateWrites = 1;
+        await editNote('lan-mot');
+        await wait(500);
+        expect(a.state.late).toHaveLength(1);
+        expect(notesOf(serverRows(server))).toEqual(['goc']);
+
+        // R2: the second edit, sent while R1 has still not reached the Sheet.
+        await editNote('lan-hai');
+        await wait(1000);
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+
+        // R1 reaches the Sheet at last. It is older: it must not put its note back.
+        a.state.arriveLate(0);
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+
+        await a.page.reload();
+        await wait(1000);
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect(
+            await a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A').note),
+        ).toBe('lan-hai');
+    });
+
+    test('review vòng 13: meta sửa hai lần cùng dấu thời gian, bản gửi đầu tới server MUỘN: Sheet giữ giá trị lần hai, tải lại vẫn đúng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: '2026-11-22T10:00:00.000Z',
+        });
+        const setBudget = (value) =>
+            a.page.evaluate((amount) => {
+                budgets['Ăn uống'] = amount;
+                saveMeta('budgets');
+                syncToGoogleSheet();
+            }, value);
+        const sheetBudget = () => server.get({ v: '2', token: TOKEN }).meta.budgets.value;
+
+        a.state.lateWrites = 1;
+        await setBudget(100);
+        await wait(500);
+        expect(a.state.late).toHaveLength(1);
+
+        await setBudget(200);
+        await wait(1000);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 200 });
+
+        a.state.arriveLate(0); // the older value, at last
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 200 });
+
+        await a.page.reload();
+        await wait(1000);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 200 });
+        expect(await a.page.evaluate(() => budgets['Ăn uống'])).toBe(200);
+    });
+
+    test('review vòng 13: đồng hồ máy bị chỉnh lùi sau lần sửa đầu: lần sửa hai vẫn có dấu mới hơn nên Sheet và máy cùng giữ nó', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: '2026-11-22T10:00:00.000Z' });
+        // The real edit form: whatever stamp the app gives the edit is what is under test.
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        await editNote('lan-mot');
+        await wait(600);
+        expect(notesOf(serverRows(server))).toEqual(['lan-mot']);
+
+        // The clock is set back an hour; the edit that follows must still win.
+        await a.page.clock.setFixedTime(new Date('2026-11-22T09:00:00.000Z'));
+        await editNote('lan-hai');
+        await wait(1000);
+
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect((await localRow()).note).toBe('lan-hai');
+        expect((await localRow()).updatedAt > '2026-11-22T10:00:00.000Z').toBe(true);
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 13: đổi tên thẻ và đổi tên nguồn cũng đóng dấu sau hẳn dấu trước của dòng (đồng hồ không nhích)', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_T', { note: 'cafe #khach' }), row('TX_S')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: NOW });
+        const stamps = () =>
+            a.page.evaluate(() =>
+                Object.fromEntries(transactions.map((item) => [item.id, item.updatedAt])),
+            );
+
+        // Both rows already carry the stamp the clock shows now.
+        await a.page.evaluate((now) => {
+            transactions = transactions.map((item) => ({ ...item, updatedAt: now }));
+            saveDataLocally();
+        }, NOW);
+
+        await a.page.evaluate(() => applyTagRename('khach', 'vip'));
+        expect(await stamps()).toEqual({
+            TX_T: '2026-11-22T10:00:00.001Z', // renamed: after its previous stamp
+            TX_S: NOW, // not touched
+        });
+
+        await a.page.evaluate(() => renameSource('Tiền Mặt', 'Ví Mới'));
+        expect(await stamps()).toEqual({
+            TX_T: '2026-11-22T10:00:00.002Z',
+            TX_S: '2026-11-22T10:00:00.001Z',
+        });
+
+        // And the Sheet takes both changes once they are sent (as the dialogs do).
+        await a.page.evaluate(() => syncToGoogleSheet());
+        await wait(900);
+
+        const sheet = Object.fromEntries(serverRows(server).map((item) => [item.id, item]));
+
+        expect(sheet.TX_T.note).toContain('#vip');
+        expect(sheet.TX_S.source).toBe('Ví Mới');
+    });
+
     test('review vòng 6: khôi phục sao lưu trên máy chưa có URL: lấy URL trong file và vẫn thay toàn bộ Sheet (không bị coi là đổi URL)', async ({
         app,
     }) => {

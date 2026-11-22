@@ -1057,6 +1057,20 @@ function hashText(text) {
     return hash.toString(16).padStart(8, '0');
 }
 
+/**
+ * The updatedAt stamp for an edit of something that already has one (`previous`): the current time,
+ * but always strictly after `previous`. The server keeps the newest version by this stamp (equal
+ * stamps: the one that arrives last), so two edits of the same record must never share a stamp or go
+ * backwards, whatever the clock does: the same millisecond, a clock that did not move, a clock that
+ * was set back, a device whose clock runs behind another's. Otherwise an older request that arrives
+ * late (a reply that was lost, a slow network) takes the place of the newer one on the Sheet.
+ */
+function nextStamp(previous, nowMs = Date.now()) {
+    const before = Date.parse(previous);
+
+    return new Date(Number.isFinite(before) && before >= nowMs ? before + 1 : nowMs).toISOString();
+}
+
 /** JSON with object keys in sorted order and undefined left out: the same content, the same text. */
 function canonicalJson(value) {
     if (Array.isArray(value)) {
