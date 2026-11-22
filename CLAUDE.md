@@ -13,6 +13,10 @@ File này được Claude Code tự đọc ở đầu mỗi phiên. Giữ nó ng
     - Chỉ 7 cột `id,date,type,source,category,amount,note`: không có `targetSource`, `updatedAt`, không đồng bộ danh mục/nguồn/số dư.
 - `Code.gs` v2 **đã được chủ repo deploy trên Google thật (30/10/2026)** và điện thoại + máy tính đồng bộ được. Sự cố lúc deploy: một **New deployment** mặc định "Thực thi bằng: Người dùng truy cập" + "Chỉ mình tôi" làm trình duyệt báo `Failed to fetch` (Google trả trang đăng nhập không có CORS), trong khi điện thoại còn dùng URL deployment cũ nên vẫn "Đã lưu" — phải là **Tôi** + **Bất kỳ ai** và dán cùng URL cho mọi máy (README "Nâng cấp lên v2"). Vẫn chưa kiểm chứng cách POST `text/plain` đọc phản hồi trên mọi trình duyệt (v2 có dự phòng `GET ?action=sync&payload=` khi POST bị chặn).
 
+## Học từ lỗi và review
+
+Mỗi lần phát hiện lỗi hoặc xử lý một vòng review: **đọc `docs/review-lessons.md` trước, cập nhật sau** (họ lỗi, bất biến, ô ma trận kèm tên test, kết quả kiểm tra đột biến). Hook `UserPromptSubmit` (`.claude/settings.json`, `.claude/hooks/review-lessons.js`, có unit test `tests/unit/review-hook.test.js`) tự nhắc khi lời nhắn có `RV vòng N` / `review vòng N` hoặc `lỗi` / `bug` / `sự cố`. Hook chỉ nhắc, không chặn: việc học vẫn do người làm thực hiện.
+
 ## Cấu trúc
 
 `index.html` nạp các script theo thứ tự (hàm/biến là global, không dùng module):
