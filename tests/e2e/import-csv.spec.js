@@ -342,7 +342,7 @@ test.describe('Nhập sao kê: xem trước và ghi giao dịch', () => {
 
         expect(list).toHaveLength(4);
         expect(list.every((entry) => entry.source === BANK && entry.updatedAt)).toBe(true);
-        expect(list.every((entry) => /^TX_IMP_2026102\d_[0-9a-f]{8}$/.test(entry.id))).toBe(true);
+        expect(list.every((entry) => /^TX_IMP_2026102\d_[0-9a-f]{16}$/.test(entry.id))).toBe(true);
 
         const byNote = (text) => list.find((entry) => entry.note.startsWith(text));
 
@@ -732,5 +732,349 @@ test.describe('Nhập sao kê: giao diện', () => {
         const results = await scanA11y(page, '#importModal');
 
         expect(results.violations.map((violation) => violation.id)).toEqual([]);
+    });
+});
+
+test.describe('Nhập sao kê: id không va chạm giữa các lần nhập (review vòng 15)', () => {
+    // Two statement rows on the same date and source whose 32-bit hash is the same (efdad98d):
+    //   Tiền Mặt|2026-10-22|expense|137236|muc 105244|   and   Tiền Mặt|2026-10-22|expense|42022|muc 116938|
+    const CASH = 'Tiền Mặt';
+    const csv = (note, amount) => file(`Ngày,Nội dung,Số tiền\r\n22/10/2026,${note},${amount}`);
+    const FILE_A = () => csv('muc 105244', '-137.236');
+    const FILE_B = () => csv('muc 116938', '-42.022');
+    const legacyId = (page, amount, note) =>
+        page.evaluate(
+            ([value, text]) =>
+                `TX_IMP_20261022_${hashText(`Tiền Mặt|2026-10-22|expense|${value}|${text}|`)}`,
+            [amount, note],
+        );
+    const oldImport = (id, amount, note) => ({
+        id,
+        date: '2026-10-22',
+        type: 'expense',
+        source: CASH,
+        targetSource: null,
+        category: 'Chưa phân loại',
+        amount,
+        note,
+        updatedAt: '2026-10-22T03:00:00.000Z',
+    });
+
+    test('hai file nhập riêng, mỗi file một dòng, hai dòng cùng hash 32-bit: có HAI giao dịch với id khác nhau', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+
+        // The two keys really do collide under the 32-bit hash the ids used to be made of.
+        expect(await legacyId(page, 137236, 'muc 105244')).toBe(
+            await legacyId(page, 42022, 'muc 116938'),
+        );
+
+        await importStatement(page, FILE_A(), CASH);
+
+        // The second file is a different row: it is new, not "imported before".
+        await openImport(page);
+        await chooseFile(page, FILE_B(), CASH);
+        await toPreview(page);
+        await expect(rowsLocator(page).first()).not.toContainText('Đã nhập từ lần trước');
+        await page.click('#import-commit');
+        await expect(page.locator('#importModal')).not.toHaveClass(/open/);
+
+        const list = await stored(page);
+
+        expect(list.map((entry) => entry.amount).sort((a, b) => a - b)).toEqual([42022, 137236]);
+        expect(new Set(list.map((entry) => entry.id)).size).toBe(2);
+        expect(list.every((entry) => /^TX_IMP_20261022_[0-9a-f]{16}$/.test(entry.id))).toBe(true);
+    });
+
+    test('nhập lại cùng một file vẫn không nhân đôi (id mới cũng ổn định)', async ({ app }) => {
+        const { page } = await open(app);
+
+        await importStatement(page, FILE_A(), CASH);
+        await openImport(page);
+        await chooseFile(page, FILE_A(), CASH);
+        await toPreview(page);
+
+        await expect(rowsLocator(page).first()).toContainText('Đã nhập từ lần trước');
+        expect(await stored(page)).toHaveLength(1);
+    });
+
+    test('sổ có sẵn giao dịch nhập bằng id 32-bit cũ: nhập lại đúng dòng đó vẫn được nhận là đã nhập, không nhân đôi', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+        const id = await legacyId(page, 137236, 'muc 105244');
+
+        await page.evaluate(
+            (entry) => {
+                transactions = [entry];
+                saveDataLocally();
+            },
+            oldImport(id, 137236, 'muc 105244'),
+        );
+
+        await openImport(page);
+        await chooseFile(page, FILE_A(), CASH);
+        await toPreview(page);
+
+        await expect(rowsLocator(page).first()).toContainText('Đã nhập từ lần trước');
+    });
+
+    test('review vòng 16: sổ có giao dịch id 32-bit cũ, dòng mới cùng ngày, nguồn, loại và SỐ TIỀN nhưng ghi chú khác (hash 32-bit trùng): không bị coi là đã nhập, hiện là có thể trùng, chưa chọn, nhập được nếu chọn', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+        // The same date, source, direction and amount; only the note differs, and the 32-bit hash
+        // of the key is the same (13597401): the amount is no proof that it is the same row.
+        const AMOUNT = 11814;
+        const id = await legacyId(page, AMOUNT, 'muc 00043zx');
+
+        expect(await legacyId(page, AMOUNT, 'muc 000bpad')).toBe(id);
+
+        await page.evaluate(
+            (entry) => {
+                transactions = [entry];
+                saveDataLocally();
+            },
+            oldImport(id, AMOUNT, 'muc 00043zx'),
+        );
+
+        await openImport(page);
+        await chooseFile(page, csv('muc 000bpad', '-11.814'), CASH);
+        await toPreview(page);
+
+        const row = rowsLocator(page).first();
+
+        await expect(row).toContainText('Có thể trùng');
+        await expect(row).not.toContainText('Đã nhập từ lần trước');
+        await expect(row.locator('input[data-field="include"]')).not.toBeChecked();
+
+        await row.locator('input[data-field="include"]').check();
+        await page.click('#import-commit');
+        await expect(page.locator('#importModal')).not.toHaveClass(/open/);
+
+        const list = await stored(page);
+
+        expect(list.map((entry) => entry.note).sort()).toEqual(
+            ['muc 000bpad', 'muc 00043zx'].sort(),
+        );
+        expect(new Set(list.map((entry) => entry.id)).size).toBe(2);
+    });
+
+    test('review vòng 16: cùng dòng, ghi chú chỉ khác hoa thường, dấu cách hay thẻ #đã thêm sau khi nhập: vẫn là đã nhập, không nhân đôi', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+        const id = await legacyId(page, 137236, 'muc 105244');
+
+        // The user added a tag and changed the case after importing.
+        await page.evaluate(
+            (entry) => {
+                transactions = [entry];
+                saveDataLocally();
+            },
+            oldImport(id, 137236, 'MUC  105244 #khachA'),
+        );
+
+        await openImport(page);
+        await chooseFile(page, FILE_A(), CASH);
+        await toPreview(page);
+
+        await expect(rowsLocator(page).first()).toContainText('Đã nhập từ lần trước');
+    });
+
+    test('sổ có sẵn giao dịch id 32-bit cũ của một dòng KHÁC cùng hash: dòng mới không bị bỏ âm thầm mà hiện là có thể trùng, chưa chọn, và nhập được nếu bạn chọn', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+        const id = await legacyId(page, 137236, 'muc 105244');
+
+        await page.evaluate(
+            (entry) => {
+                transactions = [entry];
+                saveDataLocally();
+            },
+            oldImport(id, 137236, 'muc 105244'),
+        );
+
+        await openImport(page);
+        await chooseFile(page, FILE_B(), CASH);
+        await toPreview(page);
+
+        const row = rowsLocator(page).first();
+
+        await expect(row).toContainText('Có thể trùng');
+        await expect(row.locator('input[data-field="include"]')).not.toBeChecked();
+
+        await row.locator('input[data-field="include"]').check();
+        await page.click('#import-commit');
+        await expect(page.locator('#importModal')).not.toHaveClass(/open/);
+
+        const list = await stored(page);
+
+        expect(list.map((entry) => entry.amount).sort((a, b) => a - b)).toEqual([42022, 137236]);
+        expect(new Set(list.map((entry) => entry.id)).size).toBe(2);
+    });
+});
+
+test.describe('Nhập sao kê: khóa của id giữ ranh giới từng trường (review vòng 17)', () => {
+    // Two different rows that used to be hashed from the very same text,
+    //   Tiền Mặt|2026-11-22|expense|11814|cafe|pay|123
+    // because a "|" inside the note (A) or the reference (B) moved the boundary.
+    const CASH = 'Tiền Mặt';
+    const head = 'Ngày,Nội dung,Số tiền,Mã giao dịch';
+    const FILE_A = () => file(`${head}\r\n22/11/2026,"cafe|pay",-11.814,123`, 'a.csv');
+    const FILE_B = () => file(`${head}\r\n22/11/2026,cafe,-11.814,"pay|123"`, 'b.csv');
+    const legacyKeyId = (page) =>
+        page.evaluate(
+            () => `TX_IMP_20261122_${hashText('Tiền Mặt|2026-11-22|expense|11814|cafe|pay|123')}`,
+        );
+    const oldImport = (id, note) => ({
+        id,
+        date: '2026-11-22',
+        type: 'expense',
+        source: CASH,
+        targetSource: null,
+        category: 'Chưa phân loại',
+        amount: 11814,
+        note,
+        updatedAt: '2026-11-22T03:00:00.000Z',
+    });
+    const closeImport = async (page) => {
+        await page.keyboard.press('Escape');
+        await expect(page.locator('#importModal')).not.toHaveClass(/open/);
+    };
+    const preview = async (page, csv) => {
+        await openImport(page);
+        await chooseFile(page, csv, CASH);
+        await toPreview(page);
+
+        return rowsLocator(page).first();
+    };
+
+    test('hai file nhập riêng (một "|" trong nội dung, một trong mã tham chiếu): đủ HAI giao dịch, id khác nhau, nhập lại từng file không nhân đôi', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+
+        await importStatement(page, FILE_A(), CASH);
+
+        // B is a different row: not "imported before" (it is only like A in amount, date and
+        // source, so it is "maybe a duplicate"), and its checkbox can be ticked.
+        const row = await preview(page, FILE_B());
+
+        await expect(row).not.toContainText('Đã nhập từ lần trước');
+        await expect(row.locator('input[data-field="include"]')).toBeEnabled();
+        await row.locator('input[data-field="include"]').check();
+        await page.click('#import-commit');
+        await expect(page.locator('#importModal')).not.toHaveClass(/open/);
+
+        const list = await stored(page);
+
+        expect(list.map((entry) => entry.note).sort()).toEqual(['cafe', 'cafe|pay']);
+        expect(new Set(list.map((entry) => entry.id)).size).toBe(2);
+        expect(list.every((entry) => /^TX_IMP_20261122_[0-9a-f]{16}$/.test(entry.id))).toBe(true);
+
+        // Each file again: both rows are known now, none is added.
+        await expect(await preview(page, FILE_A())).toContainText('Đã nhập từ lần trước');
+        await closeImport(page);
+        await expect(await preview(page, FILE_B())).toContainText('Đã nhập từ lần trước');
+        expect(await stored(page)).toHaveLength(2);
+    });
+
+    test('sổ cũ (id 32-bit của khóa ghép "|", không lưu mã tham chiếu): đúng dòng đó vẫn là đã nhập, dòng KHÁC cùng khóa ghép là có thể trùng (chưa chọn) và nhập được', async ({
+        app,
+    }) => {
+        const { page } = await open(app);
+        const id = await legacyKeyId(page);
+
+        // The old version gave A and B this very id; the ledger holds A.
+        await page.evaluate(
+            (entry) => {
+                transactions = [entry];
+                saveDataLocally();
+            },
+            oldImport(id, 'cafe|pay'),
+        );
+
+        // A again: recognised, left out.
+        await expect(await preview(page, FILE_A())).toContainText('Đã nhập từ lần trước');
+        await closeImport(page);
+
+        // B: same old id, same amount, but another note: a person decides.
+        const row = await preview(page, FILE_B());
+
+        await expect(row).toContainText('Có thể trùng');
+        await expect(row).not.toContainText('Đã nhập từ lần trước');
+        await expect(row.locator('input[data-field="include"]')).not.toBeChecked();
+        await row.locator('input[data-field="include"]').check();
+        await page.click('#import-commit');
+        await expect(page.locator('#importModal')).not.toHaveClass(/open/);
+
+        const list = await stored(page);
+
+        expect(list.map((entry) => entry.note).sort()).toEqual(['cafe', 'cafe|pay']);
+        expect(new Set(list.map((entry) => entry.id)).size).toBe(2);
+    });
+
+    test('cột đã nhớ cho tiêu đề A|B,C,D không bị dùng cho file có tiêu đề "A|B",C,D (khóa cũ của hai tiêu đề này giống hệt nhau)', async ({
+        app,
+    }) => {
+        // What the previous version stored for the 4 columns "Cột A", "Cột B", "Cột C", "Cột D":
+        // the same key it made for the 3 columns "Cột A|Cột B", "Cột C", "Cột D".
+        const saved = {
+            'cot a|cot b|cot c|cot d': {
+                columns: {
+                    date: 0,
+                    description: 1,
+                    debit: -1,
+                    credit: -1,
+                    amount: 2,
+                    reference: -1,
+                },
+                positiveIsExpense: false,
+            },
+        };
+        const { page } = await open(app, { fm_import_layouts: JSON.stringify(saved) });
+
+        await openImport(page);
+        await chooseFile(
+            page,
+            file(['"Cột A|Cột B",Cột C,Cột D', '05/11/2026,Cơm,-40.000'].join('\r\n'), 'pipe.csv'),
+        );
+        await expect(page.locator('#importMessage')).toContainText('Không thấy dòng tiêu đề');
+        await expect(page.locator('#importMessage')).not.toContainText(
+            'dùng lại các cột bạn chọn lần trước',
+        );
+    });
+
+    test('cột đã nhớ bằng khóa cũ (tiêu đề không có "|") vẫn được dùng lại sau khi khóa đổi cách tính', async ({
+        app,
+    }) => {
+        // What the previous version stored for the header "Cột A,Cột B,Cột C".
+        const saved = {
+            'cot a|cot b|cot c': {
+                columns: {
+                    date: 0,
+                    description: 1,
+                    debit: -1,
+                    credit: -1,
+                    amount: 2,
+                    reference: -1,
+                },
+                positiveIsExpense: false,
+            },
+        };
+        const { page } = await open(app, { fm_import_layouts: JSON.stringify(saved) });
+
+        await openImport(page);
+        await chooseFile(
+            page,
+            file(['Cột A,Cột B,Cột C', '05/11/2026,Cơm,-40.000'].join('\r\n'), 'thang-11.csv'),
+        );
+        await expect(page.locator('#importMessage')).toContainText(
+            'dùng lại các cột bạn chọn lần trước',
+        );
+        await expect(page.locator('#importColAmount')).toHaveValue('2');
     });
 });
