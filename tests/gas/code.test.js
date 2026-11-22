@@ -1027,3 +1027,236 @@ test.describe('mã bảo vệ (FM_TOKEN)', () => {
         assert.equal(gas.get({ token: 'bi-mat' }).length, 3);
     });
 });
+
+test.describe('review vòng 11: appliedCheck có fence, bia mộ và lệnh phá hủy quá cũ', () => {
+    const view = (gas) => gas.get({ v: '2' });
+    const fenceCheck = (gas, id, base) =>
+        sync(gas, {
+            appliedCheck: id,
+            appliedAfter: base.revision,
+            appliedEpoch: base.epoch,
+            fence: true,
+        });
+    const replaceBody = (id, base, upserts = [row({ id: 'TX_BACKUP' })]) => ({
+        replace: true,
+        upserts,
+        meta: {},
+        requestId: id,
+        baseRevision: base.revision,
+        baseEpoch: base.epoch,
+    });
+    /** Enough recorded writes to push the oldest entries out of the log. */
+    let padCount = 0;
+    const padLog = (gas, count = 110) => {
+        for (let i = 0; i < count; i++) {
+            padCount++;
+            sync(gas, { meta: BUDGET({ lan: padCount }), requestId: `pad-${padCount}` });
+        }
+    };
+
+    test('request chưa từng tới bị hủy khi hỏi kèm fence; tới muộn thì bị từ chối và Sheet không đổi', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const base = view(gas);
+        const check = fenceCheck(gas, 'R1', base);
+
+        assert.equal(check.applied, false);
+        assert.equal(check.fenced, true);
+        assert.equal(
+            check.revision,
+            base.revision + 1,
+            'bia mộ lấy một revision, phản hồi đã có nó',
+        );
+
+        // The same intent under a new id is applied, then another device writes.
+        const second = sync(gas, replaceBody('R2', check));
+
+        assert.equal(second.error, undefined);
+        sync(gas, { upserts: [row({ id: 'TX_B' })], requestId: 'other' });
+
+        const sheet = JSON.stringify(gas.sheet('Transactions').grid);
+        const late = sync(gas, replaceBody('R1', base));
+
+        assert.match(late.error, /^request-cancelled/);
+        assert.equal(JSON.stringify(gas.sheet('Transactions').grid), sheet, 'Sheet không đổi');
+        assert.deepEqual(ids(gas).sort(), ['TX_B', 'TX_BACKUP']);
+    });
+
+    test('hỏi fence lần hai cho cùng request: vẫn fenced, không tốn thêm revision', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const base = view(gas);
+        const first = fenceCheck(gas, 'R1', base);
+        const again = fenceCheck(gas, 'R1', base);
+
+        assert.equal(again.applied, false);
+        assert.equal(again.fenced, true);
+        assert.equal(again.revision, first.revision);
+    });
+
+    test('fence không hủy request đã áp dụng hay chưa rõ: fenced = false, không có bia mộ', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+
+        sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'R-ok' });
+
+        const base = view(gas);
+        const done = fenceCheck(gas, 'R-ok', base);
+
+        assert.equal(done.applied, true);
+        assert.equal(done.fenced, false);
+        assert.equal(done.revision, base.revision);
+
+        // A client whose view is from another epoch is told nothing provable, and nothing is cancelled.
+        const unknown = fenceCheck(gas, 'R-u', { revision: 0, epoch: 'e-khac' });
+
+        assert.equal(unknown.applied, 'unknown');
+        assert.equal(unknown.fenced, false);
+        assert.equal(unknown.revision, base.revision);
+        assert.equal(
+            sync(gas, { upserts: [row({ id: 'TX_U' })], requestId: 'R-u' }).error,
+            undefined,
+        );
+    });
+
+    test('không có fence thì như cũ: applied false, không có fenced, không hủy gì (client cũ)', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const base = view(gas);
+        const check = sync(gas, {
+            appliedCheck: 'R1',
+            appliedAfter: base.revision,
+            appliedEpoch: base.epoch,
+        });
+
+        assert.equal(check.applied, false);
+        assert.equal('fenced' in check, false);
+        assert.equal(check.revision, base.revision);
+        assert.equal(
+            sync(gas, replaceBody('R1', base)).error,
+            undefined,
+            'tới muộn thì được áp dụng',
+        );
+    });
+
+    test('bia mộ đã bị đẩy khỏi sổ: request cũ tới muộn vẫn bị từ chối vì floor đã vượt revision nó dựa trên', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const base = view(gas);
+
+        fenceCheck(gas, 'R1', base);
+        padLog(gas); // far more than the log keeps: the tombstone of R1 is dropped
+
+        const before = JSON.stringify(gas.sheet('Transactions').grid);
+        const late = sync(gas, replaceBody('R1', base));
+
+        assert.match(late.error, /^request-stale/);
+        assert.equal(JSON.stringify(gas.sheet('Transactions').grid), before);
+    });
+
+    test('bia mộ là mục đầu tiên bị đẩy khỏi sổ (không còn mục nào khác bị mất): floor đã lên trên revision của request cũ', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const base = view(gas);
+
+        fenceCheck(gas, 'R1', base); // the tombstone is the oldest entry of a log that fills up
+        padLog(gas, 99);
+        assert.match(
+            sync(gas, replaceBody('R1', base)).error,
+            /^request-cancelled/,
+            'còn trong sổ: bị hủy',
+        );
+
+        padLog(gas, 1); // the log holds 100 entries: this one pushes the tombstone out, and only it
+
+        const before = JSON.stringify(gas.sheet('Transactions').grid);
+
+        assert.match(sync(gas, replaceBody('R1', base)).error, /^request-stale/);
+        assert.equal(JSON.stringify(gas.sheet('Transactions').grid), before);
+    });
+
+    test('lệnh phá hủy có baseRevision / baseEpoch: bị từ chối khi sổ không còn bảo chứng được, còn lại được áp dụng', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const base = view(gas);
+
+        sync(gas, { upserts: [row({ id: 'TX_A' })], requestId: 'w1' });
+
+        const now = view(gas);
+        const before = JSON.stringify(gas.sheet('Transactions').grid);
+        const refused = (body) => assert.match(sync(gas, body).error, /^request-stale/);
+
+        // another epoch, and a view newer than the log
+        refused(replaceBody('X1', { revision: base.revision, epoch: 'e-khac' }));
+        refused(replaceBody('X2', { revision: now.revision + 5, epoch: now.epoch }));
+        refused({
+            deletes: ['TX_A'],
+            requestId: 'X3',
+            baseRevision: now.revision + 5,
+            baseEpoch: now.epoch,
+        });
+        assert.equal(JSON.stringify(gas.sheet('Transactions').grid), before);
+
+        // a view the log can still vouch for
+        assert.equal(sync(gas, replaceBody('X4', now)).error, undefined);
+        assert.deepEqual(ids(gas), ['TX_BACKUP']);
+
+        // a change that is not destructive does not care, and neither does an older client
+        assert.equal(
+            sync(gas, {
+                upserts: [row({ id: 'TX_C' })],
+                requestId: 'X5',
+                baseRevision: 999,
+                baseEpoch: 'e-khac',
+            }).error,
+            undefined,
+        );
+        assert.equal(
+            sync(gas, { replace: true, upserts: [row({ id: 'TX_D' })], meta: {}, requestId: 'X6' })
+                .error,
+            undefined,
+        );
+    });
+
+    test('một view cũ hơn floor bị từ chối, một view còn trong sổ thì không', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const old = view(gas);
+
+        padLog(gas);
+
+        const fresh = view(gas);
+
+        assert.ok(fresh.revision > 100);
+        assert.match(sync(gas, replaceBody('Y1', old)).error, /^request-stale/);
+        assert.equal(sync(gas, replaceBody('Y2', fresh)).error, undefined);
+    });
+
+    test('fence / baseRevision / baseEpoch sai kiểu bị từ chối', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const before = ids(gas);
+
+        for (const body of [
+            { appliedCheck: 'R', fence: 'true' },
+            { appliedCheck: 'R', fence: null },
+            { upserts: [], baseRevision: -1 },
+            { upserts: [], baseRevision: '3' },
+            { upserts: [], baseRevision: 1.5 },
+            { upserts: [], baseEpoch: 5 },
+            { upserts: [], baseEpoch: '' },
+        ]) {
+            assert.match(sync(gas, body).error, /không hợp lệ/, JSON.stringify(body));
+        }
+
+        assert.deepEqual(ids(gas), before);
+    });
+
+    test('không ghi được nhật ký để hủy: báo lỗi, không có lời hứa và request đó chưa bị hủy', () => {
+        const gas = createGas({ sheets: { Transactions: existingSheet() } });
+        const base = view(gas);
+
+        gas.faults.property = (key) => key === 'FM_REQUEST_LOG';
+
+        const failed = fenceCheck(gas, 'R1', base);
+
+        gas.faults.property = null;
+
+        assert.match(failed.error, /không hủy được/);
+        assert.equal(failed.fenced, undefined);
+        assert.equal(view(gas).revision, base.revision);
+        // not cancelled: asked again, it is still provably not applied
+        assert.equal(fenceCheck(gas, 'R1', base).fenced, true);
+    });
+});

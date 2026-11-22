@@ -83,6 +83,23 @@ function failStorageOnce(page, method, key) {
 }
 
 /** Behaves like a Code.gs that predates request ids: replies carry neither applied nor revision. */
+/** A Code.gs of before the fence: it neither cancels the request nor says fenced. */
+function withoutFence(server) {
+    const postText = server.postText;
+
+    server.postText = (raw, ...rest) => {
+        const body = JSON.parse(raw);
+
+        delete body.fence;
+
+        const reply = JSON.parse(postText(JSON.stringify(body), ...rest));
+
+        delete reply.fenced;
+
+        return JSON.stringify(reply);
+    };
+}
+
 function withoutRequestIds(server) {
     const postText = server.postText;
 
@@ -2066,6 +2083,271 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         );
         expect(notesOf(serverRows(serverA))).not.toContain('dang-cho');
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 11: replace R1 báo lỗi ở client nhưng tới server MUỘN, sau khi appliedCheck đã trả false và R2 đã áp dụng, rồi máy khác ghi TX_B: R1 bị từ chối, TX_B còn nguyên', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        // R1: the replace of a restored backup. The client is told it failed; it is still on its way.
+        a.state.lateWrites = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(a.state.late).toHaveLength(1);
+        expect(await inflight(a.page)).toBeTruthy();
+        expect(idsOf(serverRows(server))).toEqual(['TX_OLD']); // R1 has not reached the Sheet
+
+        // Later the client asks and is told R1 was not applied, and sends the replace again (R2).
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(800);
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+
+        // Another device adds TX_B.
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'cua-may-khac', updatedAt: '2026-11-22T10:00:00.000Z' })],
+        });
+        expect(idsOf(serverRows(server))).toEqual(['TX_B', 'TX_BACKUP']);
+
+        // R1 finally reaches the Sheet. It must not replace the Sheet a second time.
+        a.state.arriveLate(0);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_B', 'TX_BACKUP']);
+    });
+
+    test('review vòng 11: lệnh xóa R1 báo lỗi ở client nhưng tới server MUỘN, sau khi R2 đã xóa và máy khác tạo lại dòng đó: R1 bị từ chối, dòng còn nguyên', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2', { note: 'se-bi-xoa' })];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // R1: deleting TX_2 here. The client is told it failed; it is still on its way.
+        a.state.lateWrites = 1;
+        await a.page.evaluate(() => {
+            deleteTransaction('TX_2');
+        });
+        await wait(600);
+        expect(a.state.late).toHaveLength(1);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1', 'TX_2']);
+
+        // The client asks, is told R1 was not applied, and sends the deletion again (R2).
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(800);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']);
+
+        // Another device creates TX_2 again (newer).
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_2', { note: 'tao-lai', updatedAt: '2026-11-22T10:00:00.000Z' })],
+        });
+        expect(idsOf(serverRows(server))).toEqual(['TX_1', 'TX_2']);
+
+        // R1 finally reaches the Sheet. It must not delete the row that was created again.
+        a.state.arriveLate(0);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_1', 'TX_2']);
+        expect(notesOf(serverRows(server))).toContain('tao-lai');
+    });
+
+    test('review vòng 11: Code.gs chưa có fence (applied false nhưng không fenced): replace báo lỗi ở client không bị gửi lại, dữ liệu được gộp và có khung cảnh báo', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+
+        withoutFence(server);
+
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        a.state.lateWrites = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(replaces(a.state)).toBe(1);
+
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(1000);
+
+        // "Not applied so far" is no promise: the replace is not sent again, the data is merged.
+        expect(replaces(a.state)).toBe(1);
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP', 'TX_OLD']);
+        await expect(a.page.locator('#sync-review')).toBeVisible();
+        await expect(a.page.locator('#sync-review-list')).toContainText('Không rõ lần ghi trước');
+    });
+
+    test('review vòng 11: máy có view quá cũ so với sổ của server: "Xóa toàn bộ dữ liệu" bị server từ chối, không xóa Sheet, gộp lại và có khung cảnh báo', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({ server, seed: syncedSeed(rows, { fm_script_token: TOKEN }) });
+
+        // Other devices write a lot: the log drops the entries this device's view was based on.
+        for (let i = 0; i < 110; i++) {
+            server.post({
+                action: 'sync',
+                token: TOKEN,
+                meta: { budgets: meta({ lan: i }, '2099-01-01T00:00:00.000Z') },
+                requestId: `pad-${i}`,
+            });
+        }
+
+        await a.page.evaluate(() => {
+            resetAllData();
+        });
+        await wait(1200);
+
+        expect(replaces(a.state)).toBe(1);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']); // not wiped
+        expect(await a.page.evaluate(() => transactions.map((item) => item.id))).toEqual(['TX_1']);
+        expect(await inflight(a.page)).toBeNull();
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+        await expect(a.page.locator('#sync-review')).toBeVisible();
+        await expect(a.page.locator('#sync-review-list')).toContainText('từ chối');
+    });
+
+    test('review vòng 11: một lần đọc treo không bao giờ trả lời: hết thời gian chờ thì làn được giải phóng và thay đổi đang chờ được gửi, không cần tải lại', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 1000;
+        });
+        a.state.deferReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        expect(a.state.deferred).toHaveLength(1);
+
+        // While the read is stuck nothing else goes out (one request at a time) ...
+        await addExpense(a.page, 7000, 'dang-ket');
+        await wait(150);
+        expect(a.state.posts).toHaveLength(0);
+
+        // ... until the client gives up on it.
+        await wait(1500);
+        expect(notesOf(serverRows(server))).toContain('dang-ket');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 11: lần ghi treo quá thời gian chờ: không chuyển sang GET dự phòng, bản ghi inflight còn, gửi lại bằng POST; bản cũ tới muộn không nhân đôi', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 400;
+        });
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'cho-lau');
+        await wait(1100);
+
+        // A timeout is not "the POST cannot be made": the same change is not sent a second way.
+        expect(a.state.getUrls.some((url) => url.includes('payload='))).toBe(false);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(900);
+        expect(notesOf(serverRows(server))).toContain('cho-lau');
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+
+        // The copy the client gave up on arrives after all: it is the same change, applied once.
+        a.state.releaseHeld(0);
+        await wait(400);
+        expect(notesOf(serverRows(server)).filter((note) => note === 'cho-lau')).toHaveLength(1);
+    });
+
+    test('review vòng 11: script cũ (legacy): lần ghi treo quá thời gian chờ không chuyển sang GET ?action=save dự phòng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('legacy', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 400;
+        });
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'cho-lau');
+        await wait(1100);
+
+        expect(a.state.getUrls.some((url) => url.includes('action=save'))).toBe(false);
+        await expect(a.page.locator('#sync-status')).not.toContainText('Đã lưu');
+
+        // The change stays pending and goes out again by POST.
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(900);
+        expect(notesOf(serverRows(server))).toContain('cho-lau');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 11: replace treo quá thời gian chờ rồi tới muộn: hỏi kèm fence, gửi lại là R2, bản R1 tới sau bị từ chối nên dữ liệu máy khác còn nguyên', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        await a.page.evaluate(() => {
+            syncRequestTimeoutMs = 400;
+        });
+        a.state.holdWrites = 1;
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        await wait(600);
+        expect(await inflight(a.page)).toBeTruthy();
+        expect(idsOf(serverRows(server))).toEqual(['TX_OLD']);
+
+        await a.page.evaluate(() => {
+            syncToGoogleSheet();
+        });
+        await wait(1000);
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(a.state.posts.some((post) => post.body.fence === true)).toBe(true);
+
+        server.post({
+            action: 'sync',
+            token: TOKEN,
+            upserts: [row('TX_B', { note: 'cua-may-khac', updatedAt: '2026-11-22T10:00:00.000Z' })],
+        });
+
+        a.state.releaseHeld(0); // R1 reaches the Sheet at last
+        await wait(400);
+        expect(idsOf(serverRows(server))).toEqual(['TX_B', 'TX_BACKUP']);
     });
 
     test('review vòng 6: khôi phục sao lưu trên máy chưa có URL: lấy URL trong file và vẫn thay toàn bộ Sheet (không bị coi là đổi URL)', async ({

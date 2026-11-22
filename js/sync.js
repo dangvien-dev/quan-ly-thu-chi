@@ -27,9 +27,17 @@
 //  - A v2 server that suddenly lacks many rows this device already synced (an emptied or damaged
 //    Sheet, see isMassRemoteLoss) does not delete them here without asking (decideRemoteLoss):
 //    only an explicit OK on the "Xóa" question deletes; closing a dialog keeps them.
-//  - A replace or a delete whose reply was lost is only sent again when the server can prove it
-//    was never applied. When it cannot (or is an older Code.gs that does not answer), the data of
-//    both sides is merged instead and nothing is destroyed (see abandonDestructiveWrite).
+//  - A replace or a delete whose reply was lost is only sent again when the server has PROMISED it
+//    will never apply it: the check is made with fence: true and the answer must say fenced (the
+//    server then refuses that request id for good, so a copy that is still on its way, or that the
+//    client gave up on after a timeout, cannot arrive later and undo what other devices wrote).
+//    "Not applied so far" is not enough. When there is no such promise (or it is an older Code.gs
+//    that does not answer), the data of both sides is merged instead and nothing is destroyed
+//    (see abandonDestructiveWrite). A replace or delete also names the revision and epoch the
+//    device had seen; the server refuses one built on a view it can no longer vouch for.
+//  - A request that gets no answer within syncRequestTimeoutMs is given up on (fetchSheet), so one
+//    that hangs cannot hold the lane for good. Giving up is not "it did not arrive": the record of
+//    the request stays and is asked about like any other whose reply was lost.
 //  - A replace or a deletion that is still unconfirmed when the Web App URL changes is never sent
 //    to the new Sheet (secureUnconfirmedWrites); the user is told and the notice stays visible.
 //    A reply that arrives after the URL changed is dropped (syncGeneration), and deletions queued
@@ -84,6 +92,9 @@ let syncGeneration = 0;
 // the Web App URL changes, so a request that never gets an answer from the old Sheet cannot hold the
 // new connection back.
 let syncLane = Promise.resolve();
+// How long a request to the Web App may take before the client stops waiting (see fetchSheet).
+// Apps Script can wait up to 20 s for its lock and takes a few seconds to start cold.
+let syncRequestTimeoutMs = 90000;
 let pushInFlight = false;
 // Another device may change the data while this one stays open, so the Sheet is read again when
 // the user comes back, but never more often than this.
@@ -388,6 +399,36 @@ function staleConnection() {
     return error;
 }
 
+/**
+ * fetch with a deadline for the whole answer (headers and body). On expiry the request is aborted
+ * on this side only: it may still reach the server, or already have been applied, which is why
+ * callers keep their record of what was sent (fm_sync_inflight) and treat the outcome as unknown.
+ * Resolves with {ok, json()} for parseSheetResponse.
+ */
+async function fetchSheet(url, options = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), syncRequestTimeoutMs);
+
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        const text = await response.text();
+
+        return { ok: response.ok, json: async () => JSON.parse(text) };
+    } catch (error) {
+        if (!controller.signal.aborted) throw error;
+
+        const timeout = new Error(
+            'Google Sheet không trả lời kịp (quá thời gian chờ). Thay đổi vẫn được giữ và sẽ gửi lại.',
+        );
+
+        timeout.timeout = true;
+
+        throw timeout;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 /** The Apps Script answers HTTP 200 even for errors: look inside the JSON body. */
 function parseSheetResponse(response) {
     if (!response.ok) {
@@ -433,12 +474,15 @@ async function writeLegacySheet(list) {
     let response;
 
     try {
-        response = await fetch(target, {
+        response = await fetchSheet(target, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({ transactions: rows }),
         });
     } catch (error) {
+        // A timeout is not "the POST cannot be made": the request may be on its way.
+        if (error.timeout) throw error;
+
         const payload = JSON.stringify(rows);
         const url = sheetUrl({ action: 'save', data: payload }, target);
 
@@ -449,7 +493,7 @@ async function writeLegacySheet(list) {
             );
         }
 
-        response = await fetch(url);
+        response = await fetchSheet(url);
     }
 
     return parseSheetResponse(response);
@@ -540,15 +584,16 @@ async function postSyncV2(payload) {
     let response;
 
     try {
-        response = await fetch(target, {
+        response = await fetchSheet(target, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify(payload),
         });
     } catch (error) {
         // The fallback puts the whole payload in the URL, and URLs end up in logs and proxies: never
-        // with a token. The change stays queued and is sent again later.
-        if (payload.token || generation !== syncGeneration) throw error;
+        // with a token. The change stays queued and is sent again later. And a timeout is not "the
+        // POST cannot be made": the request may be on its way, so it is not sent a second way.
+        if (payload.token || error.timeout || generation !== syncGeneration) throw error;
 
         const url = sheetUrl({ action: 'sync', payload: JSON.stringify(payload) }, target);
 
@@ -558,7 +603,7 @@ async function postSyncV2(payload) {
             );
         }
 
-        response = await fetch(url);
+        response = await fetchSheet(url);
     }
 
     const state = await parseSheetResponse(response);
@@ -947,8 +992,8 @@ function isDestructiveWrite(inflight) {
  *    server's content is kept (rows the replace was meant to drop may come back);
  *  - deletions are not sent: a row still on the server comes back here, one already gone stays
  *    gone.
- * `intent` is {replace, deletes}; `why` is 'unknown', 'url' (the Web App URL changed) or 'connect'
- * (a first Sheet was just switched on). Returns the sentence to tell the
+ * `intent` is {replace, deletes}; `why` is 'unknown', 'url' (the Web App URL changed), 'connect'
+ * (a first Sheet was just switched on) or 'refused' (the Sheet would not take it). Returns the sentence to tell the
  * user ('' when there was nothing to give up).
  */
 function abandonDestructiveWrite(intent, why) {
@@ -958,6 +1003,8 @@ function abandonDestructiveWrite(intent, why) {
         connect:
             'Bạn vừa bật Google Sheet khi còn một lần thay toàn bộ dữ liệu chưa gửi đi, nên app không gửi nó lên Sheet. ',
         unknown: 'Không rõ lần ghi trước lên Google Sheet đã được áp dụng chưa (mất phản hồi). ',
+        refused:
+            'Google Sheet từ chối lệnh thay thế / xóa vì dữ liệu trên máy này đã quá cũ so với Sheet (hoặc lệnh đã bị hủy). ',
     };
     const lead = leads[why];
 
@@ -1125,6 +1172,8 @@ async function settleInflightV2() {
         deletes: [],
         meta: {},
         appliedCheck: inflight.requestId,
+        // A replace or a deletion is only sent again on a promise, not on "not applied so far".
+        ...(isDestructiveWrite(inflight) ? { fence: true } : {}),
         ...(Number.isInteger(inflight.baseRevision) ? { appliedAfter: inflight.baseRevision } : {}),
         ...(typeof inflight.baseEpoch === 'string' ? { appliedEpoch: inflight.baseEpoch } : {}),
     });
@@ -1133,7 +1182,10 @@ async function settleInflightV2() {
     if (state.applied === true) {
         localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
         clearSentPending(inflight);
-    } else if (state.applied !== false && isDestructiveWrite(inflight)) {
+    } else if (
+        isDestructiveWrite(inflight) &&
+        !(state.applied === false && state.fenced === true)
+    ) {
         notice = abandonDestructiveWrite(
             {
                 // A newer replace (made while this one was in flight) is the user's current
@@ -1154,6 +1206,13 @@ async function settleInflightV2() {
     if (notice) announceUnsentWrites(notice);
 }
 
+/** The Sheet answered that it will not take a replace / deletion (see Code.gs handleSync_). */
+function refusedDestructive(error) {
+    const message = (error && error.message) || '';
+
+    return message.startsWith('request-stale') || message.startsWith('request-cancelled');
+}
+
 async function pushV2() {
     const generation = syncGeneration;
 
@@ -1166,14 +1225,51 @@ async function pushV2() {
         return;
     }
 
-    const payload = { ...buildV2Payload(), requestId: newRequestId() };
+    const built = buildV2Payload();
+    const view = lastKnownServerView();
+    // A replace or a deletion says which revision and epoch of the server's log it was built on: the
+    // server refuses one it can no longer vouch for (an old copy that was cancelled, see Code.gs).
+    const payload = {
+        ...built,
+        requestId: newRequestId(),
+        ...((built.replace || built.deletes.length > 0) &&
+        view.revision !== null &&
+        view.epoch !== null
+            ? { baseRevision: view.revision, baseEpoch: view.epoch }
+            : {}),
+    };
     const record = inflightRecord(payload);
 
     localStorage.setItem(SYNC_INFLIGHT_KEY, JSON.stringify(record));
 
     // On any failure the record stays: even an error reply ("Không chắc dữ liệu đã được ghi xong",
     // a failed rollback, an HTTP error after a timeout) can follow a write, so the next push asks.
-    const state = await postSyncV2(payload);
+    let state;
+
+    try {
+        state = await postSyncV2(payload);
+    } catch (error) {
+        if (generation !== syncGeneration || !refusedDestructive(error)) throw error;
+
+        // The Sheet says it did NOT take this replace / deletion (built on a view that is too old,
+        // or cancelled): that is a known "no", not a lost reply. It is not sent again as it was;
+        // the data is merged instead, and the user is told.
+        const notice = abandonDestructiveWrite(
+            {
+                replace: payload.replace && record.replaceSeq === readReplaceSeq(),
+                deletes: payload.deletes,
+            },
+            'refused',
+        );
+
+        localStorage.removeItem(SYNC_INFLIGHT_KEY);
+
+        if (notice) announceUnsentWrites(notice);
+
+        pushQueued = true;
+
+        return;
+    }
 
     // Settle first, remove the record LAST: a crash or a full disk in between must leave a record
     // to ask the server about (appliedCheck), not a replace or deletion that is still pending with
@@ -1270,7 +1366,7 @@ function readStateV2() {
  * says; only then is a POST safe (the legacy script clears the sheet on any unknown POST body).
  */
 async function readSheet() {
-    const response = await fetch(sheetUrl({ v: 2 }));
+    const response = await fetchSheet(sheetUrl({ v: 2 }));
 
     try {
         const result = await parseSheetResponse(response);

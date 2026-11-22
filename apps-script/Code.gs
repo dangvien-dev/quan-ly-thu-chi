@@ -210,6 +210,15 @@ function uncertainFlush_(flushError, earlier) {
 //    entry that was dropped. A request that is not in the log is "false" only when it cannot have
 //    been dropped: it would have a revision above appliedAfter, so floor <= appliedAfter proves
 //    it never ran. Anything else (an unknown or different epoch included) is 'unknown', never "no".
+//  - "Not applied" is an observation about the moment of the check, not a promise: a request can
+//    have failed for the client and still be on its way (network, the lock queue), and arrive later.
+//    So a client that is about to send a replace / deletion again asks with fence: true: when the
+//    answer is "never applied" the request is ALSO recorded as 'cancelled' (a new revision), and a
+//    request that arrives later with that id is refused. The answer then carries fenced: true; only
+//    that lets a client send the same intent again under a new id. A destructive request that
+//    names the revision and epoch the client had seen (baseRevision, baseEpoch) is refused when the
+//    log can no longer tell whether it was cancelled (the epoch changed, or entries it could be in
+//    were dropped: floor > baseRevision), so a tombstone that was dropped is no loophole either.
 const REQUEST_LOG_KEY = 'FM_REQUEST_LOG';
 const MAX_LOGGED_REQUESTS = 100;
 const MAX_REQUEST_LOG_CHARS = 8000; // a Script Property value holds at most 9 KB
@@ -333,12 +342,45 @@ function abandonRequest_(before) {
     }
 }
 
-/** true: applied. false: proven never applied. 'unknown': cannot tell (see REQUEST LOG). */
+/**
+ * Records that `id` will never be applied: a request with that id that arrives later is refused
+ * (handleSync_). It takes a new revision, so that when this entry is dropped from the log the
+ * floor is above the revision any request of that id could have been built on (destructiveBaseOk_).
+ * Throws, having written nothing, when the log cannot be written: the caller then has no promise.
+ */
+function cancelRequest_(id) {
+    const before = readRequestLog_();
+
+    try {
+        writeRequestLog_({
+            epoch: before.epoch,
+            rev: before.rev + 1,
+            floor: before.floor,
+            entries: before.entries.concat([[id, before.rev + 1, 'cancelled']]),
+        });
+    } catch (error) {
+        throw new Error(
+            'Không ghi được nhật ký yêu cầu (' +
+                String(error && error.message ? error.message : error) +
+                '); không hủy được yêu cầu cũ.',
+        );
+    }
+}
+
+/**
+ * true: applied. false: proven never applied so far (a request may still be on its way: see
+ * fence). 'unknown': cannot tell (see REQUEST LOG). 'cancelled': never applied and refused from now
+ * on.
+ */
 function requestStatus_(id, afterRevision, epoch) {
     const log = readRequestLog_();
     const entry = findRequest_(log, id);
 
-    if (entry) return entry[2] === 'ok' ? true : 'unknown';
+    if (entry) {
+        if (entry[2] === 'ok') return true;
+
+        return entry[2] === 'cancelled' ? 'cancelled' : 'unknown';
+    }
 
     if (
         epoch !== log.epoch || // another log than the client saw (or none it knew of): history lost
@@ -350,6 +392,45 @@ function requestStatus_(id, afterRevision, epoch) {
     }
 
     return false;
+}
+
+/**
+ * The answer to appliedCheck. With fence: true a "never applied" is made a promise: the request is
+ * cancelled first (cancelRequest_), and the answer says fenced: true. Without it the answer is
+ * only what could be seen now.
+ */
+function checkRequest_(body) {
+    const status = requestStatus_(body.appliedCheck, body.appliedAfter, body.appliedEpoch);
+
+    if (status === 'cancelled') return { applied: false, fenced: true };
+
+    if (status === false && body.fence === true) {
+        cancelRequest_(body.appliedCheck);
+
+        return { applied: false, fenced: true };
+    }
+
+    return body.fence === true ? { applied: status, fenced: false } : { applied: status };
+}
+
+function isDestructive_(body) {
+    return body.replace === true || (Array.isArray(body.deletes) && body.deletes.length > 0);
+}
+
+/**
+ * A destructive request that states which revision and epoch the client had seen is only taken
+ * when the log can still say whether such a request was cancelled: the same epoch, and no entry
+ * dropped that it could be in. A request without them (an older client) is taken as before.
+ */
+function destructiveBaseOk_(body, log) {
+    if (body.baseRevision === undefined && body.baseEpoch === undefined) return true;
+
+    return (
+        body.baseEpoch === log.epoch &&
+        typeof body.baseRevision === 'number' &&
+        body.baseRevision <= log.rev &&
+        log.floor <= body.baseRevision
+    );
 }
 
 /**
@@ -723,6 +804,9 @@ function validateSyncBody_(body) {
     if (!optional(body.appliedCheck, requestKey)) fail('appliedCheck');
     if (!optional(body.appliedAfter, revision)) fail('appliedAfter');
     if (!optional(body.appliedEpoch, requestKey)) fail('appliedEpoch');
+    if (!optional(body.fence, isBoolean_)) fail('fence phải là true / false');
+    if (!optional(body.baseRevision, revision)) fail('baseRevision');
+    if (!optional(body.baseEpoch, requestKey)) fail('baseEpoch');
 
     // A replace states the complete content: both lists must be there explicitly.
     if (body.replace === true) {
@@ -964,9 +1048,17 @@ function handleSync_(body) {
     validateSyncBody_(body);
 
     const requestId = body.requestId || '';
-    const known = requestId ? findRequest_(readRequestLog_(), requestId) : null;
+    const log = readRequestLog_();
+    const known = requestId ? findRequest_(log, requestId) : null;
 
     if (known) {
+        // Cancelled by a client that was told "never applied" (fence): it arrived late, too late.
+        if (known[2] === 'cancelled') {
+            throw new Error(
+                'request-cancelled: Yêu cầu này đã bị hủy vì gửi quá muộn; không áp dụng.',
+            );
+        }
+
         // Sent again. One that was applied is not applied a second time (a replace would drop what
         // another device added since, a delete would remove a row it re-created): only the current
         // state is returned. One whose outcome is not known is refused for the same reason.
@@ -979,11 +1071,21 @@ function handleSync_(body) {
         return withApplied_(readState_(), true);
     }
 
+    // A replace or deletion built on a view the log can no longer vouch for (see
+    // destructiveBaseOk_) could be an old one that was cancelled and whose entry was dropped.
+    if (isDestructive_(body) && !destructiveBaseOk_(body, log)) {
+        throw new Error(
+            'request-stale: Lệnh thay thế / xóa dựa trên dữ liệu đã quá cũ so với Sheet; không áp dụng.',
+        );
+    }
+
     const transactions = planTransactionChanges_(body);
     const meta = planMetaChanges_(body.meta, body.replace === true);
 
     if (transactions || meta) applyChanges_(requestId, transactions, meta);
 
+    // Before the state is read, so that its revision includes a request this check cancelled.
+    const check = body.appliedCheck ? checkRequest_(body) : null;
     let state;
 
     try {
@@ -996,12 +1098,7 @@ function handleSync_(body) {
         );
     }
 
-    return body.appliedCheck
-        ? withApplied_(
-              state,
-              requestStatus_(body.appliedCheck, body.appliedAfter, body.appliedEpoch),
-          )
-        : state;
+    return check ? Object.assign(state, check) : state;
 }
 
 function withApplied_(state, applied) {

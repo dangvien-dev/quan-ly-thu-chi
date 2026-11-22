@@ -58,6 +58,18 @@ function newServer(backend = 'legacy', { rows = [], properties, sheets = {} } = 
     return server;
 }
 
+/**
+ * Answers a request that a test held back. The client may have given up on it meanwhile (a timeout):
+ * the answer then goes nowhere, which is what a late reply is, and must not fail the test.
+ */
+async function fulfillIfOpen(route, response) {
+    try {
+        await route.fulfill(response);
+    } catch {
+        // the request was aborted by the page
+    }
+}
+
 /** Whether a sync body writes (any protocol), as opposed to reading the state. */
 const isWriteBody = (body) =>
     Boolean(body) &&
@@ -104,6 +116,12 @@ async function openApp(browser, opts = {}) {
         external: [],
         loseReplies: 0,
         dropRequests: 0,
+        // lateWrites / late / arriveLate: the client is told the request failed at once (a dropped
+        // connection, a timeout), but it is still on its way: the server only works on it when the
+        // test calls state.arriveLate(index), however much happened on the Sheet meanwhile.
+        lateWrites: 0,
+        late: [],
+        arriveLate: (index = 0) => state.late[index] && state.late[index](),
         // deferReads / deferred / releaseDeferred: a read that has NOT reached the server yet (it is
         // processed, from the spreadsheet as it is then, only when the test releases it).
         deferReads: 0,
@@ -205,7 +223,7 @@ async function openApp(browser, opts = {}) {
                 await new Promise((resolve) => state.heldReads.push(resolve));
             }
 
-            return route.fulfill({
+            return fulfillIfOpen(route, {
                 status: 200,
                 headers: CORS,
                 contentType: 'application/json',
@@ -242,7 +260,7 @@ async function openApp(browser, opts = {}) {
             state.holdWrites--;
             await new Promise((resolve) => state.held.push(resolve));
 
-            return route.fulfill({
+            return fulfillIfOpen(route, {
                 status: 200,
                 headers: CORS,
                 contentType: 'application/json',
@@ -259,7 +277,7 @@ async function openApp(browser, opts = {}) {
 
             await new Promise((resolve) => state.heldReplies.push(resolve));
 
-            return route.fulfill({
+            return fulfillIfOpen(route, {
                 status: 200,
                 headers: CORS,
                 contentType: 'application/json',
@@ -270,6 +288,12 @@ async function openApp(browser, opts = {}) {
         if (state.loseReplies > 0 && writes) {
             state.loseReplies--;
             target.postText(raw);
+            return route.abort();
+        }
+
+        if (state.lateWrites > 0 && writes) {
+            state.lateWrites--;
+            state.late.push(() => target.postText(raw));
             return route.abort();
         }
 
