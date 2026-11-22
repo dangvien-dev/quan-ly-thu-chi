@@ -1339,6 +1339,309 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
     });
 
+    test('review vòng 8: đọc chậm (snapshot cũ) về sau khi một lần đẩy đã được xác nhận: giao dịch và meta vừa đồng bộ không bị lùi, không bị coi là đã xóa', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+
+        server.post({ action: 'sync', meta: { budgets: meta({ 'Ăn uống': 1 }) } });
+
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const view = () =>
+            a.page.evaluate(() => ({
+                notes: transactions.map((item) => item.note).sort(),
+                budget: budgets['Ăn uống'],
+                dirty: localStorage.getItem('fm_sync_dirty'),
+                upserts: localStorage.getItem('fm_pending_upserts'),
+                metaPending: localStorage.getItem('fm_pending_meta'),
+            }));
+
+        // A background read takes its snapshot now (A, B, C, budget 1); its answer is slow.
+        a.state.holdReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        expect(a.state.heldReads).toHaveLength(1);
+
+        // Meanwhile D is added and a budget is changed, and the Sheet confirms both.
+        await addExpense(a.page, 7000, 'tx-D');
+        await a.page.evaluate(() => {
+            META_ACCESSORS.budgets.set({ 'Ăn uống': 123456 });
+            saveMeta('budgets');
+            syncToGoogleSheet();
+        });
+        await wait(600);
+        expect(notesOf(serverRows(server))).toContain('tx-D');
+        expect(server.get({ v: '2' }).meta.budgets.value).toEqual({ 'Ăn uống': 123456 });
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+
+        const before = await view();
+
+        // The old snapshot arrives now. It must not be applied.
+        a.state.releaseRead(0);
+        await wait(600);
+
+        expect(await view()).toEqual(before);
+        expect(before.notes).toContain('tx-D');
+        expect(before.budget).toBe(123456);
+        expect(notesOf(serverRows(server))).toContain('tx-D');
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 8: hai lần đọc trả ngược thứ tự: lần cũ về sau không xóa dòng mà lần mới đã đem về', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const notes = () => a.page.evaluate(() => transactions.map((item) => item.note).sort());
+
+        a.state.holdReads = 2;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true }); // snapshot 1: A, B, C
+        });
+        await wait(150);
+        server.post({ action: 'sync', upserts: [row('TX_E', { note: 'tu-may-khac' })] });
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true }); // snapshot 2: A, B, C, E
+        });
+        await wait(150);
+        expect(a.state.heldReads).toHaveLength(2);
+
+        a.state.releaseRead(1); // the newer one first
+        await wait(400);
+        expect(await notes()).toContain('tu-may-khac');
+
+        a.state.releaseRead(0); // the older one last
+        await wait(400);
+        expect(await notes()).toContain('tu-may-khac');
+        expect(await notes()).toHaveLength(4);
+    });
+
+    test('review vòng 8: phản hồi chậm của một lần đẩy bị một lần đọc mới hơn vượt mặt: nó xóa hàng chờ nhưng không lùi dữ liệu', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+        const view = () =>
+            a.page.evaluate(() => ({
+                notes: transactions.map((item) => item.note).sort(),
+                dirty: localStorage.getItem('fm_sync_dirty'),
+                upserts: localStorage.getItem('fm_pending_upserts'),
+            }));
+
+        // D is applied on the Sheet at once, but the reply of its push is slow.
+        a.state.holdReplies = 1;
+        await addExpense(a.page, 7000, 'tx-D');
+        await wait(300);
+        expect(notesOf(serverRows(server))).toContain('tx-D');
+        expect(a.state.heldReplies).toHaveLength(1);
+
+        // Another device adds E; a read, sent after the push, brings it here before the reply does.
+        server.post({ action: 'sync', upserts: [row('TX_E', { note: 'tu-may-khac' })] });
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(400);
+        expect((await view()).notes).toContain('tu-may-khac');
+
+        // The slow reply (a snapshot without E) arrives: it confirms D, it does not roll back.
+        a.state.releaseReply(0);
+        await wait(500);
+
+        const after = await view();
+
+        expect(after.notes).toEqual(expect.arrayContaining(['tx-D', 'tu-may-khac']));
+        expect(after.notes).toHaveLength(5);
+        expect(after.dirty).toBeNull();
+        expect(after.upserts).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 8: khôi phục sao lưu trên cùng URL khi một lần đẩy cũ còn đang chạy: ack của lần cũ không xóa ý định replace, Sheet cuối cùng chỉ có bản sao lưu', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_OLD')] });
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+        const dirty = () => a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'));
+
+        // An upsert is on its way to the Sheet when the backup is restored (same URL).
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'tx-NEW');
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+        expect(await dirty()).toBe('replace');
+
+        a.state.releaseHeld(0); // the old request reaches the Sheet and is answered
+        await wait(1000);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_BACKUP']);
+        expect(await dirty()).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 8: "Xóa toàn bộ dữ liệu" khi một lần đẩy cũ còn đang chạy: Sheet cuối cùng trống, replace có confirmWipe', async ({
+        app,
+    }) => {
+        const server = newServer('v2', { rows: [row('TX_OLD')] });
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'tx-NEW');
+        await a.page.evaluate(() => {
+            resetAllData();
+        });
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe('replace');
+
+        a.state.releaseHeld(0);
+        await wait(1000);
+
+        expect(serverRows(server)).toEqual([]);
+        expect(await a.page.evaluate(() => transactions.length)).toBe(0);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+        expect(
+            a.state.posts.some(
+                (post) => post.body.replace === true && post.body.confirmWipe === true,
+            ),
+        ).toBe(true);
+    });
+
+    test('review vòng 8: khôi phục sao lưu lần hai khi lần một đã áp dụng nhưng mất phản hồi: lần kiểm tra appliedCheck của lần một không xóa ý định replace của lần hai', async ({
+        app,
+    }) => {
+        // With a token a lost reply cannot be answered through the GET fallback.
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_1')]); // applied on the Sheet, the reply is lost
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeTruthy();
+
+        await restoreBackup(a.page, [row('TX_2')]); // another backup is restored on top of it
+        await wait(800);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_2']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_2']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+    });
+
+    test('review vòng 8: khôi phục sao lưu lần hai khi lần một không rõ kết quả: chỉ bỏ lần một, replace của lần hai vẫn được gửi', async ({
+        app,
+    }) => {
+        const server = newServer('v2', {
+            rows: [row('TX_OLD')],
+            properties: { FM_TOKEN: TOKEN },
+        });
+        const a = await app({
+            server,
+            seed: syncedSeed([row('TX_OLD')], { fm_script_token: TOKEN }),
+        });
+
+        a.state.loseReplies = 1;
+        await restoreBackup(a.page, [row('TX_1')]);
+        expect(idsOf(serverRows(server))).toEqual(['TX_1']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeTruthy();
+
+        // The Sheet forgets the request (more writes than its log keeps).
+        for (let i = 0; i < 110; i++) {
+            server.post({
+                action: 'sync',
+                token: TOKEN,
+                meta: { budgets: meta({ lan: i }, '2099-01-01T00:00:00.000Z') },
+                requestId: `pad-${i}`,
+            });
+        }
+
+        await restoreBackup(a.page, [row('TX_2')]);
+        await wait(800);
+
+        // The second backup is the user's current intent: it replaces the Sheet as asked.
+        expect(idsOf(serverRows(server))).toEqual(['TX_2']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_2']);
+    });
+
+    for (const backend of ['v2', 'legacy']) {
+        test(`review vòng 8: ${backend}: ack của lần ghi cũ về TRƯỚC khi lần đọc của chính thao tác khôi phục trả lời: ý định replace vẫn còn, bản sao lưu không bị snapshot cũ ghi đè`, async ({
+            app,
+        }) => {
+            const server = newServer(backend, { rows: [row('TX_OLD')] });
+            const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+            a.state.holdWrites = 1;
+            await addExpense(a.page, 7000, 'tx-NEW'); // the old write is on its way
+
+            a.state.holdReads = 1; // the read that restoring a backup starts is slow too
+            await restoreBackup(a.page, [row('TX_BACKUP')]);
+            expect(a.state.heldReads).toHaveLength(1);
+
+            a.state.releaseHeld(0); // the old write is answered first
+            await wait(500);
+            expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBe(
+                'replace',
+            );
+
+            a.state.releaseRead(0); // then the read, whose snapshot is from before the backup
+            await wait(1000);
+
+            expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+            expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_BACKUP']);
+            expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+        });
+    }
+
+    test('review vòng 8: script cũ (legacy): khôi phục sao lưu khi một lần ghi cũ còn đang chạy không bị ack của lần cũ xóa mất', async ({
+        app,
+    }) => {
+        const server = newServer('legacy', { rows: [row('TX_OLD')] });
+        const a = await app({ server, seed: syncedSeed([row('TX_OLD')]) });
+
+        a.state.holdWrites = 1;
+        await addExpense(a.page, 7000, 'tx-NEW');
+        await restoreBackup(a.page, [row('TX_BACKUP')]);
+
+        a.state.releaseHeld(0);
+        await wait(1000);
+
+        expect(idsOf(serverRows(server))).toEqual(['TX_BACKUP']);
+        expect(idsOf(await a.page.evaluate(() => transactions))).toEqual(['TX_BACKUP']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_dirty'))).toBeNull();
+    });
+
+    test('review vòng 8: script cũ (legacy): đọc chậm về sau một lần ghi đã được xác nhận không làm mất giao dịch vừa ghi', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A'), row('TX_B'), row('TX_C')];
+        const server = newServer('legacy', { rows });
+        const a = await app({ server, seed: syncedSeed(rows) });
+
+        a.state.holdReads = 1;
+        await a.page.evaluate(() => {
+            syncFromGoogleSheet({ quiet: true });
+        });
+        await wait(150);
+        await addExpense(a.page, 7000, 'tx-D');
+        await wait(500);
+        expect(notesOf(serverRows(server))).toContain('tx-D');
+
+        a.state.releaseRead(0);
+        await wait(500);
+
+        expect(await a.page.evaluate(() => transactions.map((item) => item.note))).toContain(
+            'tx-D',
+        );
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
     test('review vòng 6: khôi phục sao lưu trên máy chưa có URL: lấy URL trong file và vẫn thay toàn bộ Sheet (không bị coi là đổi URL)', async ({
         app,
     }) => {

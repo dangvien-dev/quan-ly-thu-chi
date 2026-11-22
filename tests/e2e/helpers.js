@@ -96,6 +96,14 @@ async function openApp(browser, opts = {}) {
         external: [],
         loseReplies: 0,
         dropRequests: 0,
+        holdReads: 0,
+        heldReads: [],
+        // Lets the index-th held read (in the order they were held) be answered.
+        releaseRead: (index = 0) => state.heldReads[index] && state.heldReads[index](),
+        holdReplies: 0,
+        heldReplies: [],
+        // Lets the index-th held reply (in the order they were held) arrive.
+        releaseReply: (index = 0) => state.heldReplies[index] && state.heldReplies[index](),
         holdWrites: 0,
         held: [],
         // Lets the index-th held write (in the order they were held) reach its server.
@@ -147,11 +155,21 @@ async function openApp(browser, opts = {}) {
             // opts.getFails: reading the default server fails (the others, opts.servers, still work).
             if (opts.getFails && target === gas) return route.abort();
 
+            const body = target.getText(Object.fromEntries(new URL(request.url()).searchParams));
+
+            // state.holdReads: the next N reads are answered from the spreadsheet as it is NOW, but
+            // the answer arrives only when the test calls state.releaseRead(index): a slow read
+            // whose snapshot is old by then. (The tokenless GET carries the state of an open server.)
+            if (state.holdReads > 0) {
+                state.holdReads--;
+                await new Promise((resolve) => state.heldReads.push(resolve));
+            }
+
             return route.fulfill({
                 status: 200,
                 headers: CORS,
                 contentType: 'application/json',
-                body: target.getText(Object.fromEntries(new URL(request.url()).searchParams)),
+                body,
             });
         }
 
@@ -192,6 +210,23 @@ async function openApp(browser, opts = {}) {
                 headers: CORS,
                 contentType: 'application/json',
                 body: target.postText(raw),
+            });
+        }
+
+        // state.holdReplies: the next N writes are applied at once, but their replies arrive only
+        // when the test calls state.releaseReply(index): a slow reply whose snapshot is old by then.
+        if (state.holdReplies > 0 && writes) {
+            state.holdReplies--;
+
+            const reply = target.postText(raw);
+
+            await new Promise((resolve) => state.heldReplies.push(resolve));
+
+            return route.fulfill({
+                status: 200,
+                headers: CORS,
+                contentType: 'application/json',
+                body: reply,
             });
         }
 

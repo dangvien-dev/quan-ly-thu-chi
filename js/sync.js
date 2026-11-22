@@ -35,6 +35,11 @@
 //    A reply that arrives after the URL changed is dropped (syncGeneration), and deletions queued
 //    before the first contact with a Sheet have no authority over what it holds
 //    (giveUpDeletesAtFirstContact).
+//  - On one URL, replies can still come back in another order than their requests were sent. A
+//    snapshot (a read, a push reply, a settle check) is only applied when no request sent after it
+//    has been applied already (claimSnapshot); an older one would roll the local data back. And a
+//    reply only settles the replace that was pending when its request was built, never one made
+//    while it was on its way (fm_sync_replace_seq, clearSentPending).
 
 const SYNC_DIRTY_KEY = 'fm_sync_dirty'; // '' | 'merge' | 'replace'
 const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device last synced with
@@ -53,6 +58,9 @@ const SYNC_REVISION_KEY = 'fm_sync_revision';
 // Warnings about writes that were not sent on purpose (see abandonDestructiveWrite): kept until the
 // user has seen them, so a toast that went by is not the only trace.
 const SYNC_REVIEW_KEY = 'fm_sync_review';
+// Counts the intents to replace the Sheet (a backup restored, "Xóa toàn bộ dữ liệu"). A reply may
+// only settle the replace that was pending when its request was built (clearSentPending).
+const SYNC_REPLACE_SEQ_KEY = 'fm_sync_replace_seq';
 const GET_FALLBACK_MAX_URL = 6000;
 // Rows the user chose to "decide later" for (see decideRemoteLoss): kept here, not uploaded, and
 // not asked about again until the app is opened again.
@@ -65,6 +73,11 @@ let syncProtocol = ''; // set by the first successful read: 'legacy' | 'v2'
 // that is no longer the connected one: when its reply arrives it must not touch the baseline, the
 // pending lists or the local data (see postSyncV2, pushV2, pushToGoogleSheet).
 let syncGeneration = 0;
+// The order in which requests whose reply is a snapshot of the Sheet were sent: reads, push replies
+// and settle checks take a number when they are sent. A snapshot may only be applied when no request
+// sent after it has been applied already (claimSnapshot): an older one would roll local data back.
+let stateSeq = 0;
+let lastAppliedSeq = 0;
 let pushInFlight = false;
 // Another device may change the data while this one stays open, so the Sheet is read again when
 // the user comes back, but never more often than this.
@@ -135,7 +148,16 @@ function getSyncDirty() {
     return readStoredText(SYNC_DIRTY_KEY);
 }
 
+/** How many replace intents this device has made (persisted: in-flight records carry it). */
+function readReplaceSeq() {
+    return Number(readStoredText(SYNC_REPLACE_SEQ_KEY)) || 0;
+}
+
 function setSyncDirty(mode) {
+    if (mode === 'replace') {
+        localStorage.setItem(SYNC_REPLACE_SEQ_KEY, String(readReplaceSeq() + 1));
+    }
+
     if (!mode) {
         localStorage.removeItem(SYNC_DIRTY_KEY);
     } else if (mode === 'replace' || getSyncDirty() !== 'replace') {
@@ -281,6 +303,27 @@ function sheetUrl(params = {}, base = webAppUrl) {
     return query ? `${base}${base.includes('?') ? '&' : '?'}${query}` : base;
 }
 
+/** Takes the place of a request in the order of snapshots; call it when the request is sent. */
+function nextStateSeq() {
+    stateSeq++;
+
+    return stateSeq;
+}
+
+/**
+ * Whether the snapshot of the request with this number may still be applied: nothing sent after it
+ * has been applied. Marks it applied. A snapshot that is older than one already applied (a read that
+ * was slow, the reply of a push that a newer read overtook) must not be applied: it lacks rows the
+ * newer one had, and they would be read as deleted on the Sheet.
+ */
+function claimSnapshot(seq) {
+    if (seq <= lastAppliedSeq) return false;
+
+    lastAppliedSeq = seq;
+
+    return true;
+}
+
 /** What a request that outlived its connection (the Web App URL changed) fails with. */
 function staleConnection() {
     const error = new Error('Kết nối Google Sheet đã đổi trong lúc đang gửi.');
@@ -414,15 +457,21 @@ function reconcileWithSheet(rows) {
 
 async function pushLegacy() {
     const changeCountAtStart = localChangeCount;
+    const replaceSeqAtStart = readReplaceSeq();
     const generation = syncGeneration;
+    const seq = nextStateSeq();
 
     await writeLegacySheet(transactions);
 
     if (generation !== syncGeneration) throw staleConnection();
 
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+    // What was written is the newest state of the Sheet this device knows: an older read that comes
+    // back later must not replace it.
+    lastAppliedSeq = Math.max(lastAppliedSeq, seq);
 
-    if (changeCountAtStart === localChangeCount) {
+    // A restored backup does not go through syncToGoogleSheet, so it is not in localChangeCount.
+    if (changeCountAtStart === localChangeCount && replaceSeqAtStart === readReplaceSeq()) {
         setSyncDirty('');
         clearDeletedIds();
         writeList(SYNC_UPSERTS_KEY, []);
@@ -535,6 +584,11 @@ function buildV2Payload() {
 
 /** After a successful request, forget what was sent unless it changed again in the meantime. */
 function clearSentPending(payload) {
+    // A replace made after this request was built (a backup restored, "Xóa toàn bộ dữ liệu" while
+    // it was on its way) is not what its reply confirms: it stays pending, with everything it will
+    // send. Records of older versions carry no number and settle as before.
+    if (payload.replaceSeq !== undefined && payload.replaceSeq !== readReplaceSeq()) return;
+
     const byId = new Map(transactions.map((transaction) => [transaction.id, transaction]));
     const sentUpserts = new Map(payload.upserts.map((item) => [item.id, item.updatedAt]));
     const upserts = readList(SYNC_UPSERTS_KEY).filter((id) => {
@@ -801,6 +855,7 @@ function inflightRecord(payload) {
         url: webAppUrl,
         baseRevision: view.revision,
         baseEpoch: view.epoch,
+        replaceSeq: readReplaceSeq(),
         replace: payload.replace,
         upserts: payload.upserts.map((item) => ({ id: item.id, updatedAt: item.updatedAt })),
         deletes: payload.deletes,
@@ -1001,6 +1056,7 @@ async function settleInflightV2() {
         return;
     }
 
+    const seq = nextStateSeq();
     const state = await postSyncV2({
         action: 'sync',
         token: webAppToken,
@@ -1019,13 +1075,21 @@ async function settleInflightV2() {
         clearSentPending(inflight);
     } else if (state.applied !== false && isDestructiveWrite(inflight)) {
         notice = abandonDestructiveWrite(
-            { replace: inflight.replace === true, deletes: inflight.deletes || [] },
+            {
+                // A newer replace (made while this one was in flight) is the user's current
+                // intent, a request of its own: only the old one is given up.
+                replace:
+                    inflight.replace === true &&
+                    (inflight.replaceSeq === undefined || inflight.replaceSeq === readReplaceSeq()),
+                deletes: inflight.deletes || [],
+            },
             'unknown',
         );
     }
 
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
-    reconcileV2(state);
+
+    if (claimSnapshot(seq)) reconcileV2(state);
 
     if (notice) announceUnsentWrites(notice);
 }
@@ -1043,8 +1107,10 @@ async function pushV2() {
     }
 
     const payload = { ...buildV2Payload(), requestId: newRequestId() };
+    const record = inflightRecord(payload);
+    const seq = nextStateSeq();
 
-    localStorage.setItem(SYNC_INFLIGHT_KEY, JSON.stringify(inflightRecord(payload)));
+    localStorage.setItem(SYNC_INFLIGHT_KEY, JSON.stringify(record));
 
     // On any failure the record stays: even an error reply ("Không chắc dữ liệu đã được ghi xong",
     // a failed rollback, an HTTP error after a timeout) can follow a write, so the next push asks.
@@ -1052,8 +1118,11 @@ async function pushV2() {
 
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
-    clearSentPending(payload);
-    reconcileV2(state);
+    // The reply confirms what was sent; only that. And as a snapshot it may be older than a read
+    // that was applied while it was on its way: then it is not merged (its rows are in that read).
+    clearSentPending({ ...payload, replaceSeq: record.replaceSeq });
+
+    if (claimSnapshot(seq)) reconcileV2(state);
 
     if (hasPendingChanges()) {
         pushQueued = true;
@@ -1154,6 +1223,7 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
     }
 
     const requestedUrl = webAppUrl;
+    const seq = nextStateSeq();
 
     lastPullAt = Date.now();
 
@@ -1163,6 +1233,10 @@ function syncFromGoogleSheet({ quiet = false } = {}) {
     return readSheet()
         .then((result) => {
             if (requestedUrl !== webAppUrl) return;
+
+            // Older than a snapshot applied meanwhile (a push that was confirmed, a newer read): it
+            // lacks rows the newer one has, and they would be read as deleted on the Sheet.
+            if (!claimSnapshot(seq)) return;
 
             if (Array.isArray(result)) {
                 syncProtocol = 'legacy';
