@@ -77,6 +77,9 @@ const SYNC_REVIEW_KEY = 'fm_sync_review';
 // only settle the replace that was pending when its request was built (clearSentPending).
 const SYNC_REPLACE_SEQ_KEY = 'fm_sync_replace_seq';
 const GET_FALLBACK_MAX_URL = 6000;
+// What fingerprintOf returns (128 bits of SHA-256, in hex). A stored `h` of any other shape is from
+// an older version and is not compared.
+const STRONG_FINGERPRINT = /^[0-9a-f]{32}$/;
 // Rows the user chose to "decide later" for (see decideRemoteLoss): kept here, not uploaded, and
 // not asked about again until the app is opened again.
 const deferredLossIds = new Set();
@@ -697,18 +700,21 @@ function buildV2Payload() {
  * the stamp.
  */
 function editedSince(sent, current) {
-    if (typeof sent.h === 'string') return fingerprintOf(current) !== sent.h;
+    // The stamp first: every edit made through the app moves it (nextStamp), and it is free.
+    if (current.updatedAt !== sent.updatedAt) return true;
 
-    return current.updatedAt !== sent.updatedAt;
+    // The same stamp: only a content that is exactly what was sent counts as "not edited". A record
+    // of an older version (no, or a short, fingerprint) has nothing more to compare.
+    return STRONG_FINGERPRINT.test(sent.h || '') && fingerprintOf(current) !== sent.h;
 }
 
 /** The same for a meta value (its content and its stamp, as they were sent). */
 function metaEditedSince(key, sent) {
     const current = { value: META_ACCESSORS[key].get(), updatedAt: readMetaUpdated()[key] || '' };
 
-    if (typeof sent.h === 'string') return fingerprintOf(current) !== sent.h;
+    if (current.updatedAt !== sent.updatedAt) return true;
 
-    return current.updatedAt !== sent.updatedAt;
+    return STRONG_FINGERPRINT.test(sent.h || '') && fingerprintOf(current) !== sent.h;
 }
 
 /** After a successful request, forget what was sent unless it changed again in the meantime. */

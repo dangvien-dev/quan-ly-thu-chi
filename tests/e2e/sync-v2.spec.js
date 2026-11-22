@@ -83,6 +83,56 @@ function failStorageOnce(page, method, key) {
 }
 
 /** Behaves like a Code.gs that predates request ids: replies carry neither applied nor revision. */
+/**
+ * The fingerprint the app used in review round 12: FNV-1a (32 bits) of the canonical JSON, and its
+ * length. Kept here to build inputs that COLLIDE under it: two different rows with the same value.
+ */
+function legacyFingerprint(value) {
+    const canonical = (item) =>
+        Array.isArray(item)
+            ? `[${item.map((entry) => canonical(entry === undefined ? null : entry)).join(',')}]`
+            : item && typeof item === 'object'
+              ? `{${Object.keys(item)
+                    .filter((key) => item[key] !== undefined)
+                    .sort()
+                    .map((key) => `${JSON.stringify(key)}:${canonical(item[key])}`)
+                    .join(',')}}`
+              : (JSON.stringify(item) ?? 'null');
+    const text = canonical(value);
+    let hash = 0x811c9dc5;
+
+    for (let index = 0; index < text.length; index++) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+
+    return `${hash.toString(16).padStart(8, '0')}.${text.length.toString(36)}`;
+}
+
+/**
+ * Two different notes whose rows (`base` with the note and an updatedAt) have the same legacy
+ * fingerprint, the first with stamp `stampA` and the second with `stampB` (the same stamp for a
+ * collision at one instant). A birthday search: some tens of thousands of tries.
+ */
+function collidingNotes(base, stampA, stampB) {
+    const noteOf = (i) => `n${i.toString(36).padStart(6, '0')}`;
+    const fingerprint = (note, stamp) => legacyFingerprint({ ...base, note, updatedAt: stamp });
+    const seen = new Map();
+
+    for (let i = 0; i < 600000; i++) {
+        const first = noteOf(i);
+
+        seen.set(fingerprint(first, stampA), first);
+
+        const second = noteOf(i + 600000);
+        const match = seen.get(fingerprint(second, stampB));
+
+        if (match && match !== second) return [match, second];
+    }
+
+    throw new Error('no collision found');
+}
+
 /** A Code.gs of before the fence: it neither cancels the request nor says fenced. */
 function withoutFence(server) {
     const postText = server.postText;
@@ -2616,6 +2666,172 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
 
         expect(sheet.TX_T.note).toContain('#vip');
         expect(sheet.TX_S.source).toBe('Ví Mới');
+    });
+
+    test('review vòng 14: hai bản ghi khác nhau có CÙNG vân tay 32-bit (va chạm tính được): ACK của lần gửi đầu không được xóa lần sửa hai', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: NOW });
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        // A first edit shows the shape of a row as the form writes it; its stamp is the clock's.
+        await editNote('mau');
+        await wait(600);
+
+        const base = await localRow();
+        const stampOf = (steps) => new Date(Date.parse(base.updatedAt) + steps).toISOString();
+        // Edits 2 and 3 get the next two stamps; their rows collide under the 32-bit fingerprint.
+        const [first, second] = collidingNotes(base, stampOf(1), stampOf(2));
+
+        expect(legacyFingerprint({ ...base, note: first, updatedAt: stampOf(1) })).toBe(
+            legacyFingerprint({ ...base, note: second, updatedAt: stampOf(2) }),
+        );
+
+        a.state.holdReplies = 1;
+        await editNote(first); // applied on the Sheet, the reply is slow
+        await wait(300);
+        expect(notesOf(serverRows(server))).toEqual([first]);
+
+        await editNote(second); // a real second edit, whose row has the very same 32-bit value
+
+        a.state.releaseReply(0);
+        await wait(1200);
+
+        expect((await localRow()).note).toBe(second);
+        expect(notesOf(serverRows(server))).toEqual([second]);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_upserts'))).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 14: cặp va chạm khi phản hồi lần một bị mất và appliedCheck trả "đã áp dụng" (đường settleInflightV2): lần sửa hai vẫn được gửi', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_A', { note: 'goc' })];
+        // With a token a lost reply cannot be answered through the GET fallback.
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: NOW,
+        });
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        await editNote('mau');
+        await wait(800);
+
+        const base = await localRow();
+        const stampOf = (steps) => new Date(Date.parse(base.updatedAt) + steps).toISOString();
+        const [first, second] = collidingNotes(base, stampOf(1), stampOf(2));
+
+        a.state.loseReplies = 1;
+        await editNote(first); // applied on the Sheet, the reply is lost
+        await wait(500);
+        expect(notesOf(serverRows(server))).toEqual([first]);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        await editNote(second); // asks first (applied: true), then must still send this one
+        await wait(1200);
+
+        expect((await localRow()).note).toBe(second);
+        expect(notesOf(serverRows(server))).toEqual([second]);
+        expect(await inflight(a.page)).toBeNull();
+    });
+
+    test('review vòng 14: cùng dấu thời gian và vân tay 32-bit va chạm (sửa không đi qua nextStamp): ACK vẫn không xóa thay đổi mới vì so bằng vân tay mạnh', async ({
+        app,
+    }) => {
+        const NOW = '2026-11-22T10:00:00.000Z';
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: NOW });
+        const editNote = async (note) => {
+            await a.page.evaluate(() => editTransaction('TX_A'));
+            await a.page.fill('#txNote', note);
+            await a.page.click('#transactionForm button[type=submit]');
+            await wait(120);
+        };
+        const localRow = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A'));
+
+        await editNote('mau');
+        await wait(600);
+
+        const base = await localRow();
+        const stamp = new Date(Date.parse(base.updatedAt) + 1).toISOString();
+        const [first, second] = collidingNotes(base, stamp, stamp);
+
+        a.state.holdReplies = 1;
+        await editNote(first); // stamp = base + 1 ms
+        await wait(300);
+        expect((await localRow()).updatedAt).toBe(stamp);
+
+        // A change that keeps the stamp (a path that does not go through nextStamp).
+        await a.page.evaluate((note) => {
+            transactions = transactions.map((item) =>
+                item.id === 'TX_A' ? { ...item, note } : item,
+            );
+            saveDataLocally();
+            queueUpsert(['TX_A']);
+            syncToGoogleSheet();
+        }, second);
+
+        a.state.releaseReply(0);
+        await wait(1200);
+
+        expect((await localRow()).note).toBe(second);
+        expect(notesOf(serverRows(server))).toEqual([second]);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_upserts'))).toBeNull();
+    });
+
+    test('review vòng 14: meta đổi nội dung mà giữ nguyên dấu thời gian (không qua stampMeta): ACK của lần gửi đầu không xóa thay đổi, Sheet cuối cùng có giá trị mới', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({ server, seed: syncedSeed(rows), now: '2026-11-22T10:00:00.000Z' });
+        const sheetBudget = () => server.get({ v: '2' }).meta.budgets.value;
+
+        a.state.holdReplies = 1;
+        await a.page.evaluate(() => {
+            budgets['Ăn uống'] = 100;
+            saveMeta('budgets');
+            syncToGoogleSheet();
+        });
+        await wait(300);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 100 });
+
+        // A change of the value that keeps its stamp: it does not go through saveMeta / stampMeta.
+        await a.page.evaluate(() => {
+            budgets['Ăn uống'] = 150;
+            localStorage.setItem(META_DEFS.budgets.storage, JSON.stringify(budgets));
+            queueMeta('budgets');
+            syncToGoogleSheet();
+        });
+
+        a.state.releaseReply(0);
+        await wait(1200);
+
+        expect(await a.page.evaluate(() => budgets['Ăn uống'])).toBe(150);
+        expect(sheetBudget()).toEqual({ 'Ăn uống': 150 });
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_meta'))).toBeNull();
     });
 
     test('review vòng 6: khôi phục sao lưu trên máy chưa có URL: lấy URL trong file và vẫn thay toàn bộ Sheet (không bị coi là đổi URL)', async ({

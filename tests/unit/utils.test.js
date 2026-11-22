@@ -3216,7 +3216,7 @@ test('fingerprintOf: cùng nội dung (khác thứ tự khóa) cùng vân tay; k
         fp(`{ value: { 'Ăn uống': 100 }, updatedAt: ${stamp} }`),
         fp(`{ value: { 'Ăn uống': 200 }, updatedAt: ${stamp} }`),
     );
-    assert.match(fp('{ a: 1 }'), /^[0-9a-f]{8}\.[0-9a-z]+$/);
+    assert.match(fp('{ a: 1 }'), /^[0-9a-f]{32}$/);
 });
 
 test('nextStamp: luôn là dấu sau hẳn dấu trước, dù đồng hồ không nhích, đứng yên hay lùi', () => {
@@ -3242,4 +3242,179 @@ test('nextStamp: luôn là dấu sau hẳn dấu trước, dù đồng hồ khô
     }
 
     assert.equal(stamp, '2026-11-22T10:00:00.004Z');
+});
+
+test('sha256Hex: khớp SHA-256 của Node với mọi độ dài quanh ranh giới đệm, tiếng Việt, emoji, ký tự lẻ', () => {
+    const crypto = require('node:crypto');
+    const reference = (text) =>
+        crypto.createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
+    const mine = (text) => run(`sha256Hex(${JSON.stringify(text)})`);
+
+    assert.equal(mine('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    assert.equal(mine(''), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+
+    for (let length = 0; length <= 200; length++) {
+        const text = 'x'.repeat(length);
+
+        assert.equal(mine(text), reference(text), `độ dài ${length}`);
+    }
+
+    const samples = [
+        'Tiền Mặt — Ăn uống đ Đ ư ơ',
+        '😀 và 🧾 và 𝒳',
+        'a'.repeat(5000),
+        '{"id":"TX_A","note":"cà phê #khach","amount":1000}',
+        'dòng\nmới\ttab',
+    ];
+
+    for (let round = 0; round < 200; round++) {
+        let text = '';
+
+        for (let index = 0; index < 1 + (round % 90); index++) {
+            const pool = ['a', 'Z', ' ', 'ế', 'đ', '€', '😀', '\u0000', '{', '"'];
+
+            text += pool[(round * 7 + index * 13) % pool.length];
+        }
+
+        samples.push(text);
+    }
+
+    samples.forEach((text) => assert.equal(mine(text), reference(text), JSON.stringify(text)));
+});
+
+test('fingerprintOf: cặp va chạm FNV 32-bit của review vòng 14 không còn va chạm', () => {
+    const row = (note, updatedAt) => ({
+        id: 'TX_A',
+        date: '2026-11-22',
+        type: 'expense',
+        source: 'Tiền Mặt',
+        targetSource: null,
+        category: 'Ăn uống',
+        amount: 1000,
+        note,
+        updatedAt,
+    });
+    const first = row('n001b9t', '2026-11-22T10:00:00.000Z');
+    const second = row('n000l27', '2026-11-22T10:00:00.001Z');
+    const legacy = (value) => {
+        const canonical = run(`canonicalJson(${JSON.stringify(value)})`);
+
+        return `${run(`hashText(${JSON.stringify(canonical)})`)}.${canonical.length.toString(36)}`;
+    };
+    const fingerprint = (value) => run(`fingerprintOf(${JSON.stringify(value)})`);
+
+    // What the review found: the fingerprint of round 12 is the same for these two different rows.
+    assert.equal(legacy(first), '037a0253.51');
+    assert.equal(legacy(second), '037a0253.51');
+    // Now it is not.
+    assert.notEqual(fingerprint(first), fingerprint(second));
+});
+
+test('editedSince: dấu thời gian trước, vân tay mạnh sau; bản ghi cũ không có vân tay mạnh chỉ so dấu', () => {
+    const load = () => loadScripts('js/utils.js', 'js/sync.js');
+    const sync = load();
+    const T = '2026-11-22T10:00:00.000Z';
+    const T1 = '2026-11-22T10:00:00.001Z';
+    const row = (note, updatedAt) => ({ id: 'TX_A', note, updatedAt });
+    const sentOf = (value) => ({
+        id: value.id,
+        updatedAt: value.updatedAt,
+        h: sync(`fingerprintOf(${JSON.stringify(value)})`),
+    });
+    const edited = (run2, sent, current) =>
+        run2(`editedSince(${JSON.stringify(sent)}, ${JSON.stringify(current)})`);
+
+    // The same stamp: identical content is not an edit, different content is.
+    assert.equal(edited(sync, sentOf(row('a', T)), row('a', T)), false);
+    assert.equal(edited(sync, sentOf(row('a', T)), row('b', T)), true);
+    // A different stamp is an edit.
+    assert.equal(edited(sync, sentOf(row('a', T)), row('a', T1)), true);
+
+    // Even if the fingerprint were useless (everything collides), a different stamp still shows an
+    // edit: the stamp is checked on its own.
+    const weak = load();
+
+    weak('fingerprintOf = () => "00000000000000000000000000000000"');
+    assert.equal(
+        edited(
+            weak,
+            { id: 'TX_A', updatedAt: T, h: '00000000000000000000000000000000' },
+            row('b', T1),
+        ),
+        true,
+    );
+
+    // A record of an older version: a short fingerprint, or none, is compared by stamp only.
+    assert.equal(edited(sync, { id: 'TX_A', updatedAt: T, h: '037a0253.51' }, row('b', T)), false);
+    assert.equal(edited(sync, { id: 'TX_A', updatedAt: T }, row('b', T)), false);
+    assert.equal(edited(sync, { id: 'TX_A', updatedAt: T }, row('b', T1)), true);
+});
+
+test('metaEditedSince: dấu thời gian trước, vân tay mạnh sau', () => {
+    const T = '2026-11-22T10:00:00.000Z';
+    const T1 = '2026-11-22T10:00:00.001Z';
+    const load = (value, stamp) => {
+        const sync = loadScripts('js/utils.js', 'js/sync.js');
+
+        sync(
+            `var META_ACCESSORS = { budgets: { get: () => (${JSON.stringify(value)}) } };` +
+                `var readMetaUpdated = () => ({ budgets: ${JSON.stringify(stamp)} });`,
+        );
+
+        return sync;
+    };
+    const sentFor = (value, stamp) => ({
+        updatedAt: stamp,
+        h: loadScripts('js/utils.js')(
+            `fingerprintOf(${JSON.stringify({ value, updatedAt: stamp })})`,
+        ),
+    });
+    const edited = (sync, sent) => sync(`metaEditedSince('budgets', ${JSON.stringify(sent)})`);
+
+    // Unchanged: same stamp and same content. Changed content under the same stamp. A new stamp.
+    assert.equal(edited(load({ a: 1 }, T), sentFor({ a: 1 }, T)), false);
+    assert.equal(edited(load({ a: 2 }, T), sentFor({ a: 1 }, T)), true);
+    assert.equal(edited(load({ a: 1 }, T1), sentFor({ a: 1 }, T)), true);
+
+    // Even when the fingerprint is useless (everything collides) a new stamp is an edit.
+    const weak = load({ a: 1 }, T1);
+
+    weak('fingerprintOf = () => "00000000000000000000000000000000"');
+    assert.equal(edited(weak, { updatedAt: T, h: '00000000000000000000000000000000' }), true);
+
+    // A record of an older version has no usable fingerprint: only the stamp is compared.
+    assert.equal(edited(load({ a: 2 }, T), { updatedAt: T, h: '037a0253.51' }), false);
+});
+
+test('buildImportItems: hai dòng khác nhau cùng ngày có hashText 32-bit va chạm vẫn có id khác nhau (nhập sao kê không âm thầm mất dòng)', () => {
+    // `|2026-11-22|expense|11814|cafe|` and `|2026-11-22|expense|47379|grab|` have the same FNV-1a value.
+    const rows = [
+        ['Ngày', 'Nội dung', 'Số tiền'],
+        ['22/11/2026', 'cafe', '-11.814'],
+        ['22/11/2026', 'grab', '-47.379'],
+        ['22/11/2026', 'cafe', '-11.814'], // an identical row: as before it gets "_2"
+    ];
+    const layout = {
+        headerIndex: 0,
+        columns: {
+            date: 0,
+            description: 1,
+            amount: 2,
+            debit: -1,
+            credit: -1,
+            balance: -1,
+            reference: -1,
+        },
+    };
+    const built = plain(run(`buildImportItems(${JSON.stringify(rows)},${JSON.stringify(layout)})`));
+    const ids = built.items.map((item) => item.id);
+
+    assert.equal(run('hashText("|2026-11-22|expense|11814|cafe|")'), '1261bfd1');
+    assert.equal(run('hashText("|2026-11-22|expense|47379|grab|")'), '1261bfd1');
+    assert.equal(new Set(ids).size, 3, ids.join(' '));
+    assert.deepEqual(ids, [
+        'TX_IMP_20261122_1261bfd1',
+        'TX_IMP_20261122_1261bfd1_2',
+        'TX_IMP_20261122_1261bfd1_3',
+    ]);
 });
