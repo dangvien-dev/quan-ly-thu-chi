@@ -33,6 +33,10 @@ const SYNC_BASELINE_KEY = 'fm_sync_baseline'; // URL whose content this device l
 const SYNC_DELETED_KEY = 'fm_deleted_ids'; // ids deleted here, not yet deleted on the server
 const SYNC_UPSERTS_KEY = 'fm_pending_upserts'; // ids created or edited here (v2)
 const SYNC_META_KEY = 'fm_pending_meta'; // meta kinds changed here (v2)
+// The last v2 write whose reply never arrived: {requestId, replace, upserts: [{id, updatedAt}],
+// deletes, meta: {key: {updatedAt}}}. Before sending anything else the server is asked whether it
+// was applied (appliedCheck), so a lost reply is never answered by blindly sending it again.
+const SYNC_INFLIGHT_KEY = 'fm_sync_inflight';
 const GET_FALLBACK_MAX_URL = 6000;
 // Rows the user chose to "decide later" for (see decideRemoteLoss): kept here, not uploaded, and
 // not asked about again until the app is opened again.
@@ -692,10 +696,85 @@ function reconcileV2(state) {
     generateSavingsDeposits();
 }
 
+function newRequestId() {
+    const random =
+        window.crypto && typeof window.crypto.randomUUID === 'function'
+            ? window.crypto.randomUUID()
+            : `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+
+    return `fm-${Date.now().toString(36)}-${random}`;
+}
+
+/** What clearSentPending needs to know about a request, small enough to keep across reloads. */
+function inflightRecord(payload) {
+    return {
+        requestId: payload.requestId,
+        replace: payload.replace,
+        upserts: payload.upserts.map((item) => ({ id: item.id, updatedAt: item.updatedAt })),
+        deletes: payload.deletes,
+        meta: Object.fromEntries(
+            Object.entries(payload.meta).map(([key, entry]) => [
+                key,
+                { updatedAt: entry.updatedAt },
+            ]),
+        ),
+    };
+}
+
+function readInflight() {
+    const record = readStoredJson(SYNC_INFLIGHT_KEY, null);
+
+    return record && typeof record.requestId === 'string' ? record : null;
+}
+
+/**
+ * A previous write may or may not have been applied (its reply was lost). Ask the server; if it
+ * was, forget what it sent, exactly as if the reply had arrived. Either way the server's current
+ * state is merged before anything new is built, so a replace that went through is not sent again
+ * over rows another device added since. A server that predates request ids does not answer
+ * `applied`; then the pending changes simply stay queued, as before.
+ */
+async function settleInflightV2() {
+    const inflight = readInflight();
+
+    if (!inflight) return;
+
+    const state = await postSyncV2({
+        action: 'sync',
+        token: webAppToken,
+        replace: false,
+        upserts: [],
+        deletes: [],
+        meta: {},
+        appliedCheck: inflight.requestId,
+    });
+
+    if (state.applied === true) {
+        localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
+        clearSentPending(inflight);
+    }
+
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
+    reconcileV2(state);
+}
+
 async function pushV2() {
-    const payload = buildV2Payload();
+    await settleInflightV2();
+
+    if (!hasPendingChanges()) {
+        setSyncBadge('synced');
+        return;
+    }
+
+    const payload = { ...buildV2Payload(), requestId: newRequestId() };
+
+    localStorage.setItem(SYNC_INFLIGHT_KEY, JSON.stringify(inflightRecord(payload)));
+
+    // On any failure the record stays: even an error reply ("Không chắc dữ liệu đã được ghi xong",
+    // a failed rollback, an HTTP error after a timeout) can follow a write, so the next push asks.
     const state = await postSyncV2(payload);
 
+    localStorage.removeItem(SYNC_INFLIGHT_KEY);
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
     clearSentPending(payload);
     reconcileV2(state);

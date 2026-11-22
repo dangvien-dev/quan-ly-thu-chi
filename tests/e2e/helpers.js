@@ -92,6 +92,7 @@ async function openApp(browser, opts = {}) {
         confirms: [],
         errors: [],
         external: [],
+        loseReplies: 0,
     };
 
     // Registered first = lowest priority: block everything that is not local or the mock Sheet.
@@ -151,6 +152,20 @@ async function openApp(browser, opts = {}) {
         });
 
         if (opts.postFails) return route.abort();
+
+        // state.loseReplies: the server applies the next N write POSTs (a replace, upserts or
+        // deletes; not the empty read) but their replies never arrive.
+        const body = state.posts.at(-1).body || {};
+        const writes =
+            body.replace === true ||
+            (Array.isArray(body.upserts) && body.upserts.length > 0) ||
+            (Array.isArray(body.deletes) && body.deletes.length > 0);
+
+        if (state.loseReplies > 0 && writes) {
+            state.loseReplies--;
+            gas.postText(raw);
+            return route.abort();
+        }
 
         return route.fulfill({
             status: 200,

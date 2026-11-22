@@ -452,7 +452,7 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         const server = newServer('v2', { rows });
         const { page, state } = await app({ server, seed: syncedSeed(rows) });
 
-        server.post({ action: 'sync', replace: true, upserts: [], confirmWipe: true });
+        server.post({ action: 'sync', replace: true, upserts: [], meta: {}, confirmWipe: true });
         await page.reload();
         await wait(600);
 
@@ -475,7 +475,7 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         const { page, state } = await app({ server, seed: syncedSeed(rows) });
         const answers = [false, true]; // Hủy "Khôi phục", rồi OK "Xóa trên máy này"
 
-        server.post({ action: 'sync', replace: true, upserts: [], confirmWipe: true });
+        server.post({ action: 'sync', replace: true, upserts: [], meta: {}, confirmWipe: true });
         page.removeAllListeners('dialog');
         page.on('dialog', (dialog) => {
             state.confirms.push(dialog.message());
@@ -496,7 +496,7 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         const server = newServer('v2', { rows });
         const { page, state } = await app({ server, seed: syncedSeed(rows) });
 
-        server.post({ action: 'sync', replace: true, upserts: [], confirmWipe: true });
+        server.post({ action: 'sync', replace: true, upserts: [], meta: {}, confirmWipe: true });
         page.removeAllListeners('dialog');
         page.on('dialog', (dialog) => {
             state.confirms.push(dialog.message());
@@ -559,6 +559,109 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
 
         expect(serverRows(server).map((item) => item.id)).toEqual(['TX_2']);
         expect(lastBody(state).confirmWipe).toBe(false);
+    });
+
+    test('review vòng 4: replace đã áp dụng nhưng mất phản hồi, máy khác ghi xen giữa: gửi lại không xóa dòng của máy kia', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2')];
+        const properties = { FM_TOKEN: 'bi-mat' };
+        const server = newServer('v2', { rows, properties });
+        const seed = syncedSeed(rows, { fm_script_token: 'bi-mat' });
+        const a = await app({ server, seed });
+        const b = await app({ server, seed });
+
+        // Device A restores a backup: the server applies the replace, the reply is lost.
+        a.state.loseReplies = 1;
+        await goTab(a.page, 'settings');
+        await a.page.setInputFiles('input[type=file]', {
+            name: 'b.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(
+                JSON.stringify({
+                    format: 'finmanager-backup',
+                    version: 1,
+                    exportedAt: 'x',
+                    data: {
+                        transactions: [row('TX_9')],
+                        categories: [
+                            { id: 1, name: 'Ăn uống', type: 'expense', icon: 'fa-utensils' },
+                        ],
+                        initialBalances: {},
+                        scriptUrl: SCRIPT_URL,
+                    },
+                }),
+            ),
+        });
+        await wait(600);
+
+        expect(serverRows(server).map((item) => item.id)).toEqual(['TX_9']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeTruthy();
+
+        // Device B adds a transaction in between. It notices the restore as "the Sheet lost
+        // TX_1 and TX_2" and, since the restore was on purpose, the user picks "Xóa trên máy".
+        const answers = [false, true];
+
+        b.page.removeAllListeners('dialog');
+        b.page.on('dialog', (dialog) => (answers.shift() ? dialog.accept() : dialog.dismiss()));
+        await b.page.reload();
+        await wait(400);
+        await addExpense(b.page, 7000, 'tu-may-B');
+        await wait(400);
+
+        // Device A opens again: it asks first, sees its replace went through, and keeps B's row.
+        const replacesBefore = a.state.posts.filter((post) => post.body.replace === true).length;
+
+        await a.page.reload();
+        await wait(800);
+
+        const notes = serverRows(server)
+            .map((item) => item.note)
+            .sort();
+
+        expect(notes).toEqual(['ghi chu TX_9', 'tu-may-B']);
+        expect(a.state.posts.filter((post) => post.body.replace === true).length).toBe(
+            replacesBefore,
+        );
+        expect(a.state.posts.some((post) => post.body.appliedCheck)).toBe(true);
+        expect((await a.page.evaluate(() => transactions.map((t) => t.note))).sort()).toEqual([
+            'ghi chu TX_9',
+            'tu-may-B',
+        ]);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_sync_inflight'))).toBeNull();
+    });
+
+    test('review vòng 4: mất phản hồi của một lần xóa: không gửi lại lệnh xóa đã áp dụng', async ({
+        app,
+    }) => {
+        const rows = [row('TX_1'), row('TX_2'), row('TX_3')];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: 'bi-mat' } });
+        const { page, state } = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: 'bi-mat' }),
+        });
+
+        state.loseReplies = 1;
+        await goTransactions(page);
+        await page.click(
+            '#transaction-table-body tr:has-text("ghi chu TX_1") [data-action=delete]',
+        );
+        await wait(500);
+
+        // Another device re-creates the row with a newer edit.
+        server.post({
+            action: 'sync',
+            token: 'bi-mat',
+            upserts: [row('TX_1', { updatedAt: '2026-11-22T09:00:00.000Z', note: 'tao lai' })],
+        });
+
+        await page.evaluate(() => resumeSync());
+        await wait(600);
+
+        expect(serverRows(server).map((item) => item.id)).toContain('TX_1');
+        expect(
+            state.posts.filter((post) => (post.body.deletes || []).includes('TX_1')).length,
+        ).toBe(1);
     });
 
     test('SEC-001: tập nhỏ mất quá nửa (6 → 1) cũng hỏi', async ({ app }) => {
