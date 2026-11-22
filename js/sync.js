@@ -689,6 +689,28 @@ function buildV2Payload() {
     };
 }
 
+/**
+ * Whether a transaction is no longer what was sent: it was edited again after the request was built.
+ * Records carry a fingerprint of the content (`h`). The updatedAt stamp is not proof of "no edit":
+ * two edits in the same millisecond, or on a clock that did not move, carry the same one, and an
+ * ACK would then settle (and a snapshot overwrite) the newer edit. Older records (no `h`) only have
+ * the stamp.
+ */
+function editedSince(sent, current) {
+    if (typeof sent.h === 'string') return fingerprintOf(current) !== sent.h;
+
+    return current.updatedAt !== sent.updatedAt;
+}
+
+/** The same for a meta value (its content and its stamp, as they were sent). */
+function metaEditedSince(key, sent) {
+    const current = { value: META_ACCESSORS[key].get(), updatedAt: readMetaUpdated()[key] || '' };
+
+    if (typeof sent.h === 'string') return fingerprintOf(current) !== sent.h;
+
+    return current.updatedAt !== sent.updatedAt;
+}
+
 /** After a successful request, forget what was sent unless it changed again in the meantime. */
 function clearSentPending(payload) {
     // A replace made after this request was built (a backup restored, "Xóa toàn bộ dữ liệu" while
@@ -697,23 +719,22 @@ function clearSentPending(payload) {
     if (payload.replaceSeq !== undefined && payload.replaceSeq !== readReplaceSeq()) return;
 
     const byId = new Map(transactions.map((transaction) => [transaction.id, transaction]));
-    const sentUpserts = new Map(payload.upserts.map((item) => [item.id, item.updatedAt]));
+    const sentUpserts = new Map(payload.upserts.map((item) => [item.id, item]));
     const upserts = readList(SYNC_UPSERTS_KEY).filter((id) => {
         const current = byId.get(id);
 
         if (!current) return false; // deleted since: nothing left to send
         if (!sentUpserts.has(id)) return true; // queued after the request was built
 
-        return current.updatedAt !== sentUpserts.get(id); // edited again meanwhile
+        return editedSince(sentUpserts.get(id), current); // edited again meanwhile
     });
     // After a replace the server holds exactly what was sent, so a deletion of one of those rows
     // still has to be sent; other recorded deletions concern rows the server no longer has.
     const deletes = readDeletedIds().filter((id) =>
         payload.replace ? sentUpserts.has(id) : !payload.deletes.includes(id),
     );
-    const updated = readMetaUpdated();
     const meta = readList(SYNC_META_KEY).filter(
-        (key) => !payload.meta[key] || (updated[key] || '') !== payload.meta[key].updatedAt,
+        (key) => !payload.meta[key] || metaEditedSince(key, payload.meta[key]),
     );
 
     writeList(SYNC_UPSERTS_KEY, upserts);
@@ -962,12 +983,20 @@ function inflightRecord(payload) {
         baseEpoch: view.epoch,
         replaceSeq: readReplaceSeq(),
         replace: payload.replace,
-        upserts: payload.upserts.map((item) => ({ id: item.id, updatedAt: item.updatedAt })),
+        // `h` fingerprints what was sent: the reply may only settle what is still exactly that.
+        upserts: payload.upserts.map((item) => ({
+            id: item.id,
+            updatedAt: item.updatedAt,
+            h: fingerprintOf(item),
+        })),
         deletes: payload.deletes,
         meta: Object.fromEntries(
             Object.entries(payload.meta).map(([key, entry]) => [
                 key,
-                { updatedAt: entry.updatedAt },
+                {
+                    updatedAt: entry.updatedAt,
+                    h: fingerprintOf({ value: entry.value, updatedAt: entry.updatedAt }),
+                },
             ]),
         ),
     };
@@ -1276,7 +1305,9 @@ async function pushV2() {
     // nothing to say it was sent. Every step can be repeated (settleInflightV2 repeats them).
     localStorage.setItem(SYNC_BASELINE_KEY, webAppUrl);
     // The reply confirms what was sent; only that.
-    clearSentPending({ ...payload, replaceSeq: record.replaceSeq });
+    // The record, not the payload: it holds what was sent as it was (a fingerprint of each row and
+    // value), whatever became of the live objects since, and it is what the settle path uses too.
+    clearSentPending(record);
     localStorage.removeItem(SYNC_INFLIGHT_KEY);
     rememberRevision(state);
     reconcileV2(state);

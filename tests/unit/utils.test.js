@@ -3186,3 +3186,35 @@ test('isSharedPagesOrigin: chỉ <tài khoản>.github.io dùng chung bộ nhớ
     assert.equal(shared(''), false);
     assert.equal(run('isSharedPagesOrigin(null)'), false);
 });
+
+test('canonicalJson: khóa đối tượng theo thứ tự, bỏ undefined, mảng giữ thứ tự', () => {
+    const canon = (expression) => run(`canonicalJson(${expression})`);
+
+    assert.equal(canon('{ b: 1, a: [2, { d: 4, c: 3 }] }'), '{"a":[2,{"c":3,"d":4}],"b":1}');
+    assert.equal(canon('{ a: 1, b: undefined }'), '{"a":1}');
+    assert.equal(canon('[undefined, 1]'), '[null,1]');
+    assert.equal(canon('"x"'), '"x"');
+    assert.equal(canon('null'), 'null');
+    assert.equal(canon('undefined'), 'null');
+    assert.equal(canon('[1, 2]') === canon('[2, 1]'), false);
+});
+
+test('fingerprintOf: cùng nội dung (khác thứ tự khóa) cùng vân tay; khác nội dung, kể cả cùng updatedAt, khác vân tay', () => {
+    const fp = (expression) => run(`fingerprintOf(${expression})`);
+    const stamp = '"2026-11-22T10:00:00.000Z"';
+
+    assert.equal(
+        fp(`{ id: 'A', note: 'x', updatedAt: ${stamp} }`),
+        fp(`{ updatedAt: ${stamp}, note: 'x', id: 'A' }`),
+    );
+    // The review's case: two edits that carry the same stamp.
+    assert.notEqual(
+        fp(`{ id: 'A', note: 'lan-mot', updatedAt: ${stamp} }`),
+        fp(`{ id: 'A', note: 'lan-hai', updatedAt: ${stamp} }`),
+    );
+    assert.notEqual(
+        fp(`{ value: { 'Ăn uống': 100 }, updatedAt: ${stamp} }`),
+        fp(`{ value: { 'Ăn uống': 200 }, updatedAt: ${stamp} }`),
+    );
+    assert.match(fp('{ a: 1 }'), /^[0-9a-f]{8}\.[0-9a-z]+$/);
+});

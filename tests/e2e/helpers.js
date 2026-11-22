@@ -76,7 +76,8 @@ const isWriteBody = (body) =>
     (Array.isArray(body.transactions) || // the legacy script's write
         body.replace === true ||
         (Array.isArray(body.upserts) && body.upserts.length > 0) ||
-        (Array.isArray(body.deletes) && body.deletes.length > 0));
+        (Array.isArray(body.deletes) && body.deletes.length > 0) ||
+        (Boolean(body.meta) && typeof body.meta === 'object' && Object.keys(body.meta).length > 0));
 
 /** Rows currently in the server's Transactions sheet, as objects. */
 function serverRows(server) {

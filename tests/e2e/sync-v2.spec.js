@@ -2350,6 +2350,125 @@ test.describe('Giao thức v2: thay thế toàn bộ', () => {
         expect(idsOf(serverRows(server))).toEqual(['TX_B', 'TX_BACKUP']);
     });
 
+    test('review vòng 12: meta sửa lần hai trong cùng mili-giây khi phản hồi của lần gửi đầu chưa về: ACK cũ không xóa thay đổi mới, snapshot cũ không đè lên nó, Sheet cuối cùng có giá trị lần hai', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A')];
+        const server = newServer('v2', { rows });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows),
+            now: '2026-11-22T10:00:00.000Z', // every stamp is the same instant
+        });
+        const budgetNow = () => a.page.evaluate(() => budgets['Ăn uống']);
+        const setBudget = (value) =>
+            a.page.evaluate((amount) => {
+                budgets['Ăn uống'] = amount;
+                saveMeta('budgets');
+                syncToGoogleSheet();
+            }, value);
+
+        // 100 is applied on the Sheet at once; its reply is slow.
+        a.state.holdReplies = 1;
+        await setBudget(100);
+        await wait(300);
+        expect(server.get({ v: '2' }).meta.budgets.value).toEqual({ 'Ăn uống': 100 });
+        expect(a.state.heldReplies).toHaveLength(1);
+
+        // Edited again at the very same instant, while the first request is still unanswered.
+        await setBudget(200);
+
+        a.state.releaseReply(0);
+        await wait(1000);
+
+        // The second value is kept here, was sent, and is what the Sheet holds now.
+        expect(await budgetNow()).toBe(200);
+        expect(server.get({ v: '2' }).meta.budgets.value).toEqual({ 'Ăn uống': 200 });
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_meta'))).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 12: giao dịch sửa lần hai trong cùng mili-giây khi phản hồi của lần gửi đầu chưa về: ACK cũ không xóa thay đổi mới, ghi chú lần hai lên Sheet', async ({
+        app,
+    }) => {
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows),
+            now: '2026-11-22T10:00:00.000Z',
+        });
+        const editNote = (note) =>
+            a.page.evaluate((text) => {
+                const stamp = new Date().toISOString();
+
+                transactions = transactions.map((item) =>
+                    item.id === 'TX_A' ? { ...item, note: text, updatedAt: stamp } : item,
+                );
+                saveDataLocally();
+                queueUpsert(['TX_A']);
+                syncToGoogleSheet();
+            }, note);
+        const localNote = () =>
+            a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A').note);
+
+        a.state.holdReplies = 1;
+        await editNote('lan-mot');
+        await wait(300);
+        expect(notesOf(serverRows(server))).toEqual(['lan-mot']);
+        expect(a.state.heldReplies).toHaveLength(1);
+
+        await editNote('lan-hai'); // same instant: same updatedAt as the first
+
+        a.state.releaseReply(0);
+        await wait(1000);
+
+        expect(await localNote()).toBe('lan-hai');
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect(await a.page.evaluate(() => localStorage.getItem('fm_pending_upserts'))).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
+    test('review vòng 12: phản hồi lần gửi đầu bị mất, rồi sửa lần hai cùng dấu thời gian: appliedCheck "đã áp dụng" chỉ dọn lần một, lần hai vẫn được gửi', async ({
+        app,
+    }) => {
+        // With a token a lost reply cannot be answered through the GET fallback.
+        const rows = [row('TX_A', { note: 'goc' })];
+        const server = newServer('v2', { rows, properties: { FM_TOKEN: TOKEN } });
+        const a = await app({
+            server,
+            seed: syncedSeed(rows, { fm_script_token: TOKEN }),
+            now: '2026-11-22T10:00:00.000Z',
+        });
+        const editNote = (note) =>
+            a.page.evaluate((text) => {
+                const stamp = new Date().toISOString();
+
+                transactions = transactions.map((item) =>
+                    item.id === 'TX_A' ? { ...item, note: text, updatedAt: stamp } : item,
+                );
+                saveDataLocally();
+                queueUpsert(['TX_A']);
+                syncToGoogleSheet();
+            }, note);
+
+        a.state.loseReplies = 1;
+        await editNote('lan-mot'); // applied on the Sheet, the reply is lost
+        await wait(500);
+        expect(notesOf(serverRows(server))).toEqual(['lan-mot']);
+        expect(await inflight(a.page)).toBeTruthy();
+
+        await editNote('lan-hai'); // the same instant
+        await wait(1000);
+
+        expect(notesOf(serverRows(server))).toEqual(['lan-hai']);
+        expect(
+            await a.page.evaluate(() => transactions.find((item) => item.id === 'TX_A').note),
+        ).toBe('lan-hai');
+        expect(await inflight(a.page)).toBeNull();
+        await expect(a.page.locator('#sync-status')).toContainText('Đã lưu');
+    });
+
     test('review vòng 6: khôi phục sao lưu trên máy chưa có URL: lấy URL trong file và vẫn thay toàn bộ Sheet (không bị coi là đổi URL)', async ({
         app,
     }) => {

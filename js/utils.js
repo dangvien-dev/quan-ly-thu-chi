@@ -1057,6 +1057,34 @@ function hashText(text) {
     return hash.toString(16).padStart(8, '0');
 }
 
+/** JSON with object keys in sorted order and undefined left out: the same content, the same text. */
+function canonicalJson(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map((item) => canonicalJson(item === undefined ? null : item)).join(',')}]`;
+    }
+
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value)
+            .filter((key) => value[key] !== undefined)
+            .sort()
+            .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+            .join(',')}}`;
+    }
+
+    return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * A short fingerprint of the CONTENT of a value (hash and length of its canonical JSON). The sync
+ * keeps one of what it sent: a timestamp cannot tell two edits apart when they carry the same one
+ * (the same millisecond, a clock that did not move), a fingerprint of the content can.
+ */
+function fingerprintOf(value) {
+    const text = canonicalJson(value);
+
+    return `${hashText(text)}.${text.length.toString(36)}`;
+}
+
 /** Description of a statement row as a note: no "#" (it would turn words into tags), one line. */
 function cleanImportNote(text) {
     return String(text ?? '')
