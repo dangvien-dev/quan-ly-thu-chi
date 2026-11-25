@@ -122,6 +122,15 @@ Test tự động chạy trên bản giả của Google Sheets, nên **không ch
 
 Lưu ý: script cũ (legacy) và Code.gs bật `FM_ALLOW_OPEN` thì ai có URL Web App đều đọc / ghi được dữ liệu (Cài đặt hiện cảnh báo khi server v2 đang mở); hãy coi URL như mật khẩu và đừng commit nó vào repo (file sao lưu cũng chứa URL này, nhưng không chứa mã bảo vệ).
 
+### Không mở hai tab cùng lúc
+
+Ứng dụng **chưa hỗ trợ** mở nhiều tab hoặc cửa sổ của cùng một trình duyệt cùng lúc. Các tab dùng chung `localStorage` (hàng chờ gửi, cờ `replace`, bản ghi request đang gửi) nhưng mỗi tab giữ dữ liệu trong bộ nhớ riêng và chạy hàng đợi đồng bộ riêng. Hai tab cùng đồng bộ có thể gửi trùng (giao dịch gửi trùng vô hại) và thấy dữ liệu của nhau không theo thứ tự; các cơ chế bảo vệ ở mục "Quy tắc đồng bộ" (mỗi lần chỉ một request trả về trạng thái Sheet, hỏi lại kết quả lần gửi trước) chỉ đúng **trong từng tab**.
+
+- Chỉ giữ **một** tab hoặc một cửa sổ ứng dụng đã cài cho mỗi trình duyệt. Mở app trên điện thoại và máy tính là hai thiết bị khác nhau, cách dùng này được hỗ trợ (chúng đồng bộ qua Sheet).
+- Trước khi **khôi phục sao lưu** hoặc bấm **Xóa toàn bộ dữ liệu**, đóng mọi tab khác của app.
+- Lỡ mở hai tab thì đóng tab thừa, tải lại tab còn lại và chờ nhãn đồng bộ về "Đã lưu".
+- Hai thiết bị cùng sửa một dòng: bản có dấu thời gian lớn hơn thắng, bằng nhau thì bản tới Sheet sau thắng; đồng hồ máy lệch có thể làm bản sửa cũ hơn thắng. Chi tiết và các giới hạn khác ở [`docs/adr/0001-sync-data-safety.md`](docs/adr/0001-sync-data-safety.md).
+
 ## Triển khai và cách ly dữ liệu
 
 Dữ liệu thu chi, URL Web App và mã bảo vệ (`FM_TOKEN`) nằm trong `localStorage` của trình duyệt. `localStorage` thuộc về **origin** (giao thức + tên miền + cổng), **không** theo thư mục hay repository. Với GitHub Pages dạng `https://<tài khoản>.github.io/quan-ly-thu-chi/`, mọi trang khác trên `https://<tài khoản>.github.io` (repo khác bật Pages, trang `<tài khoản>.github.io`) có **cùng origin**: script chạy ở một trang như vậy (do lỗi XSS, thư viện bên thứ ba bị cấy mã, hay nội dung không tin cậy) đọc được dữ liệu và mã bảo vệ của ứng dụng này rồi dùng mã đó gọi Apps Script. Mã nguồn công khai không làm lộ mã bảo vệ; vấn đề chỉ nằm ở việc dùng chung origin. Cài đặt hiện một dòng nhắc khi app chạy ở địa chỉ `*.github.io`.
